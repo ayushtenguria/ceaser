@@ -76,5 +76,16 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
         lines = [ln for ln in lines if not ln.strip().startswith("```")]
         raw_code = "\n".join(lines).strip()
 
+    # Prepend code preamble if present (loads Excel DataFrames from parquet)
+    if "CODE PREAMBLE" in state.get("schema_context", ""):
+        preamble_marker = "CODE PREAMBLE (prepend to all Python code):\n"
+        ctx = state.get("schema_context", "")
+        if preamble_marker in ctx:
+            preamble = ctx.split(preamble_marker, 1)[1].strip()
+            # Only keep import + read lines
+            preamble_lines = [l for l in preamble.split("\n") if l.strip().startswith(("import ", "df_", "from "))]
+            if preamble_lines:
+                raw_code = "\n".join(preamble_lines) + "\n\n" + raw_code
+
     logger.info("Generated Python code (%d chars)", len(raw_code))
     return {**state, "code_block": raw_code}

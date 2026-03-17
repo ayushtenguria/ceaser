@@ -25,6 +25,7 @@ from app.db.models import (
     FileUpload,
     Message,
     MetricDefinition,
+    Report,
     User,
 )
 from app.services.file_parser import get_file_summary, parse_file
@@ -102,12 +103,19 @@ async def _build_schema_context(
         result = await db.execute(stmt)
         upload = result.scalar_one_or_none()
         if upload:
-            try:
-                df, _ = parse_file(upload.file_path, upload.file_type)
-                parts.append(get_file_summary(df))
-                parts.append(f"\nFile path for code: {upload.file_path}")
-            except Exception as exc:
-                logger.warning("Could not parse file for context: %s", exc)
+            # Use rich Excel context if available (from Excel Intelligence Engine)
+            if upload.excel_context:
+                parts.append(upload.excel_context)
+                if upload.code_preamble:
+                    parts.append(f"\nCODE PREAMBLE (prepend to all Python code):\n{upload.code_preamble}")
+            else:
+                # Fallback to basic file summary
+                try:
+                    df, _ = parse_file(upload.file_path, upload.file_type)
+                    parts.append(get_file_summary(df))
+                    parts.append(f"\nFile path for code: {upload.file_path}")
+                except Exception as exc:
+                    logger.warning("Could not parse file for context: %s", exc)
 
     # Append metric definitions (semantic layer) if any exist.
     if connection_id:
@@ -137,9 +145,10 @@ async def get_suggestions(
     current_user: CurrentUser,
     db: DbSession,
     connection_id: uuid.UUID | None = None,
+    conversation_id: uuid.UUID | None = None,
 ) -> dict:
-    """Generate smart query suggestions based on the connected database schema."""
-    from app.agents.suggestions import generate_suggestions
+    """Generate smart query suggestions based on schema and conversation history."""
+    from app.agents.suggestions import generate_follow_up_suggestions, generate_suggestions
     from app.core.permissions import require_permission, Permission
 
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
@@ -149,8 +158,42 @@ async def get_suggestions(
         schema_context = await _build_schema_context(db, connection_id, None)
 
     llm = get_llm()
-    suggestions = await generate_suggestions(schema_context, llm)
 
+    # If conversation_id provided, use conversation history for context-aware suggestions
+    if conversation_id:
+        msg_stmt = (
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at)
+        )
+        msg_result = await db.execute(msg_stmt)
+        msgs = list(msg_result.scalars().all())
+
+        if msgs:
+            # Build history
+            history = [{"role": m.role, "content": m.content or ""} for m in msgs[-10:]]
+            # Last user question and assistant answer
+            last_q = ""
+            last_a = ""
+            for m in reversed(msgs):
+                if m.role == "user" and not last_q:
+                    last_q = m.content or ""
+                if m.role == "assistant" and not last_a:
+                    last_a = m.content or ""
+                if last_q and last_a:
+                    break
+
+            suggestions = await generate_follow_up_suggestions(
+                schema_context=schema_context,
+                conversation_history=history,
+                last_question=last_q,
+                last_answer=last_a,
+                llm=llm,
+            )
+            return {"suggestions": suggestions}
+
+    # No conversation — generic suggestions
+    suggestions = await generate_suggestions(schema_context, llm)
     return {"suggestions": suggestions}
 
 
@@ -329,6 +372,204 @@ async def chat(
 def _sse(data: dict) -> str:
     """Format a dict as a server-sent event line."""
     return f"data: {json.dumps(data, default=str)}\n\n"
+
+
+# ---------------------------------------------------------------------------
+# Save as Notebook
+# ---------------------------------------------------------------------------
+
+@router.post("/conversations/{conversation_id}/notebook")
+async def save_conversation_as_notebook(
+    conversation_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> dict:
+    """Extract a reusable notebook from a conversation's analysis history."""
+    from app.agents.notebook.extractor import extract_notebook_from_conversation
+    from app.db.models import Notebook, NotebookCell
+
+    user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
+
+    # Load conversation messages
+    msg_stmt = (
+        select(Message)
+        .where(Message.conversation_id == conversation_id)
+        .order_by(Message.created_at)
+    )
+    msg_result = await db.execute(msg_stmt)
+    db_messages = list(msg_result.scalars().all())
+
+    if not db_messages:
+        raise HTTPException(status_code=400, detail="Conversation has no messages.")
+
+    # Convert to dicts
+    messages = [
+        {
+            "role": m.role,
+            "content": m.content or "",
+            "sql_query": m.sql_query,
+            "table_data": m.table_data,
+            "plotly_figure": m.plotly_figure,
+        }
+        for m in db_messages
+    ]
+
+    # Get conversation title for notebook name
+    conv_stmt = select(Conversation).where(Conversation.id == conversation_id)
+    conv_result = await db.execute(conv_stmt)
+    conversation = conv_result.scalar_one_or_none()
+    conv_title = conversation.title if conversation else ""
+
+    llm = get_llm()
+    extracted = await extract_notebook_from_conversation(messages, llm, conv_title)
+
+    # Create the notebook
+    notebook = Notebook(
+        name=extracted["name"],
+        description=extracted["description"],
+        user_id=user.id,
+        organization_id=user.organization_id or "",
+        connection_id=conversation.connection_id if conversation else None,
+    )
+    db.add(notebook)
+    await db.flush()
+
+    # Create cells
+    for i, cell_data in enumerate(extracted["cells"]):
+        cell = NotebookCell(
+            notebook_id=notebook.id,
+            order=i,
+            cell_type=cell_data["cell_type"],
+            content=cell_data["content"],
+            config=cell_data.get("config"),
+            output_variable=cell_data.get("output_variable", ""),
+        )
+        db.add(cell)
+
+    await db.commit()
+
+    logger.info("Saved conversation %s as notebook %s (%d cells)",
+                conversation_id, notebook.id, len(extracted["cells"]))
+
+    return {
+        "notebookId": str(notebook.id),
+        "name": extracted["name"],
+        "cellCount": len(extracted["cells"]),
+    }
+
+
+# ---------------------------------------------------------------------------
+# Report Generation
+# ---------------------------------------------------------------------------
+
+@router.get("/conversations/{conversation_id}/report")
+async def get_conversation_report(
+    conversation_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> dict:
+    """Get the saved report for a conversation, or 404 if none exists."""
+    from sqlalchemy import func as sqlfunc
+
+    user = await require_permission(Permission.VIEW_DATA, current_user, db)
+
+    # Find existing report for this conversation
+    stmt = (
+        select(Report)
+        .where(
+            Report.original_question == str(conversation_id),
+            Report.organization_id == (user.organization_id or ""),
+        )
+        .order_by(Report.created_at.desc())
+        .limit(1)
+    )
+    result = await db.execute(stmt)
+    report = result.scalar_one_or_none()
+
+    if report is None:
+        raise HTTPException(status_code=404, detail="No report found for this conversation.")
+
+    # Check if conversation has new messages since report was generated
+    latest_msg_stmt = (
+        select(sqlfunc.max(Message.created_at))
+        .where(Message.conversation_id == conversation_id)
+    )
+    latest_msg_result = await db.execute(latest_msg_stmt)
+    latest_msg_time = latest_msg_result.scalar()
+
+    has_new_messages = False
+    if latest_msg_time and report.created_at:
+        has_new_messages = latest_msg_time > report.created_at
+
+    return {
+        "report": report.plotly_figure,  # We store full report JSON here
+        "reportId": str(report.id),
+        "createdAt": report.created_at.isoformat() if report.created_at else None,
+        "hasNewMessages": has_new_messages,
+    }
+
+
+@router.post("/conversations/{conversation_id}/report")
+async def generate_conversation_report(
+    conversation_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> StreamingResponse:
+    """Generate a professional report from a conversation and save it."""
+    import json as _json
+    from app.agents.report.orchestrator import generate_report_from_conversation
+
+    user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
+
+    # Verify conversation exists
+    stmt = select(Conversation).where(Conversation.id == conversation_id)
+    result = await db.execute(stmt)
+    conversation = result.scalar_one_or_none()
+    if conversation is None:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+
+    llm = get_llm()
+
+    async def stream():
+        final_report = None
+
+        async for event in generate_report_from_conversation(
+            conversation_id=str(conversation_id),
+            db=db,
+            llm=llm,
+        ):
+            yield f"data: {_json.dumps(event, default=str)}\n\n"
+
+            if event.get("type") == "report_complete":
+                final_report = event.get("report")
+
+        # Save the report to DB
+        if final_report:
+            # Delete old report for this conversation
+            old_stmt = select(Report).where(
+                Report.original_question == str(conversation_id),
+                Report.organization_id == (user.organization_id or ""),
+            )
+            old_result = await db.execute(old_stmt)
+            for old in old_result.scalars().all():
+                await db.delete(old)
+
+            # Save new report
+            saved_report = Report(
+                name=final_report.get("title", "Report"),
+                description=final_report.get("subtitle", ""),
+                original_question=str(conversation_id),
+                summary_text=final_report.get("executiveSummary", ""),
+                plotly_figure=final_report,  # Store full report JSON in this column
+                table_data=None,
+                connection_id=conversation.connection_id,
+                user_id=user.id,
+                organization_id=user.organization_id or "",
+            )
+            db.add(saved_report)
+            await db.commit()
+
+    return StreamingResponse(stream(), media_type="text/event-stream")
 
 
 # ---------------------------------------------------------------------------

@@ -26,6 +26,7 @@ from app.agents.analyst import run_analyst
 from app.agents.decomposer import decompose_query
 from app.agents.executor import execute_code, execute_sql
 from app.agents.python_agent import generate_python
+from app.agents.repair import repair_sql
 from app.agents.router import route_query
 from app.agents.sql_agent import generate_sql
 from app.agents.state import AgentState
@@ -84,7 +85,12 @@ async def _respond(state: AgentState, llm: BaseChatModel) -> AgentState:
     if state.get("plotly_figure"):
         context_parts.append("A chart/visualisation HAS BEEN successfully generated and will be displayed to the user.")
     if state.get("error"):
-        context_parts.append(f"Error:\n{state['error']}")
+        # Clean up technical errors for user-facing response
+        error = state["error"]
+        if any(kw in error.upper() for kw in ("UNION", "SYNTAX", "COLUMN", "RELATION", "CAST", "TYPE")):
+            context_parts.append("Note: There was a technical issue with the query. Explain this to the user in plain language and suggest they rephrase their question.")
+        else:
+            context_parts.append(f"Error:\n{error}")
 
     context = "\n\n".join(context_parts) if context_parts else ""
 
@@ -118,8 +124,13 @@ def _after_validate(state: AgentState) -> str:
 
 
 def _after_sql_execute(state: AgentState) -> str:
-    """After SQL execution: retry on error, otherwise proceed to verification."""
+    """After SQL execution: try repair first, then retry sql_agent if repair fails."""
     if state.get("error") and state.get("retry_count", 0) < _MAX_RETRIES:
+        retry = state.get("retry_count", 0)
+        # First failure → try repair agent (surgical fix)
+        # Second+ failure → fall back to sql_agent (regenerate)
+        if retry == 0:
+            return "repair_sql"
         return "sql_agent"
     return "verify_results"
 
@@ -170,6 +181,9 @@ def build_graph(llm: BaseChatModel, db: AsyncSession) -> StateGraph:
     async def respond_node(state: AgentState) -> AgentState:
         return await _respond(state, llm)
 
+    async def repair_node(state: AgentState) -> AgentState:
+        return await repair_sql(state, llm)
+
     async def analyst_node(state: AgentState) -> AgentState:
         return await run_analyst(state, llm, db)
 
@@ -184,6 +198,7 @@ def build_graph(llm: BaseChatModel, db: AsyncSession) -> StateGraph:
     graph.add_node("verify_results", verify_node)
     graph.add_node("code_execute", code_execute_node)
     graph.add_node("respond", respond_node)
+    graph.add_node("repair_sql", repair_node)
     graph.add_node("analyst", analyst_node)
 
     # Edges
@@ -214,8 +229,9 @@ def build_graph(llm: BaseChatModel, db: AsyncSession) -> StateGraph:
     graph.add_conditional_edges(
         "sql_execute",
         _after_sql_execute,
-        {"sql_agent": "sql_agent", "verify_results": "verify_results"},
+        {"repair_sql": "repair_sql", "sql_agent": "sql_agent", "verify_results": "verify_results"},
     )
+    graph.add_edge("repair_sql", "sql_execute")
     graph.add_conditional_edges(
         "verify_results",
         _after_verify,
@@ -306,6 +322,9 @@ async def _run_single_query(
                 if node_state.get("error"):
                     yield {"type": "status", "content": "Verifying results... re-trying for better accuracy"}
 
+            elif node_name == "repair_sql":
+                yield {"type": "status", "content": "Fixing query..."}
+
             elif node_name == "analyst":
                 yield {"type": "status", "content": "Running deep analysis..."}
                 if node_state.get("table_data"):
@@ -368,17 +387,19 @@ async def run_agent(
     # Step 1: Decompose the query
     sub_queries = await decompose_query(query, llm)
 
+    all_texts: list[str] = []
+
     if len(sub_queries) == 1:
         # Single query — run directly
         async for chunk in _run_single_query(
             compiled, query, connection_id, file_id, schema_context, history_messages,
         ):
+            if chunk.get("type") == "text":
+                all_texts.append(chunk.get("content", ""))
             yield chunk
     else:
         # Multiple sub-queries — run each sequentially
         yield {"type": "status", "content": f"Breaking into {len(sub_queries)} parts..."}
-
-        all_texts: list[str] = []
 
         for i, sub_q in enumerate(sub_queries, 1):
             yield {"type": "status", "content": f"Part {i}/{len(sub_queries)}: {sub_q}"}
@@ -402,3 +423,18 @@ async def run_agent(
         # Combine all text responses
         if all_texts:
             yield {"type": "text", "content": "\n\n---\n\n".join(all_texts)}
+
+    # Generate follow-up suggestions
+    try:
+        from app.agents.suggestions import generate_follow_up_suggestions
+        follow_ups = await generate_follow_up_suggestions(
+            schema_context=schema_context,
+            conversation_history=history or [],
+            last_question=query,
+            last_answer=all_texts[-1] if all_texts else "",
+            llm=llm,
+        )
+    except Exception:
+        follow_ups = []
+
+    yield {"type": "suggestions", "content": "", "data": follow_ups}

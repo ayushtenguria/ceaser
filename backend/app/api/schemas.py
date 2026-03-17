@@ -180,6 +180,7 @@ class FileUploadResponse(BaseModel):
     file_type: str
     size_bytes: int
     column_info: dict[str, Any] | None = None
+    excel_metadata: dict[str, Any] | None = None
     created_at: datetime
 
 
@@ -284,3 +285,94 @@ class AuditLogResponse(BaseModel):
     details: dict[str, Any] | None
     ip_address: str
     created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Notebooks
+# ---------------------------------------------------------------------------
+
+class NotebookCellCreate(_CamelModel):
+    """Create/update a notebook cell."""
+    cell_type: str = Field(..., pattern="^(text|file|input|prompt|code)$")
+    content: str = ""
+    config: dict[str, Any] | None = None
+    output_variable: str = ""
+    order: int = 0
+
+class NotebookCreate(_CamelModel):
+    """Create a new notebook."""
+    name: str = Field(..., min_length=1, max_length=500)
+    description: str = ""
+    connection_id: uuid.UUID | None = None
+    cells: list[NotebookCellCreate] = []
+
+class NotebookUpdate(_CamelModel):
+    """Update notebook metadata."""
+    name: str | None = None
+    description: str | None = None
+    connection_id: uuid.UUID | None = None
+    is_template: bool | None = None
+    is_public: bool | None = None
+    template_category: str | None = None
+
+class NotebookCellResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+    id: uuid.UUID
+    notebook_id: uuid.UUID
+    order: int
+    cell_type: str
+    content: str
+    config: dict[str, Any] | None
+    output_variable: str
+
+class NotebookResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+    id: uuid.UUID
+    name: str
+    description: str
+    organization_id: str
+    connection_id: uuid.UUID | None
+    is_template: bool
+    is_public: bool
+    template_category: str
+    last_run_at: datetime | None
+    run_count: int
+    cells: list[NotebookCellResponse] = []
+    created_at: datetime
+    updated_at: datetime
+
+class NotebookCellResultResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+    id: uuid.UUID
+    cell_id: uuid.UUID
+    cell_order: int
+    status: str
+    output_text: str
+    output_table: dict[str, Any] | None
+    output_chart: dict[str, Any] | None
+    output_code: str | None
+    error: str | None
+    execution_time_ms: int
+
+class NotebookRunResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+    id: uuid.UUID
+    notebook_id: uuid.UUID
+    status: str
+    user_inputs: dict[str, Any] | None
+    file_uploads: dict[str, Any] | None
+    started_at: datetime | None
+    completed_at: datetime | None
+    total_execution_ms: int
+    error: str | None
+    cell_results: list[NotebookCellResultResponse] = []
+    created_at: datetime
+
+class NotebookRunRequest(_CamelModel):
+    """Request to run a notebook."""
+    inputs: dict[str, Any] = {}      # {cell_id: value}
+    files: dict[str, str] = {}       # {cell_id: file_id}
+
+class CellReorderRequest(_CamelModel):
+    """Reorder cells."""
+    cell_ids: list[uuid.UUID]  # ordered list of cell IDs

@@ -1,16 +1,32 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { BarChart3, Database, MessageSquare } from "lucide-react";
-import { ScrollArea } from "@/components/ui/scroll-area";
+import { BarChart3, BookMarked, Database, FileText, Loader2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ChatInput from "@/components/chat/ChatInput";
 import MessageBubble from "@/components/chat/MessageBubble";
+import ReportSheet from "@/components/chat/ReportSheet";
 import { useChat } from "@/hooks/useChat";
 import { useConnectionsStore } from "@/store/connections";
+import * as api from "@/lib/api";
 
 export default function ChatInterface() {
-  const { messages, isStreaming, sendMessage } = useChat();
+  const navigate = useNavigate();
+  const { messages, isStreaming, sendMessage, suggestions, activeConversationId } = useChat();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const [reportOpen, setReportOpen] = useState(false);
+  const [savingNotebook, setSavingNotebook] = useState(false);
+
+  const handleSaveAsNotebook = useCallback(async () => {
+    if (!activeConversationId) return;
+    setSavingNotebook(true);
+    try {
+      const result = await api.saveConversationAsNotebook(activeConversationId);
+      navigate(`/notebooks/${result.notebookId}`);
+    } catch {
+    } finally {
+      setSavingNotebook(false);
+    }
+  }, [activeConversationId, navigate]);
 
   // Auto-scroll to bottom on new messages or streaming updates
   useEffect(() => {
@@ -19,6 +35,31 @@ export default function ChatInterface() {
 
   return (
     <div className="flex h-full flex-col">
+      {/* Report button — shown when there are messages */}
+      {messages.length > 0 && !isStreaming && (
+        <div className="flex items-center justify-end gap-2 border-b px-4 py-1.5">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs"
+            onClick={handleSaveAsNotebook}
+            disabled={savingNotebook}
+          >
+            {savingNotebook ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BookMarked className="h-3.5 w-3.5" />}
+            Save as Notebook
+          </Button>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5 text-xs"
+            onClick={() => setReportOpen(true)}
+          >
+            <FileText className="h-3.5 w-3.5" />
+            Create Report
+          </Button>
+        </div>
+      )}
+
       {/* Messages */}
       <div className="flex-1 overflow-y-auto">
         {messages.length === 0 ? (
@@ -39,12 +80,39 @@ export default function ChatInterface() {
         )}
       </div>
 
+      {/* Follow-up suggestions */}
+      {suggestions.length > 0 && !isStreaming && messages.length > 0 && (
+        <div className="border-t bg-card/50 px-4 py-3">
+          <div className="mx-auto max-w-4xl">
+            <p className="mb-2 text-xs font-medium text-muted-foreground">Suggestions</p>
+            <div className="flex flex-wrap gap-2">
+              {suggestions.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => sendMessage(s)}
+                  className="rounded-lg border bg-background px-3 py-1.5 text-xs text-foreground transition-colors hover:bg-accent"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Input */}
       <div className="border-t bg-card p-4">
         <div className="mx-auto max-w-4xl">
           <ChatInput onSend={sendMessage} isStreaming={isStreaming} />
         </div>
       </div>
+
+      {/* Report side sheet */}
+      <ReportSheet
+        conversationId={activeConversationId}
+        open={reportOpen}
+        onClose={() => setReportOpen(false)}
+      />
     </div>
   );
 }

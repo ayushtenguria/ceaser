@@ -100,6 +100,29 @@ async def upload_file(
         logger.warning("Could not parse uploaded file: %s", exc)
         # File is saved; we just won't have column_info.
 
+    # ── Run Excel Intelligence Engine for xlsx/xls/csv files ───────
+    excel_context = None
+    code_preamble = None
+    parquet_paths_data = None
+    excel_metadata = None
+
+    try:
+        from app.agents.excel.orchestrator import process_excel_upload
+        from app.core.deps import get_llm
+        llm = get_llm()
+        excel_result = await process_excel_upload(str(dest_path), llm)
+        excel_context = excel_result.get("excel_context")
+        code_preamble = excel_result.get("code_preamble")
+        parquet_paths_data = excel_result.get("parquet_paths")
+        excel_metadata = {
+            "insight": excel_result.get("insight"),
+            "quality_report": excel_result.get("quality_report"),
+            "relationships": excel_result.get("relationships"),
+        }
+        logger.info("Excel processing complete for %s", file.filename)
+    except Exception as exc:
+        logger.warning("Excel processing failed (file still saved): %s", exc)
+
     # ── Persist record ──────────────────────────────────────────────
     upload = FileUpload(
         filename=file.filename,
@@ -109,6 +132,10 @@ async def upload_file(
         organization_id=user.organization_id or current_user.org_id or "",
         user_id=user.id,
         column_info=column_info,
+        excel_context=excel_context,
+        code_preamble=code_preamble,
+        parquet_paths=parquet_paths_data,
+        excel_metadata=excel_metadata,
     )
     db.add(upload)
     await db.flush()

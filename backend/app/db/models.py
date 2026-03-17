@@ -138,6 +138,10 @@ class FileUpload(Base):
     organization_id: Mapped[str] = mapped_column(String(255))
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     column_info: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    excel_context: Mapped[str | None] = mapped_column(Text, nullable=True)  # LLM context string
+    code_preamble: Mapped[str | None] = mapped_column(Text, nullable=True)  # Python import code
+    parquet_paths: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {var_name: path}
+    excel_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # relationships, quality, insight
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="file_uploads")
@@ -215,3 +219,131 @@ class MetricDefinition(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     created_at: Mapped[datetime] = mapped_column(default=func.now())
     updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
+
+
+# ---------------------------------------------------------------------------
+# Notebooks
+# ---------------------------------------------------------------------------
+
+class Notebook(Base):
+    """Reusable analysis notebook — a sequence of cells that execute top-to-bottom."""
+
+    __tablename__ = "notebooks"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(500))
+    description: Mapped[str] = mapped_column(Text, default="")
+
+    # Owner
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    organization_id: Mapped[str] = mapped_column(String(255), default="")
+
+    # Optional default data source
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("database_connections.id"), nullable=True)
+
+    # Template settings
+    is_template: Mapped[bool] = mapped_column(default=False)
+    is_public: Mapped[bool] = mapped_column(default=False)
+    template_category: Mapped[str] = mapped_column(String(100), default="")
+
+    # Status
+    last_run_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    run_count: Mapped[int] = mapped_column(default=0)
+
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    cells: Mapped[list["NotebookCell"]] = relationship(
+        back_populates="notebook", cascade="all, delete-orphan",
+        order_by="NotebookCell.order",
+    )
+    runs: Mapped[list["NotebookRun"]] = relationship(
+        back_populates="notebook", cascade="all, delete-orphan",
+    )
+
+
+class NotebookCell(Base):
+    """A single cell within a notebook — text, file, input, prompt, or code."""
+
+    __tablename__ = "notebook_cells"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    notebook_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("notebooks.id", ondelete="CASCADE"))
+
+    order: Mapped[int] = mapped_column(default=0)  # execution order (0-based)
+    cell_type: Mapped[str] = mapped_column(String(20))  # text, file, input, prompt, code
+
+    # Content
+    content: Mapped[str] = mapped_column(Text, default="")  # markdown/prompt/code
+
+    # Config — varies by cell type
+    # text: {} (no config)
+    # file: {"accepted_types": [".xlsx", ".csv"], "description": "Upload sales data"}
+    # input: {"input_type": "text|number|select|date", "label": "Year", "options": ["2023","2024"], "default": "2024"}
+    # prompt: {"show_code": false, "show_table": true, "show_chart": true}
+    # code: {"language": "python"}
+    config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+
+    # Variable name — output of this cell is available as this variable in subsequent cells
+    output_variable: Mapped[str] = mapped_column(String(100), default="")
+
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+    # Relationships
+    notebook: Mapped["Notebook"] = relationship(back_populates="cells")
+
+
+class NotebookRun(Base):
+    """A single execution of a notebook with specific inputs/files."""
+
+    __tablename__ = "notebook_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    notebook_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("notebooks.id", ondelete="CASCADE"))
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, running, completed, failed
+
+    # User-provided inputs for this run
+    user_inputs: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {cell_id: value}
+    file_uploads: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {cell_id: file_id}
+
+    started_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    total_execution_ms: Mapped[int] = mapped_column(default=0)
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+    # Relationships
+    notebook: Mapped["Notebook"] = relationship(back_populates="runs")
+    cell_results: Mapped[list["NotebookCellResult"]] = relationship(
+        cascade="all, delete-orphan",
+        order_by="NotebookCellResult.cell_order",
+    )
+
+
+class NotebookCellResult(Base):
+    """Output of a single cell from a specific notebook run."""
+
+    __tablename__ = "notebook_cell_results"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    run_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("notebook_runs.id", ondelete="CASCADE"))
+    cell_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("notebook_cells.id", ondelete="CASCADE"))
+    cell_order: Mapped[int] = mapped_column(default=0)
+
+    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, running, success, error, skipped
+
+    # Outputs
+    output_text: Mapped[str] = mapped_column(Text, default="")
+    output_table: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    output_chart: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    output_code: Mapped[str | None] = mapped_column(Text, nullable=True)  # generated code (for prompt cells)
+    output_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # serialized DataFrame info
+    error: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    execution_time_ms: Mapped[int] = mapped_column(default=0)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())

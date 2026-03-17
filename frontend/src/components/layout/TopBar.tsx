@@ -15,6 +15,7 @@ const PAGE_TITLES: Record<string, string> = {
   "/org-settings": "Organization Settings",
   "/audit": "Audit Log",
   "/admin": "Admin Dashboard",
+  "/notebooks": "Notebooks",
 };
 
 function getPageTitle(pathname: string): string {

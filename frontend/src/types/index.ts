@@ -113,7 +113,7 @@ export interface ChatRequest {
 }
 
 export interface StreamChunk {
-  type: "text" | "sql" | "code" | "table" | "chart" | "error" | "done" | "status" | "conversation_id";
+  type: "text" | "sql" | "code" | "table" | "chart" | "error" | "done" | "status" | "conversation_id" | "suggestions";
   content: string;
   data?: unknown;
 }

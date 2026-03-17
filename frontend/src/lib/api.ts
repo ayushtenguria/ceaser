@@ -74,8 +74,10 @@ export async function getPermissions(): Promise<{ role: string; isSuperAdmin: bo
   return data;
 }
 
-export async function getSuggestions(connectionId?: string): Promise<string[]> {
-  const params = connectionId ? { connection_id: connectionId } : {};
+export async function getSuggestions(connectionId?: string, conversationId?: string): Promise<string[]> {
+  const params: Record<string, string> = {};
+  if (connectionId) params.connection_id = connectionId;
+  if (conversationId) params.conversation_id = conversationId;
   const { data } = await api.get<{ suggestions: string[] }>("/suggestions", { params });
   return data.suggestions;
 }
@@ -337,4 +339,179 @@ export async function inviteUserToOrg(orgId: string, invite: { email: string; ro
 export async function getAdminUsers(): Promise<any[]> {
   const { data } = await api.get("/admin/users");
   return data;
+}
+
+// --- Notebooks ---
+
+export async function getNotebooks(): Promise<any[]> {
+  const { data } = await api.get("/notebooks");
+  return data;
+}
+
+export async function createNotebook(notebook: {
+  name: string;
+  description?: string;
+  connectionId?: string;
+  cells?: any[];
+}): Promise<any> {
+  const { data } = await api.post("/notebooks", notebook);
+  return data;
+}
+
+export async function getNotebook(id: string): Promise<any> {
+  const { data } = await api.get(`/notebooks/${id}`);
+  return data;
+}
+
+export async function updateNotebook(id: string, updates: any): Promise<any> {
+  const { data } = await api.patch(`/notebooks/${id}`, updates);
+  return data;
+}
+
+export async function deleteNotebook(id: string): Promise<void> {
+  await api.delete(`/notebooks/${id}`);
+}
+
+export async function addNotebookCell(notebookId: string, cell: any): Promise<any> {
+  const { data } = await api.post(`/notebooks/${notebookId}/cells`, cell);
+  return data;
+}
+
+export async function updateNotebookCell(notebookId: string, cellId: string, cell: any): Promise<any> {
+  const { data } = await api.patch(`/notebooks/${notebookId}/cells/${cellId}`, cell);
+  return data;
+}
+
+export async function deleteNotebookCell(notebookId: string, cellId: string): Promise<any> {
+  const { data } = await api.delete(`/notebooks/${notebookId}/cells/${cellId}`);
+  return data;
+}
+
+export async function reorderNotebookCells(notebookId: string, cellIds: string[]): Promise<any> {
+  const { data } = await api.post(`/notebooks/${notebookId}/cells/reorder`, { cellIds });
+  return data;
+}
+
+export async function* runNotebook(
+  notebookId: string,
+  inputs: Record<string, any> = {},
+  files: Record<string, string> = {},
+): AsyncGenerator<any> {
+  const token = _getToken ? await _getToken() : null;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 300_000); // 5 min
+
+  const response = await fetch(`${API_URL}/api/v1/notebooks/${notebookId}/run`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    body: JSON.stringify({ inputs, files }),
+    signal: controller.signal,
+  });
+
+  if (!response.ok) {
+    clearTimeout(timeoutId);
+    throw new Error(`Run failed: ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
+        try { yield JSON.parse(trimmed.slice(6)); } catch {}
+      }
+    }
+  } finally {
+    clearTimeout(timeoutId);
+    reader.releaseLock();
+  }
+}
+
+export async function getNotebookRuns(notebookId: string): Promise<any[]> {
+  const { data } = await api.get(`/notebooks/${notebookId}/runs`);
+  return data;
+}
+
+export async function getNotebookTemplates(): Promise<any[]> {
+  const { data } = await api.get("/notebooks/templates");
+  return data;
+}
+
+export async function generateNotebookCells(description: string): Promise<any> {
+  const { data } = await api.post("/notebooks/generate", { description });
+  return data;
+}
+
+// --- Report Generation ---
+
+export async function saveConversationAsNotebook(conversationId: string): Promise<any> {
+  const { data } = await api.post(`/conversations/${conversationId}/notebook`);
+  return data;
+}
+
+export async function getSavedReport(conversationId: string): Promise<any | null> {
+  try {
+    const { data } = await api.get(`/conversations/${conversationId}/report`);
+    return data;
+  } catch {
+    return null; // 404 = no report
+  }
+}
+
+export async function* generateReport(conversationId: string): AsyncGenerator<any> {
+  const token = _getToken ? await _getToken() : null;
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 300_000);
+
+  const response = await fetch(`${API_URL}/api/v1/conversations/${conversationId}/report`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+    },
+    signal: controller.signal,
+  });
+
+  if (!response.ok) {
+    clearTimeout(timeoutId);
+    throw new Error(`Report generation failed: ${response.status}`);
+  }
+
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error("No response body");
+
+  const decoder = new TextDecoder();
+  let buffer = "";
+
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split("\n");
+      buffer = lines.pop() || "";
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed || !trimmed.startsWith("data: ")) continue;
+        try { yield JSON.parse(trimmed.slice(6)); } catch {}
+      }
+    }
+  } finally {
+    clearTimeout(timeoutId);
+    reader.releaseLock();
+  }
 }

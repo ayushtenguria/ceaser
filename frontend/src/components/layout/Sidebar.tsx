@@ -15,6 +15,7 @@ import {
   PanelLeftClose,
   PanelLeft,
   X,
+  BookMarked,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -35,6 +36,7 @@ const clerkEnabled = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 const NAV_ITEMS = [
   { label: "Chat", icon: MessageSquare, path: "/chat", adminOnly: false },
   { label: "Reports", icon: BarChart3, path: "/reports", adminOnly: false },
+  { label: "Notebooks", icon: BookMarked, path: "/notebooks", adminOnly: false },
   { label: "Connections", icon: Database, path: "/connections", adminOnly: false },
   { label: "Metrics", icon: BookOpen, path: "/metrics", adminOnly: false },
   { label: "Files", icon: FileUp, path: "/files", adminOnly: false },

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import { useChatStore } from "@/store/chat";
 import { useConnectionsStore } from "@/store/connections";
 import * as api from "@/lib/api";
@@ -27,6 +27,20 @@ export function useChat() {
   const currentMessages = effectiveConvId
     ? messages[effectiveConvId] || []
     : [];
+
+  // Fetch suggestions when loading an existing conversation
+  useEffect(() => {
+    if (!activeConversationId || isStreaming) return;
+    const msgs = messages[activeConversationId];
+    if (msgs && msgs.length > 0) {
+      // Has messages — fetch context-aware follow-up suggestions
+      api.getSuggestions(activeConnectionId || undefined, activeConversationId)
+        .then(setSuggestions)
+        .catch(() => setSuggestions([]));
+    } else {
+      setSuggestions([]);
+    }
+  }, [activeConversationId, activeConnectionId, messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendMessage = useCallback(
     async (content: string, fileId?: string) => {
@@ -131,6 +145,13 @@ export function useChat() {
               accumulatedContent += chunk.content;
               messageType = "error";
               break;
+            case "suggestions": {
+              const s = chunk.data as string[];
+              if (Array.isArray(s) && s.length > 0) {
+                setSuggestions(s);
+              }
+              break;
+            }
             case "status":
               break;
             case "done":
@@ -161,10 +182,6 @@ export function useChat() {
       } finally {
         setIsStreaming(false);
         setPendingConvId(null);
-        // Fetch follow-up suggestions after each response
-        api.getSuggestions(activeConnectionId || undefined)
-          .then(setSuggestions)
-          .catch(() => setSuggestions([]));
       }
     },
     [
@@ -185,5 +202,6 @@ export function useChat() {
     isStreaming,
     error,
     sendMessage,
+    suggestions,
   };
 }

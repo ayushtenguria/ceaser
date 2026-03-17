@@ -13,6 +13,8 @@ import OnboardingPage from "@/pages/OnboardingPage";
 import AdminPage from "@/pages/AdminPage";
 import OrgSettingsPage from "@/pages/OrgSettingsPage";
 import AuditPage from "@/pages/AuditPage";
+import NotebooksPage from "@/pages/NotebooksPage";
+import NotebookEditorPage from "@/pages/NotebookEditorPage";
 
 const clerkEnabled = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
@@ -45,6 +47,8 @@ export default function App() {
           <Route path="/org-settings" element={<OrgSettingsPage />} />
           <Route path="/admin" element={<AdminPage />} />
           <Route path="/audit" element={<AuditPage />} />
+          <Route path="/notebooks" element={<NotebooksPage />} />
+          <Route path="/notebooks/:notebookId" element={<NotebookEditorPage />} />
         </Route>
       </Routes>
     </ErrorBoundary>
