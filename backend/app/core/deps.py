@@ -44,7 +44,7 @@ def get_llm(
 
     if model == "claude":
         return ChatAnthropic(
-            model="claude-sonnet-4-20250514",
+            model=settings.claude_model,
             anthropic_api_key=settings.anthropic_api_key,
             temperature=0,
             max_tokens=4096,
@@ -52,7 +52,7 @@ def get_llm(
 
     # Default: Gemini
     return ChatGoogleGenerativeAI(
-        model="gemini-2.0-flash",
+        model=settings.gemini_model,
         google_api_key=settings.gemini_api_key,
         temperature=0,
         max_output_tokens=4096,

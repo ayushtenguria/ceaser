@@ -12,6 +12,7 @@ from sqlalchemy import select
 
 from app.api.schemas import FileUploadResponse
 from app.core.deps import CurrentUser, DbSession
+from app.core.permissions import Permission, require_permission
 from app.db.models import FileUpload, User
 from app.services.file_parser import parse_file
 
@@ -34,7 +35,8 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
     if user is None:
-        if clerk_id == "dev_user":
+        from app.core.config import get_settings
+        if get_settings().dev_mode and clerk_id == "dev_user":
             user = User(
                 clerk_id="dev_user",
                 email="dev@ceaser.local",
@@ -61,7 +63,7 @@ async def upload_file(
     The file is persisted to ``uploads/<user_id>/<uuid>_<filename>`` and its
     column metadata is extracted and stored.
     """
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.UPLOAD_FILES, current_user, db)
 
     # ── Validate ────────────────────────────────────────────────────
     if not file.filename:
@@ -104,7 +106,7 @@ async def upload_file(
         file_type=file_type,
         file_path=str(dest_path),
         size_bytes=len(contents),
-        organization_id=current_user.org_id or "",
+        organization_id=user.organization_id or current_user.org_id or "",
         user_id=user.id,
         column_info=column_info,
     )
@@ -117,10 +119,10 @@ async def upload_file(
 @router.get("/", response_model=list[FileUploadResponse])
 async def list_files(current_user: CurrentUser, db: DbSession) -> list[FileUpload]:
     """List all files uploaded by the current user."""
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.VIEW_DATA, current_user, db)
     stmt = (
         select(FileUpload)
-        .where(FileUpload.user_id == user.id)
+        .where(FileUpload.organization_id == (user.organization_id or current_user.org_id or ""))
         .order_by(FileUpload.created_at.desc())
     )
     result = await db.execute(stmt)
@@ -134,7 +136,7 @@ async def delete_file(
     db: DbSession,
 ) -> None:
     """Delete an uploaded file (both DB record and disk file)."""
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.DELETE_FILES, current_user, db)
     stmt = select(FileUpload).where(FileUpload.id == file_id, FileUpload.user_id == user.id)
     result = await db.execute(stmt)
     upload = result.scalar_one_or_none()

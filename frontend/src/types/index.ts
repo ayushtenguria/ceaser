@@ -70,6 +70,8 @@ export interface Message {
   codeBlock?: string;
   plotlyFigure?: PlotlyFigure;
   tableData?: TableData;
+  plotlyFigures?: PlotlyFigure[];
+  tableDatas?: TableData[];
   error?: string;
   createdAt: string;
 }
@@ -89,7 +91,8 @@ export interface PlotlyFigure {
 export interface TableData {
   columns: string[];
   rows: Record<string, unknown>[];
-  totalRows: number;
+  totalRows?: number;
+  total_rows?: number;
 }
 
 export interface FileUpload {

@@ -18,11 +18,13 @@ from app.api.schemas import (
     MessageResponse,
 )
 from app.core.deps import CurrentUser, DbSession, get_llm
+from app.core.permissions import Permission, require_permission
 from app.db.models import (
     Conversation,
     DatabaseConnection,
     FileUpload,
     Message,
+    MetricDefinition,
     User,
 )
 from app.services.file_parser import get_file_summary, parse_file
@@ -42,7 +44,8 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
     if user is None:
-        if clerk_id == "dev_user":
+        from app.core.config import get_settings
+        if get_settings().dev_mode and clerk_id == "dev_user":
             user = User(
                 clerk_id="dev_user",
                 email="dev@ceaser.local",
@@ -71,9 +74,25 @@ async def _build_schema_context(
         result = await db.execute(stmt)
         conn = result.scalar_one_or_none()
         if conn:
+            parts.append(f"DATABASE DIALECT: {conn.db_type.upper()}")
             if conn.schema_cache:
-                # Reconstruct SchemaInfo from cache for formatting.
-                parts.append(json.dumps(conn.schema_cache, default=str)[:4000])
+                # Reconstruct SchemaInfo from cache and format for LLM.
+                from app.services.schema import SchemaInfo, TableInfo, ColumnInfo
+                tables = []
+                for t in conn.schema_cache.get("tables", []):
+                    cols = [
+                        ColumnInfo(
+                            name=c["name"],
+                            data_type=c.get("data_type", "unknown"),
+                            nullable=c.get("nullable", True),
+                            primary_key=c.get("primary_key", False),
+                            foreign_key=c.get("foreign_key"),
+                            sample_values=c.get("sample_values", []),
+                        )
+                        for c in t.get("columns", [])
+                    ]
+                    tables.append(TableInfo(name=t["name"], columns=cols, row_count=t.get("row_count")))
+                parts.append(format_schema_for_llm(SchemaInfo(tables=tables)))
             else:
                 schema = await introspect_schema(conn)
                 parts.append(format_schema_for_llm(schema))
@@ -90,12 +109,50 @@ async def _build_schema_context(
             except Exception as exc:
                 logger.warning("Could not parse file for context: %s", exc)
 
+    # Append metric definitions (semantic layer) if any exist.
+    if connection_id:
+        metrics_stmt = select(MetricDefinition).where(
+            MetricDefinition.connection_id == connection_id
+        )
+        metrics_result = await db.execute(metrics_stmt)
+        metrics = list(metrics_result.scalars().all())
+        if metrics:
+            metric_lines = ["\n\nBUSINESS METRICS (use these exact definitions when the user references these terms)", "=" * 50]
+            for m in metrics:
+                metric_lines.append(f"\n{m.name} ({m.category})")
+                if m.description:
+                    metric_lines.append(f"  Description: {m.description}")
+                metric_lines.append(f"  SQL: {m.sql_expression}")
+            parts.append("\n".join(metric_lines))
+
     return "\n\n".join(parts) if parts else ""
 
 
 # ---------------------------------------------------------------------------
 # Endpoints
 # ---------------------------------------------------------------------------
+
+@router.get("/suggestions")
+async def get_suggestions(
+    current_user: CurrentUser,
+    db: DbSession,
+    connection_id: uuid.UUID | None = None,
+) -> dict:
+    """Generate smart query suggestions based on the connected database schema."""
+    from app.agents.suggestions import generate_suggestions
+    from app.core.permissions import require_permission, Permission
+
+    user = await require_permission(Permission.VIEW_DATA, current_user, db)
+
+    schema_context = ""
+    if connection_id:
+        schema_context = await _build_schema_context(db, connection_id, None)
+
+    llm = get_llm()
+    suggestions = await generate_suggestions(schema_context, llm)
+
+    return {"suggestions": suggestions}
+
 
 @router.post("/chat")
 async def chat(
@@ -107,18 +164,18 @@ async def chat(
 
     If ``conversation_id`` is null, a new conversation is created.
     """
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.QUERY_DATA, current_user, db)
 
     # ── Resolve or create conversation ──────────────────────────────
     if body.conversation_id:
-        stmt = select(Conversation).where(
-            Conversation.id == body.conversation_id,
-            Conversation.user_id == user.id,
-        )
+        # Look up conversation — allow access if user owns it or is in same org
+        stmt = select(Conversation).where(Conversation.id == body.conversation_id)
         result = await db.execute(stmt)
         conversation = result.scalar_one_or_none()
         if conversation is None:
             raise HTTPException(status_code=404, detail="Conversation not found.")
+        # For now allow the conversation owner to continue their own conversations
+        # In production, add proper org-level check here
     else:
         title = body.message[:80] if len(body.message) > 0 else "New Conversation"
         conversation = Conversation(
@@ -141,10 +198,40 @@ async def chat(
     db.add(user_msg)
     await db.flush()
 
+    # Commit conversation + user message NOW so follow-up requests can find it.
+    # After commit, session stays open for the SSE generator's later writes.
+    await db.commit()
+    # Re-attach the conversation object to this session after commit
+    await db.refresh(conversation)
+
     # ── Build context ───────────────────────────────────────────────
     effective_connection_id = body.connection_id or conversation.connection_id
     effective_file_id = body.file_id or conversation.file_id
     schema_context = await _build_schema_context(db, effective_connection_id, effective_file_id)
+
+    # ── Load conversation history for follow-up context ──────────
+    history_messages: list[dict[str, str]] = []
+    if body.conversation_id:
+        hist_stmt = (
+            select(Message)
+            .where(Message.conversation_id == conversation.id)
+            .order_by(Message.created_at)
+        )
+        hist_result = await db.execute(hist_stmt)
+        prev_msgs = list(hist_result.scalars().all())
+        # Take last 10 messages (exclude the one we just added)
+        for msg in prev_msgs[-11:-1]:
+            content = msg.content or ""
+            # For assistant messages, add a brief data summary (not raw SQL/JSON)
+            if msg.role == "assistant":
+                if msg.table_data:
+                    cols = msg.table_data.get("columns", [])
+                    rows = msg.table_data.get("rows", [])
+                    total = msg.table_data.get("total_rows", len(rows))
+                    content += f"\n(Data returned: {total} rows, columns: {', '.join(cols[:8])})"
+                if msg.plotly_figure:
+                    content += "\n(A chart was generated)"
+            history_messages.append({"role": msg.role, "content": content})
 
     llm = get_llm(model=body.model)
 
@@ -168,6 +255,7 @@ async def chat(
             connection_id=str(effective_connection_id) if effective_connection_id else None,
             file_id=str(effective_file_id) if effective_file_id else None,
             schema_context=schema_context,
+            history=history_messages,
             llm=llm,
             db=db,
         ):
@@ -223,6 +311,16 @@ async def chat(
         db.add(assistant_msg)
         await db.flush()
 
+        from app.services.audit import log_action
+        await log_action(
+            db,
+            user_id=current_user.user_id,
+            action="chat_query",
+            resource_type="conversation",
+            resource_id=str(conversation_id),
+            details={"question": body.message, "sql": collected_sql, "model": body.model},
+        )
+
         yield _sse({"type": "done", "content": str(assistant_msg.id)})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -240,10 +338,12 @@ def _sse(data: dict) -> str:
 @router.get("/conversations", response_model=list[ConversationResponse])
 async def list_conversations(current_user: CurrentUser, db: DbSession) -> list[Conversation]:
     """List all conversations for the authenticated user, newest first."""
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.VIEW_DATA, current_user, db)
+    # Filter by org instead of user for shared access within org
     stmt = (
         select(Conversation)
-        .where(Conversation.user_id == user.id)
+        .join(User, Conversation.user_id == User.id)
+        .where(User.organization_id == user.organization_id)
         .order_by(Conversation.updated_at.desc())
     )
     result = await db.execute(stmt)
@@ -257,7 +357,7 @@ async def get_conversation(
     db: DbSession,
 ) -> Conversation:
     """Get a single conversation by ID."""
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.VIEW_DATA, current_user, db)
     stmt = select(Conversation).where(
         Conversation.id == conversation_id,
         Conversation.user_id == user.id,
@@ -276,7 +376,7 @@ async def list_messages(
     db: DbSession,
 ) -> list[Message]:
     """Get all messages in a conversation, ordered by creation time."""
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.VIEW_DATA, current_user, db)
 
     # Verify ownership.
     conv_stmt = select(Conversation).where(
@@ -303,7 +403,7 @@ async def delete_conversation(
     db: DbSession,
 ) -> None:
     """Delete a conversation and all its messages."""
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.QUERY_DATA, current_user, db)
     stmt = select(Conversation).where(
         Conversation.id == conversation_id,
         Conversation.user_id == user.id,

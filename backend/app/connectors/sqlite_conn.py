@@ -36,6 +36,13 @@ class SQLiteConnector(BaseConnector):
             await self.connect()
         assert self._conn is not None
 
+        # HARD BLOCK: reject non-SELECT at connector level
+        stripped = query.strip().upper()
+        if not stripped.startswith("SELECT") and not stripped.startswith("WITH"):
+            raise PermissionError(
+                f"Only SELECT/WITH queries are allowed. Received: {stripped[:30]}"
+            )
+
         async with self._conn.execute(query) as cursor:
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
             raw_rows = await cursor.fetchall()

@@ -49,11 +49,20 @@ class PostgresConnector(BaseConnector):
             await self.connect()
         assert self._conn is not None
 
-        stmt = await self._conn.prepare(query)
-        columns = [attr.name for attr in stmt.get_attributes()]
-        records = await stmt.fetch()
-        rows = [dict(record) for record in records]
+        # HARD BLOCK: reject non-SELECT at connector level
+        stripped = query.strip().upper()
+        if not stripped.startswith("SELECT") and not stripped.startswith("WITH"):
+            raise PermissionError(
+                f"Only SELECT/WITH queries are allowed. Received: {stripped[:30]}"
+            )
 
+        # Execute in a read-only transaction for extra safety
+        async with self._conn.transaction(readonly=True):
+            stmt = await self._conn.prepare(query)
+            columns = [attr.name for attr in stmt.get_attributes()]
+            records = await stmt.fetch()
+
+        rows = [dict(record) for record in records]
         # Convert non-serialisable types to strings.
         for row in rows:
             for key, value in row.items():

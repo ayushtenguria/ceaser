@@ -37,6 +37,49 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
+// Retry on network errors (max 2 retries)
+api.interceptors.response.use(
+  (response) => response,
+  async (error) => {
+    const config = error.config;
+    if (!config || config._retryCount >= 2) return Promise.reject(error);
+
+    // Only retry on network errors or 5xx
+    if (!error.response || error.response.status >= 500) {
+      config._retryCount = (config._retryCount || 0) + 1;
+      await new Promise((r) => setTimeout(r, 1000 * config._retryCount));
+      return api(config);
+    }
+
+    return Promise.reject(error);
+  }
+);
+
+// --- Auth ---
+
+export async function syncUser(payload: {
+  clerkId: string;
+  email: string;
+  firstName: string;
+  lastName: string;
+  organizationId: string | null;
+  imageUrl: string | null;
+}): Promise<any> {
+  const { data } = await api.post("/auth/sync", payload);
+  return data;
+}
+
+export async function getPermissions(): Promise<{ role: string; isSuperAdmin: boolean; permissions: string[] }> {
+  const { data } = await api.get("/auth/me/permissions");
+  return data;
+}
+
+export async function getSuggestions(connectionId?: string): Promise<string[]> {
+  const params = connectionId ? { connection_id: connectionId } : {};
+  const { data } = await api.get<{ suggestions: string[] }>("/suggestions", { params });
+  return data.suggestions;
+}
+
 // --- Conversations ---
 
 export async function getConversations(): Promise<Conversation[]> {
@@ -71,6 +114,10 @@ export async function* sendMessage(
 ): AsyncGenerator<StreamChunk> {
   const token = _getToken ? await _getToken() : null;
 
+  // Use AbortController with 3-minute timeout for long-running analyses
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 180_000);
+
   const response = await fetch(`${API_URL}/api/v1/chat`, {
     method: "POST",
     headers: {
@@ -78,6 +125,7 @@ export async function* sendMessage(
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
     },
     body: JSON.stringify(request),
+    signal: controller.signal,
   });
 
   if (!response.ok) {
@@ -118,6 +166,7 @@ export async function* sendMessage(
       }
     }
   } finally {
+    clearTimeout(timeoutId);
     reader.releaseLock();
   }
 }
@@ -168,4 +217,124 @@ export async function uploadFile(file: File): Promise<FileUpload> {
 
 export async function deleteFile(id: string): Promise<void> {
   await api.delete(`/files/${id}`);
+}
+
+// --- Reports ---
+
+export async function getReports(): Promise<any[]> {
+  const { data } = await api.get("/reports");
+  return data;
+}
+
+export async function createReport(report: {
+  name: string;
+  description?: string;
+  connectionId?: string;
+  fileId?: string;
+  sqlQuery?: string;
+  pythonCode?: string;
+  originalQuestion?: string;
+  tableData?: any;
+  plotlyFigure?: any;
+  summaryText?: string;
+  schedule?: string;
+}): Promise<any> {
+  const { data } = await api.post("/reports", report);
+  return data;
+}
+
+export async function updateReport(id: string, updates: {
+  name?: string;
+  description?: string;
+  schedule?: string;
+  isPinned?: boolean;
+  isActive?: boolean;
+}): Promise<any> {
+  const { data } = await api.patch(`/reports/${id}`, updates);
+  return data;
+}
+
+export async function refreshReport(id: string): Promise<any> {
+  const { data } = await api.post(`/reports/${id}/refresh`);
+  return data;
+}
+
+export async function deleteReport(id: string): Promise<void> {
+  await api.delete(`/reports/${id}`);
+}
+
+// --- Metrics (Semantic Layer) ---
+
+export async function getMetrics(): Promise<any[]> {
+  const { data } = await api.get("/metrics");
+  return data;
+}
+
+export async function createMetric(metric: {
+  name: string;
+  description?: string;
+  sqlExpression: string;
+  category?: string;
+  connectionId?: string;
+}): Promise<any> {
+  const { data } = await api.post("/metrics", metric);
+  return data;
+}
+
+export async function updateMetric(id: string, updates: {
+  name?: string;
+  description?: string;
+  sqlExpression?: string;
+  category?: string;
+}): Promise<any> {
+  const { data } = await api.patch(`/metrics/${id}`, updates);
+  return data;
+}
+
+export async function deleteMetric(id: string): Promise<void> {
+  await api.delete(`/metrics/${id}`);
+}
+
+// --- Audit ---
+
+export async function getAuditLogs(params?: {
+  action?: string;
+  resourceType?: string;
+  limit?: number;
+  offset?: number;
+}): Promise<any[]> {
+  const { data } = await api.get("/audit", { params });
+  return data;
+}
+
+export async function getAuditStats(): Promise<any> {
+  const { data } = await api.get("/audit/stats");
+  return data;
+}
+
+// --- Admin ---
+
+export async function getAdminStats(): Promise<any> {
+  const { data } = await api.get("/admin/stats");
+  return data;
+}
+
+export async function getAdminOrganizations(): Promise<any[]> {
+  const { data } = await api.get("/admin/organizations");
+  return data;
+}
+
+export async function createAdminOrganization(org: { name: string; slug?: string }): Promise<any> {
+  const { data } = await api.post("/admin/organizations", org);
+  return data;
+}
+
+export async function inviteUserToOrg(orgId: string, invite: { email: string; role?: string }): Promise<any> {
+  const { data } = await api.post(`/admin/organizations/${orgId}/invite`, invite);
+  return data;
+}
+
+export async function getAdminUsers(): Promise<any[]> {
+  const { data } = await api.get("/admin/users");
+  return data;
 }

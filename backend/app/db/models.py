@@ -23,6 +23,8 @@ class User(Base):
     last_name: Mapped[str] = mapped_column(String(255), default="")
     organization_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+    role: Mapped[str] = mapped_column(String(50), default="member")  # "super_admin", "admin", "member", "viewer"
+    is_super_admin: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
@@ -30,6 +32,25 @@ class User(Base):
     conversations: Mapped[list[Conversation]] = relationship(back_populates="user")
     connections: Mapped[list[DatabaseConnection]] = relationship(back_populates="user")
     file_uploads: Mapped[list[FileUpload]] = relationship(back_populates="user")
+
+
+class OrganizationPlan(Base):
+    """Subscription plan and seat limits per organization."""
+
+    __tablename__ = "organization_plans"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    plan_name: Mapped[str] = mapped_column(String(100), default="free")  # free, starter, business, enterprise
+    max_seats: Mapped[int] = mapped_column(default=5)
+    max_connections: Mapped[int] = mapped_column(default=1)
+    max_queries_per_day: Mapped[int] = mapped_column(default=50)
+    max_reports: Mapped[int] = mapped_column(default=5)
+    features: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # Feature flags
+    is_active: Mapped[bool] = mapped_column(default=True)
+    trial_ends_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
 
 class DatabaseConnection(Base):
@@ -120,3 +141,77 @@ class FileUpload(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="file_uploads")
+
+
+class Report(Base):
+    """A saved report created from chat analysis results."""
+
+    __tablename__ = "reports"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(500))
+    description: Mapped[str] = mapped_column(Text, default="")
+
+    # Source
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("database_connections.id"), nullable=True)
+    file_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("file_uploads.id"), nullable=True)
+
+    # The saved query/analysis
+    sql_query: Mapped[str | None] = mapped_column(Text, nullable=True)
+    python_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    original_question: Mapped[str] = mapped_column(Text, default="")
+
+    # Cached results (last run)
+    table_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    plotly_figure: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    summary_text: Mapped[str] = mapped_column(Text, default="")
+
+    # Schedule (cron-like)
+    schedule: Mapped[str | None] = mapped_column(String(50), nullable=True)  # "hourly", "daily", "weekly", or None
+    last_run_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    next_run_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+    # Ownership
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    organization_id: Mapped[str] = mapped_column(String(255), default="")
+    is_pinned: Mapped[bool] = mapped_column(default=False)
+
+    created_at: Mapped[datetime] = mapped_column(default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
+
+    # Relationships
+    user: Mapped["User"] = relationship()
+    connection: Mapped["DatabaseConnection | None"] = relationship()
+
+
+class AuditLog(Base):
+    """Audit trail for user actions across the platform."""
+
+    __tablename__ = "audit_logs"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
+    action: Mapped[str] = mapped_column(String(100))  # "chat_query", "report_created", "connection_created", "file_uploaded", etc.
+    resource_type: Mapped[str] = mapped_column(String(100))  # "conversation", "report", "connection", "file"
+    resource_id: Mapped[str] = mapped_column(String(255), default="")
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # Stores query text, SQL, etc.
+    ip_address: Mapped[str] = mapped_column(String(50), default="")
+    created_at: Mapped[datetime] = mapped_column(default=func.now())
+
+
+class MetricDefinition(Base):
+    """A named metric in the semantic layer."""
+
+    __tablename__ = "metric_definitions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    name: Mapped[str] = mapped_column(String(200), index=True)
+    description: Mapped[str] = mapped_column(Text, default="")
+    sql_expression: Mapped[str] = mapped_column(Text)  # e.g., "SUM(revenue.amount) WHERE revenue.type = 'subscription'"
+    category: Mapped[str] = mapped_column(String(100), default="general")
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("database_connections.id"), nullable=True)
+    organization_id: Mapped[str] = mapped_column(String(255), default="")
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    created_at: Mapped[datetime] = mapped_column(default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())

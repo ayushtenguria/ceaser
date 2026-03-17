@@ -1,12 +1,17 @@
-import { useCallback, useState } from "react";
+import { useCallback, useState, useEffect } from "react";
 import { useNavigate, useLocation } from "react-router-dom";
 import { UserButton } from "@clerk/clerk-react";
 import {
   MessageSquare,
   Database,
   FileUp,
+  FileText,
   Plus,
   BarChart3,
+  BookOpen,
+  Shield,
+  Settings,
+  Users,
   PanelLeftClose,
   PanelLeft,
   X,
@@ -28,21 +33,39 @@ import * as api from "@/lib/api";
 const clerkEnabled = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 const NAV_ITEMS = [
-  { label: "Chat", icon: MessageSquare, path: "/chat" },
-  { label: "Connections", icon: Database, path: "/connections" },
-  { label: "Files", icon: FileUp, path: "/files" },
+  { label: "Chat", icon: MessageSquare, path: "/chat", adminOnly: false },
+  { label: "Reports", icon: BarChart3, path: "/reports", adminOnly: false },
+  { label: "Connections", icon: Database, path: "/connections", adminOnly: false },
+  { label: "Metrics", icon: BookOpen, path: "/metrics", adminOnly: false },
+  { label: "Files", icon: FileUp, path: "/files", adminOnly: false },
+  { label: "Setup", icon: Shield, path: "/setup", adminOnly: false },
+  { label: "Org Settings", icon: Users, path: "/org-settings", adminOnly: false },
+  { label: "Audit Log", icon: FileText, path: "/audit", adminOnly: true },
+  { label: "Admin", icon: Settings, path: "/admin", adminOnly: true },
 ] as const;
 
 export default function Sidebar() {
   const navigate = useNavigate();
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
+  const [userRole, setUserRole] = useState<string>("member");
 
   const {
     conversations,
     activeConversationId,
     setActiveConversation,
   } = useChatStore();
+
+  // Fetch user permissions to show/hide admin nav
+  useEffect(() => {
+    api.getPermissions()
+      .then((data) => setUserRole(data.role || "member"))
+      .catch(() => {});
+  }, []);
+
+  const visibleNavItems = NAV_ITEMS.filter(
+    (item) => !item.adminOnly || userRole === "super_admin" || userRole === "admin"
+  );
 
   const handleNewChat = useCallback(() => {
     setActiveConversation(null);
@@ -138,7 +161,7 @@ export default function Sidebar() {
 
         {/* Navigation */}
         <nav className="space-y-1 px-3">
-          {NAV_ITEMS.map(({ label, icon: Icon, path }) => {
+          {visibleNavItems.map(({ label, icon: Icon, path }) => {
             const isActive = location.pathname.startsWith(path);
             return collapsed ? (
               <Tooltip key={path}>
@@ -184,21 +207,31 @@ export default function Sidebar() {
                   </p>
                 )}
                 {conversations.map((convo) => (
-                  <button
-                    key={convo.id}
-                    onClick={() => handleConversationClick(convo.id)}
-                    className={cn(
-                      "flex w-full flex-col items-start rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
-                      activeConversationId === convo.id && "bg-accent"
-                    )}
-                  >
-                    <span className="w-full truncate text-foreground">
-                      {convo.title}
-                    </span>
-                    <span className="text-xs text-muted-foreground">
-                      {formatRelativeTime(convo.updatedAt)}
-                    </span>
-                  </button>
+                  <div key={convo.id} className="group relative">
+                    <button
+                      onClick={() => handleConversationClick(convo.id)}
+                      className={cn(
+                        "flex w-full flex-col items-start rounded-md px-2 py-1.5 text-left text-sm transition-colors hover:bg-accent",
+                        activeConversationId === convo.id && "bg-accent"
+                      )}
+                    >
+                      <span className="w-full truncate text-foreground pr-6">
+                        {convo.title}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {formatRelativeTime(convo.updatedAt)}
+                      </span>
+                    </button>
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        handleDeleteConversation(convo.id);
+                      }}
+                      className="absolute right-1 top-1.5 hidden rounded p-0.5 text-muted-foreground hover:text-destructive group-hover:block"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
                 ))}
               </div>
             </ScrollArea>

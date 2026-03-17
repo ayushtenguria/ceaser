@@ -24,9 +24,11 @@ def get_connector(connection: DatabaseConnection) -> BaseConnector:
     cls = _CONNECTOR_MAP.get(db_type)
 
     if cls is None:
+        if db_type in ("bigquery", "snowflake"):
+            raise ValueError(
+                f"{db_type.title()} connector coming soon. Currently supported: PostgreSQL, MySQL, SQLite."
+            )
         supported = ", ".join(sorted(_CONNECTOR_MAP.keys()))
-        raise ValueError(
-            f"Unsupported database type '{db_type}'. Supported types: {supported}"
-        )
+        raise ValueError(f"Unsupported database type '{db_type}'. Supported: {supported}")
 
     return cls(connection)

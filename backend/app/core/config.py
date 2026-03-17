@@ -30,7 +30,15 @@ class Settings(BaseSettings):
     encryption_key: str = ""
 
     # ── Dev mode ────────────────────────────────────────────────────────
-    dev_mode: bool = True
+    dev_mode: bool = False  # Set DEV_MODE=true in .env for local development
+
+    # ── Super admin ────────────────────────────────────────────────────
+    # Override via SUPER_ADMIN_EMAILS env var in production
+    super_admin_emails: list[str] = ["ayush.sharma.ug20@nsut.ac.in"]
+
+    # ── LLM model names ──────────────────────────────────────────────
+    gemini_model: str = "gemini-2.0-flash"
+    claude_model: str = "claude-sonnet-4-20250514"
 
     # ── CORS ───────────────────────────────────────────────────────────
     cors_origins: list[str] = ["http://localhost:5173"]

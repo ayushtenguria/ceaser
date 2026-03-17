@@ -6,7 +6,10 @@ interface DataTableProps {
 }
 
 export default function DataTable({ data }: DataTableProps) {
-  const { columns, rows, totalRows } = data;
+  const columns = data.columns || [];
+  const rows = data.rows || [];
+  // Handle both camelCase and snake_case from SSE
+  const totalRows = data.totalRows ?? (data as any).total_rows ?? rows.length;
 
   return (
     <div className="w-full overflow-hidden rounded-lg border">

@@ -8,7 +8,9 @@ from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
 from app.api.schemas import UserResponse, UserSyncRequest
+from app.core.config import get_settings
 from app.core.deps import CurrentUser, DbSession
+from app.core.permissions import get_permissions, get_user_with_role
 from app.db.models import User
 
 logger = logging.getLogger(__name__)
@@ -25,6 +27,9 @@ async def sync_user(payload: UserSyncRequest, db: DbSession) -> User:
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
 
+    settings = get_settings()
+    is_admin = payload.email in settings.super_admin_emails
+
     if user is None:
         user = User(
             clerk_id=payload.clerk_id,
@@ -33,15 +38,23 @@ async def sync_user(payload: UserSyncRequest, db: DbSession) -> User:
             last_name=payload.last_name,
             organization_id=payload.organization_id,
             image_url=payload.image_url,
+            role="super_admin" if is_admin else "member",
+            is_super_admin=is_admin,
         )
         db.add(user)
-        logger.info("Created new user: %s (%s)", payload.email, payload.clerk_id)
+        logger.info("Created new user: %s (%s) admin=%s", payload.email, payload.clerk_id, is_admin)
     else:
         user.email = payload.email
         user.first_name = payload.first_name
         user.last_name = payload.last_name
-        user.organization_id = payload.organization_id
+        # Only update org_id if provided (don't overwrite with null)
+        if payload.organization_id:
+            user.organization_id = payload.organization_id
         user.image_url = payload.image_url
+        # Update admin status in case config changed
+        user.is_super_admin = is_admin
+        if is_admin:
+            user.role = "super_admin"
         logger.info("Updated existing user: %s", payload.clerk_id)
 
     await db.flush()
@@ -62,3 +75,15 @@ async def get_me(current_user: CurrentUser, db: DbSession) -> User:
             detail="User not found. Please call /auth/sync first.",
         )
     return user
+
+
+@router.get("/me/permissions")
+async def get_my_permissions(current_user: CurrentUser, db: DbSession) -> dict:
+    """Return the current user's role and permissions."""
+    user = await get_user_with_role(db, current_user.user_id)
+    perms = get_permissions(user.role)
+    return {
+        "role": user.role,
+        "isSuperAdmin": user.is_super_admin,
+        "permissions": sorted([p.value for p in perms]),
+    }

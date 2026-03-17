@@ -11,6 +11,7 @@ from sqlalchemy import select
 from app.api.schemas import ConnectionCreate, ConnectionResponse, ConnectionTestResult
 from app.connectors.factory import get_connector
 from app.core.deps import CurrentUser, DbSession
+from app.core.permissions import Permission, require_permission
 from app.db.models import DatabaseConnection, User
 from app.services.encryption import encrypt_value
 from app.services.schema import introspect_schema, format_schema_for_llm
@@ -25,7 +26,8 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
     if user is None:
-        if clerk_id == "dev_user":
+        from app.core.config import get_settings
+        if get_settings().dev_mode and clerk_id == "dev_user":
             user = User(
                 clerk_id="dev_user",
                 email="dev@ceaser.local",
@@ -48,7 +50,7 @@ async def create_connection(
     db: DbSession,
 ) -> DatabaseConnection:
     """Register a new external database connection (password is encrypted at rest)."""
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.MANAGE_CONNECTIONS, current_user, db)
 
     connection = DatabaseConnection(
         name=body.name,
@@ -58,7 +60,7 @@ async def create_connection(
         database=body.database,
         username=body.username,
         encrypted_password=encrypt_value(body.password),
-        organization_id=current_user.org_id or "",
+        organization_id=user.organization_id or current_user.org_id or "",
         user_id=user.id,
     )
     db.add(connection)
@@ -71,10 +73,11 @@ async def create_connection(
 @router.get("/", response_model=list[ConnectionResponse])
 async def list_connections(current_user: CurrentUser, db: DbSession) -> list[DatabaseConnection]:
     """List all database connections belonging to the current user's organisation."""
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.VIEW_DATA, current_user, db)
+    org_id = user.organization_id or current_user.org_id or ""
     stmt = (
         select(DatabaseConnection)
-        .where(DatabaseConnection.user_id == user.id)
+        .where(DatabaseConnection.organization_id == org_id)
         .order_by(DatabaseConnection.created_at.desc())
     )
     result = await db.execute(stmt)
@@ -88,16 +91,33 @@ async def test_connection(
     db: DbSession,
 ) -> ConnectionTestResult:
     """Test an existing connection by connecting and introspecting its schema."""
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.MANAGE_CONNECTIONS, current_user, db)
     connection = await _load_connection(db, connection_id, user.id)
 
-    connector = get_connector(connection)
     try:
-        await connector.connect()
-        schema_dict = await connector.get_schema()
-        await connector.disconnect()
+        # Use the enriched introspection (includes sample values, FKs, row counts).
+        schema = await introspect_schema(connection)
+        schema_dict: dict = {
+            "tables": [
+                {
+                    "name": t.name,
+                    "row_count": t.row_count,
+                    "columns": [
+                        {
+                            "name": c.name,
+                            "data_type": c.data_type,
+                            "nullable": c.nullable,
+                            "primary_key": c.primary_key,
+                            "foreign_key": c.foreign_key,
+                            "sample_values": c.sample_values,
+                        }
+                        for c in t.columns
+                    ],
+                }
+                for t in schema.tables
+            ]
+        }
 
-        # Update flags.
         connection.is_connected = True
         connection.schema_cache = schema_dict
         await db.flush()
@@ -121,7 +141,7 @@ async def refresh_schema(
     db: DbSession,
 ) -> ConnectionTestResult:
     """Re-introspect the schema for an existing connection and update the cache."""
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.MANAGE_CONNECTIONS, current_user, db)
     connection = await _load_connection(db, connection_id, user.id)
 
     try:
@@ -139,6 +159,7 @@ async def refresh_schema(
                             "nullable": c.nullable,
                             "primary_key": c.primary_key,
                             "foreign_key": c.foreign_key,
+                            "sample_values": c.sample_values,
                         }
                         for c in t.columns
                     ],
@@ -167,7 +188,7 @@ async def delete_connection(
     db: DbSession,
 ) -> None:
     """Delete a database connection."""
-    user = await _get_user(db, current_user.user_id)
+    user = await require_permission(Permission.MANAGE_CONNECTIONS, current_user, db)
     connection = await _load_connection(db, connection_id, user.id)
     await db.delete(connection)
 

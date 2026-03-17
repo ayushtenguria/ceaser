@@ -12,28 +12,33 @@ from app.agents.state import AgentState
 logger = logging.getLogger(__name__)
 
 _ROUTER_SYSTEM_PROMPT = """\
-You are a query router for a data analysis assistant.
+You are a query router for a data analysis assistant. A database IS connected.
 
-Given the user's query and the available context, decide which action to take:
+Given the user's query and the database schema below, decide which action to take:
 
-1. "sql" — if the query requires fetching or analysing data from a connected database
-   and the result should be a table.  Use this for aggregations, filters, joins, lookups.
+1. "sql" — ANY question that can be answered by a SINGLE database query — lookups,
+   aggregations, filters, joins, rankings, comparisons, counts, sums, averages.
+   Choose sql when the answer is a fact that exists in the data.
 
-2. "sql_then_viz" — if the query needs data from the database AND a chart / plot /
-   visualisation.  This first fetches data via SQL then generates a Plotly chart.
-   Choose this whenever the user asks to "plot", "chart", "graph", "visualise", or
-   "show me a chart of" something from the database.
+2. "sql_then_viz" — same as sql, but when the user also wants a chart / plot / graph.
+   Choose this when they say "plot", "chart", "graph", "visualise", "trend".
 
-3. "python" — if the query requires computation, visualisation, or analysis on an
-   uploaded file, or general computation that does not need a database.
+3. "analyze" — for STRATEGIC or ADVISORY questions that need MULTIPLE analyses to answer.
+   Choose this when the user asks "what should we do", "how can we improve",
+   "why is X happening", "what are our biggest risks", "give me insights about",
+   "analyze our performance", "recommend strategies", "what's going wrong".
+   The analyst agent will automatically run multiple queries and synthesize insights.
+   WHEN IN DOUBT between sql and analyze, choose analyze for broad/strategic questions.
 
-4. "respond" — if the query is a greeting, general knowledge question, or can be
-   answered directly without touching any data source.
+4. "python" — only for computation on an uploaded file, or pure math.
 
-Available context:
+5. "respond" — ONLY for greetings ("hi"), thank-yous, or questions completely
+   unrelated to the data.
+
+Database schema:
 {schema_context}
 
-Respond with EXACTLY ONE word: sql, sql_then_viz, python, or respond.
+Respond with EXACTLY ONE word: sql, sql_then_viz, analyze, python, or respond.
 """
 
 
@@ -47,13 +52,21 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
     has_file = bool(state.get("file_id"))
 
     if not has_connection and not has_file:
-        # Without any data source, only python (for general computation) or
-        # respond make sense.
-        if any(
-            keyword in query.lower()
-            for keyword in ("plot", "chart", "graph", "calculate", "compute", "visuali")
-        ):
-            return {**state, "next_action": "python"}
+        # Check if this looks like a data question — if so, tell user to connect
+        data_keywords = (
+            "revenue", "sales", "customer", "employee", "ticket", "order",
+            "report", "top", "total", "average", "count", "how many",
+            "show me", "list", "find", "query", "data", "table", "department",
+            "product", "pipeline", "churn", "mrr", "arr", "deal",
+            "plot", "chart", "graph", "visuali", "trend",
+        )
+        if any(kw in query.lower() for kw in data_keywords):
+            from langchain_core.messages import AIMessage
+            return {
+                **state,
+                "next_action": "respond",
+                "error": "NO_DATA_SOURCE",
+            }
         return {**state, "next_action": "respond"}
 
     messages = [
@@ -64,12 +77,12 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
     response = await llm.ainvoke(messages)
     action = response.content.strip().lower()  # type: ignore[union-attr]
 
-    if action not in ("sql", "sql_then_viz", "python", "respond"):
-        logger.warning("Router returned unexpected action '%s', defaulting to 'respond'.", action)
-        action = "respond"
+    if action not in ("sql", "sql_then_viz", "analyze", "python", "respond"):
+        logger.warning("Router returned unexpected action '%s', defaulting to 'sql'.", action)
+        action = "sql"
 
     # If the action requires SQL but only a file is attached (no DB), switch to python.
-    if action in ("sql", "sql_then_viz") and not has_connection and has_file:
+    if action in ("sql", "sql_then_viz", "analyze") and not has_connection and has_file:
         action = "python"
 
     logger.info("Router decision: %s", action)

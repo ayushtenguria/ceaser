@@ -29,6 +29,7 @@ class ColumnInfo:
     nullable: bool
     primary_key: bool = False
     foreign_key: str | None = None
+    sample_values: list[str] = field(default_factory=list)  # distinct values for low-cardinality columns
 
 
 @dataclass
@@ -107,6 +108,31 @@ def _introspect_schema_sync(connection: DatabaseConnection) -> SchemaInfo:
             except Exception:
                 logger.debug("Could not get row count for %s", table_name)
 
+            # Fetch distinct values for low-cardinality string/categorical columns.
+            for col_info in columns:
+                col_name = col_info.name
+                dtype_lower = col_info.data_type.lower()
+
+                # Only for string-like and boolean columns
+                if not any(t in dtype_lower for t in ("char", "text", "varchar", "bool", "enum")):
+                    continue
+
+                try:
+                    with sync_engine.connect() as conn_:
+                        # Check cardinality first (fast)
+                        count_result = conn_.execute(
+                            text(f'SELECT COUNT(DISTINCT "{col_name}") FROM "{table_name}"')
+                        )
+                        distinct_count = count_result.scalar()
+
+                        if distinct_count is not None and distinct_count <= 25:
+                            values_result = conn_.execute(
+                                text(f'SELECT DISTINCT "{col_name}" FROM "{table_name}" WHERE "{col_name}" IS NOT NULL ORDER BY "{col_name}" LIMIT 25')
+                            )
+                            col_info.sample_values = [str(row[0]) for row in values_result]
+                except Exception:
+                    logger.debug("Could not get distinct values for %s.%s", table_name, col_name)
+
             schema.tables.append(
                 TableInfo(name=table_name, columns=columns, row_count=row_count)
             )
@@ -154,6 +180,22 @@ def format_schema_for_llm(schema: SchemaInfo) -> str:
                 parts.append(f"[FK -> {col.foreign_key}]")
             if not col.nullable:
                 parts.append("[NOT NULL]")
+            if col.sample_values:
+                vals = ", ".join(f"'{v}'" for v in col.sample_values[:15])
+                parts.append(f"  values: [{vals}]")
             lines.append(" ".join(parts))
+
+    # Relationships section
+    relationships: list[str] = []
+    for table in schema.tables:
+        for col in table.columns:
+            if col.foreign_key:
+                relationships.append(f"  {table.name}.{col.name} -> {col.foreign_key}")
+
+    if relationships:
+        lines.append("\n\nRELATIONSHIPS (JOIN hints)")
+        lines.append("=" * 50)
+        for rel in relationships:
+            lines.append(rel)
 
     return "\n".join(lines)

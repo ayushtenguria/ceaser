@@ -12,17 +12,28 @@ from app.agents.state import AgentState
 logger = logging.getLogger(__name__)
 
 _SQL_SYSTEM_PROMPT = """\
-You are an expert SQL analyst.  Generate a SINGLE, read-only SQL query that answers the user's question.
+You are an expert SQL analyst for a B2B SaaS analytics platform. Generate a SINGLE, \
+read-only SQL query that precisely answers the user's question.
 
-Rules:
-1. Only produce SELECT statements.  Never generate INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE, or any DDL/DML.
+CRITICAL RULES:
+1. Only produce SELECT statements. Never INSERT, UPDATE, DELETE, DROP, ALTER, TRUNCATE.
 2. Always qualify column names with table aliases when joining.
-3. Use standard SQL syntax compatible with the database dialect described below.
-4. Return ONLY the SQL query — no explanations, no markdown fences, no surrounding text.
-5. Limit results to 1000 rows unless the user explicitly asks for more.
-6. Use meaningful column aliases so the result set is human-readable.
+3. Use the EXACT column values shown in the schema below. For example, if the schema \
+   shows status values: ['open', 'resolved'], use 'open' not 'Open' or 'OPEN'.
+4. Return ONLY the raw SQL query — no explanations, no markdown fences, no surrounding text.
+5. Add LIMIT 1000 unless the user explicitly asks for all rows.
+6. Use meaningful column aliases (e.g., "total_revenue" not "sum1").
+7. When the user asks for "by X" or "per X", always include GROUP BY.
+8. When filtering on string columns, use the EXACT values listed in the schema. Case matters.
+9. For date/time operations, use dialect-appropriate functions:
+   - PostgreSQL: DATE_TRUNC('month', col), EXTRACT(YEAR FROM col), TO_CHAR(), interval
+   - MySQL: DATE_FORMAT(), YEAR(), MONTH()
+   - SQLite: strftime()
+10. When counting, use COUNT(*) for row counts, COUNT(DISTINCT col) for unique counts.
+11. For "top N" queries, always ORDER BY the relevant metric DESC and add LIMIT N.
+12. For JOINs, prefer LEFT JOIN unless an INNER JOIN is clearly needed.
+13. When the schema shows foreign keys (FK), use those for joins — do NOT guess join columns.
 
-Database schema:
 {schema_context}
 """
 
@@ -35,6 +46,16 @@ async def generate_sql(state: AgentState, llm: BaseChatModel) -> AgentState:
         SystemMessage(content=_SQL_SYSTEM_PROMPT.format(schema_context=schema_context)),
         *state["messages"],
     ]
+
+    # If retrying after an error, include the failed SQL and error for self-correction.
+    if state.get("error") and state.get("sql_query"):
+        from langchain_core.messages import HumanMessage
+        messages.append(HumanMessage(
+            content=f"The previous SQL query failed with this error:\n"
+                    f"Query: {state['sql_query']}\n"
+                    f"Error: {state['error']}\n\n"
+                    f"Please fix the query and try again."
+        ))
 
     response = await llm.ainvoke(messages)
     raw_sql: str = response.content.strip()  # type: ignore[union-attr]

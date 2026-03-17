@@ -1,10 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 import { Outlet, useNavigate } from "react-router-dom";
-import { useAuth } from "@clerk/clerk-react";
+import { useAuth, useUser } from "@clerk/clerk-react";
 import { setAuthTokenGetter } from "@/lib/api";
 import * as api from "@/lib/api";
 import Sidebar from "@/components/layout/Sidebar";
 import TopBar from "@/components/layout/TopBar";
+import ToastContainer from "@/components/ui/toast-container";
 import { useConnectionsStore } from "@/store/connections";
 
 const clerkEnabled = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
@@ -27,13 +28,16 @@ function AuthenticatedLayout() {
           <Outlet />
         </main>
       </div>
+      <ToastContainer />
     </div>
   );
 }
 
 function ClerkAppLayout() {
   const { isSignedIn, isLoaded, getToken } = useAuth();
+  const { user } = useUser();
   const navigate = useNavigate();
+  const syncedRef = useRef(false);
 
   // Set the Clerk token getter for API calls
   useEffect(() => {
@@ -41,6 +45,22 @@ function ClerkAppLayout() {
       setAuthTokenGetter(getToken);
     }
   }, [isLoaded, isSignedIn, getToken]);
+
+  // Sync user to our DB after sign-in
+  useEffect(() => {
+    if (isLoaded && isSignedIn && user && !syncedRef.current) {
+      syncedRef.current = true;
+      const payload = {
+        clerkId: user.id,
+        email: user.primaryEmailAddress?.emailAddress || "",
+        firstName: user.firstName || "",
+        lastName: user.lastName || "",
+        organizationId: null,
+        imageUrl: user.imageUrl || null,
+      };
+      api.syncUser(payload).catch(() => {});
+    }
+  }, [isLoaded, isSignedIn, user]);
 
   // Redirect unauthenticated users
   useEffect(() => {

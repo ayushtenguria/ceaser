@@ -48,6 +48,8 @@ class UserResponse(BaseModel):
     last_name: str
     organization_id: str | None
     image_url: str | None
+    role: str = "member"
+    is_super_admin: bool = False
     created_at: datetime
 
 
@@ -178,4 +180,107 @@ class FileUploadResponse(BaseModel):
     file_type: str
     size_bytes: int
     column_info: dict[str, Any] | None = None
+    created_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Reports
+# ---------------------------------------------------------------------------
+
+class ReportCreate(_CamelModel):
+    """Create a saved report from a chat result."""
+    name: str = Field(..., min_length=1, max_length=500)
+    description: str = ""
+    connection_id: uuid.UUID | None = None
+    file_id: uuid.UUID | None = None
+    sql_query: str | None = None
+    python_code: str | None = None
+    original_question: str = ""
+    table_data: dict[str, Any] | None = None
+    plotly_figure: dict[str, Any] | None = None
+    summary_text: str = ""
+    schedule: str | None = Field(None, pattern="^(hourly|daily|weekly)?$")
+
+class ReportUpdate(_CamelModel):
+    """Update a saved report."""
+    name: str | None = None
+    description: str | None = None
+    schedule: str | None = None
+    is_pinned: bool | None = None
+    is_active: bool | None = None
+
+class ReportResponse(BaseModel):
+    """Public representation of a saved report."""
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+
+    id: uuid.UUID
+    name: str
+    description: str
+    connection_id: uuid.UUID | None
+    file_id: uuid.UUID | None
+    sql_query: str | None
+    python_code: str | None
+    original_question: str
+    table_data: dict[str, Any] | None
+    plotly_figure: dict[str, Any] | None
+    summary_text: str
+    schedule: str | None
+    last_run_at: datetime | None
+    next_run_at: datetime | None
+    is_active: bool
+    is_pinned: bool
+    organization_id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Metrics (Semantic Layer)
+# ---------------------------------------------------------------------------
+
+class MetricCreate(_CamelModel):
+    """Define a new business metric."""
+    name: str = Field(..., min_length=1, max_length=200)
+    description: str = ""
+    sql_expression: str = Field(..., min_length=1)
+    category: str = "general"
+    connection_id: uuid.UUID | None = None
+
+class MetricUpdate(_CamelModel):
+    """Update a metric definition."""
+    name: str | None = None
+    description: str | None = None
+    sql_expression: str | None = None
+    category: str | None = None
+
+class MetricResponse(BaseModel):
+    """Public representation of a metric definition."""
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+
+    id: uuid.UUID
+    name: str
+    description: str
+    sql_expression: str
+    category: str
+    connection_id: uuid.UUID | None
+    organization_id: str
+    created_at: datetime
+    updated_at: datetime
+
+
+# ---------------------------------------------------------------------------
+# Audit Log
+# ---------------------------------------------------------------------------
+
+class AuditLogResponse(BaseModel):
+    """Public representation of an audit log entry."""
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+
+    id: uuid.UUID
+    user_id: uuid.UUID | None
+    action: str
+    resource_type: str
+    resource_id: str
+    details: dict[str, Any] | None
+    ip_address: str
     created_at: datetime
