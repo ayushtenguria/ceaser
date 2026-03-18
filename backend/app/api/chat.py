@@ -49,7 +49,7 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
         if get_settings().dev_mode and clerk_id == "dev_user":
             user = User(
                 clerk_id="dev_user",
-                email="dev@ceaser.local",
+                email=get_settings().dev_fallback_email,
                 first_name="Dev",
                 last_name="User",
                 organization_id="dev_org",
@@ -250,7 +250,11 @@ async def chat(
     # ── Build context ───────────────────────────────────────────────
     effective_connection_id = body.connection_id or conversation.connection_id
     effective_file_id = body.file_id or conversation.file_id
+    logger.info("Chat context: connection=%s file=%s (body.file_id=%s, conv.file_id=%s)",
+                effective_connection_id, effective_file_id, body.file_id, conversation.file_id)
     schema_context = await _build_schema_context(db, effective_connection_id, effective_file_id)
+    logger.info("Schema context length: %d chars, has_excel=%s",
+                len(schema_context), "EXCEL" in schema_context or "DATAFRAME" in schema_context)
 
     # ── Load conversation history for follow-up context ──────────
     history_messages: list[dict[str, str]] = []
@@ -296,6 +300,7 @@ async def chat(
         async for chunk in run_agent(
             query=body.message,
             connection_id=str(effective_connection_id) if effective_connection_id else None,
+            connection_ids=[str(cid) for cid in body.connection_ids] if body.connection_ids else None,
             file_id=str(effective_file_id) if effective_file_id else None,
             schema_context=schema_context,
             history=history_messages,

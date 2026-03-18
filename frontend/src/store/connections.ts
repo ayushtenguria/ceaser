@@ -4,11 +4,14 @@ import type { DatabaseConnection } from "@/types";
 interface ConnectionsState {
   connections: DatabaseConnection[];
   activeConnectionId: string | null;
+  activeConnectionIds: string[];
 
   setConnections: (connections: DatabaseConnection[]) => void;
   addConnection: (connection: DatabaseConnection) => void;
   removeConnection: (id: string) => void;
   setActiveConnection: (id: string | null) => void;
+  setActiveConnectionIds: (ids: string[]) => void;
+  toggleConnectionId: (id: string) => void;
   updateConnection: (
     id: string,
     updates: Partial<DatabaseConnection>
@@ -18,6 +21,7 @@ interface ConnectionsState {
 export const useConnectionsStore = create<ConnectionsState>((set) => ({
   connections: [],
   activeConnectionId: null,
+  activeConnectionIds: [],
 
   setConnections: (connections) => set({ connections }),
 
@@ -34,6 +38,17 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
     })),
 
   setActiveConnection: (id) => set({ activeConnectionId: id }),
+
+  setActiveConnectionIds: (ids) => set({ activeConnectionIds: ids }),
+
+  toggleConnectionId: (id) =>
+    set((state) => {
+      const ids = state.activeConnectionIds.includes(id)
+        ? state.activeConnectionIds.filter((i) => i !== id)
+        : [...state.activeConnectionIds, id];
+      // Also set single activeConnectionId for backward compat
+      return { activeConnectionIds: ids, activeConnectionId: ids[0] || null };
+    }),
 
   updateConnection: (id, updates) =>
     set((state) => ({

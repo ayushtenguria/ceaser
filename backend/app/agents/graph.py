@@ -35,7 +35,14 @@ from app.agents.verifier import verify_results
 
 logger = logging.getLogger(__name__)
 
-_MAX_RETRIES = 3
+def _max_retries() -> int:
+    try:
+        from app.core.config import get_settings
+        return get_settings().max_retries
+    except Exception:
+        return 3
+
+_MAX_RETRIES = _max_retries()
 
 # ---------------------------------------------------------------------------
 # Response generator
@@ -85,10 +92,22 @@ async def _respond(state: AgentState, llm: BaseChatModel) -> AgentState:
     if state.get("plotly_figure"):
         context_parts.append("A chart/visualisation HAS BEEN successfully generated and will be displayed to the user.")
     if state.get("error"):
-        # Clean up technical errors for user-facing response
+        # Never show raw tracebacks to users — clean ALL technical errors
         error = state["error"]
-        if any(kw in error.upper() for kw in ("UNION", "SYNTAX", "COLUMN", "RELATION", "CAST", "TYPE")):
-            context_parts.append("Note: There was a technical issue with the query. Explain this to the user in plain language and suggest they rephrase their question.")
+        technical_keywords = (
+            "UNION", "SYNTAX", "COLUMN", "RELATION", "CAST", "TYPE",
+            "TRACEBACK", "FILE \"", "LINE ", "VALUEERROR", "KEYERROR",
+            "INDEXERROR", "TYPEERROR", "ATTRIBUTEERROR", "IMPORTERROR",
+            "MODULENOTFOUNDERROR", "LENGTH MISMATCH", "SETATTR",
+        )
+        if any(kw in error.upper() for kw in technical_keywords):
+            context_parts.append(
+                "Note: There was a technical issue executing the analysis. "
+                "Do NOT show any traceback or error details to the user. "
+                "Instead, explain in simple terms that the analysis encountered "
+                "an issue and suggest they try rephrasing their question or "
+                "asking for a simpler analysis."
+            )
         else:
             context_parts.append(f"Error:\n{error}")
 
@@ -257,6 +276,91 @@ def build_graph(llm: BaseChatModel, db: AsyncSession) -> StateGraph:
 # Public entry-point
 # ---------------------------------------------------------------------------
 
+async def _run_cross_db_query(
+    query: str,
+    connection_ids: list[str],
+    schema_context: str,
+    llm: BaseChatModel,
+    db: AsyncSession,
+    file_ids: list[str] | None = None,
+) -> AsyncGenerator[dict[str, Any], None]:
+    """Run a cross-source query — databases + files, parallel execution, join results."""
+    from app.agents.crossdb import (
+        load_all_schemas, plan_cross_db_query, execute_parallel_queries, join_results,
+    )
+
+    source_label = "databases" if not file_ids else "sources"
+    yield {"type": "status", "content": f"Loading schemas from all {source_label}..."}
+
+    multi_schema = await load_all_schemas(connection_ids, db, file_ids=file_ids)
+    available = multi_schema.get_available_connections()
+
+    if not available:
+        yield {"type": "error", "content": "No databases are reachable. Check your connections."}
+        return
+
+    yield {"type": "status", "content": f"Connected to {len(available)} databases. Planning query..."}
+
+    # Plan
+    plan = await plan_cross_db_query(query, multi_schema, llm)
+
+    if not plan.queries:
+        yield {"type": "error", "content": "Could not plan a query across your databases. Try rephrasing."}
+        return
+
+    # If single DB, route through normal flow
+    if plan.is_single_db and len(plan.queries) == 1:
+        yield {"type": "status", "content": f"Query targets {plan.queries[0].connection_name} only."}
+        yield {"type": "sql", "content": plan.queries[0].sql}
+
+    yield {"type": "status", "content": f"Executing {len(plan.queries)} queries in parallel..."}
+
+    # Execute
+    results = await execute_parallel_queries(plan, db)
+
+    # Show individual results
+    for alias, result in results.items():
+        if result.success:
+            yield {"type": "status", "content": f"✓ {result.connection_name}: {result.row_count} rows ({result.execution_ms}ms)"}
+        else:
+            yield {"type": "status", "content": f"✗ {result.connection_name}: {result.error}"}
+
+    # Join
+    if len(plan.joins) > 0:
+        yield {"type": "status", "content": "Joining results across databases..."}
+
+    joined = join_results(results, plan)
+
+    # Yield table data
+    if joined.get("table_data"):
+        yield {"type": "table", "content": joined["table_data"]}
+
+    # Yield warnings
+    for warning in joined.get("warnings", []):
+        yield {"type": "status", "content": f"⚠ {warning}"}
+
+    # Generate natural language response
+    table_preview = ""
+    td = joined.get("table_data", {})
+    if td.get("rows"):
+        import json
+        table_preview = json.dumps(td["rows"][:10], default=str)[:1000]
+
+    response_prompt = (
+        f"User asked: {query}\n\n"
+        f"Query plan: {plan.explanation}\n"
+        f"Results from {len(results)} databases:\n{joined.get('execution_summary', '')}\n"
+        f"Final joined data ({td.get('total_rows', 0)} rows): {table_preview}"
+    )
+
+    from langchain_core.messages import SystemMessage as SM, HumanMessage as HM
+    resp = await llm.ainvoke([
+        SM(content="You are Ceaser, a data analyst. Summarize the cross-database query results. Reference specific numbers. Keep it concise."),
+        HM(content=response_prompt),
+    ])
+    yield {"type": "text", "content": resp.content}
+
+
 async def _run_single_query(
     compiled: Any,
     query: str,
@@ -353,13 +457,19 @@ async def _run_single_query(
             final_state = node_state
 
     if final_state and final_state.get("error"):
-        yield {"type": "error", "content": final_state["error"]}
+        error = final_state["error"]
+        # Never send raw tracebacks to frontend
+        if "Traceback" in error or "File \"" in error or "Error:" in error:
+            yield {"type": "error", "content": "The analysis encountered a technical issue. Try rephrasing your question or asking for a simpler analysis."}
+        else:
+            yield {"type": "error", "content": error}
 
 
 async def run_agent(
     *,
     query: str,
     connection_id: str | None,
+    connection_ids: list[str] | None = None,
     file_id: str | None,
     schema_context: str,
     llm: BaseChatModel,
@@ -383,6 +493,26 @@ async def run_agent(
             history_messages.append(AIMessage(content=msg["content"]))
 
     yield {"type": "status", "content": "Analysing your question..."}
+
+    # Cross-DB mode: multiple connections selected
+    if connection_ids and len(connection_ids) > 1:
+        yield {"type": "status", "content": "Multi-database query mode..."}
+        async for chunk in _run_cross_db_query(query, connection_ids, schema_context, llm, db):
+            yield chunk
+        # Generate suggestions
+        try:
+            from app.agents.suggestions import generate_follow_up_suggestions
+            follow_ups = await generate_follow_up_suggestions(
+                schema_context=schema_context,
+                conversation_history=history or [],
+                last_question=query,
+                last_answer="",
+                llm=llm,
+            )
+        except Exception:
+            follow_ups = []
+        yield {"type": "suggestions", "content": "", "data": follow_ups}
+        return
 
     # Step 1: Decompose the query
     sub_queries = await decompose_query(query, llm)

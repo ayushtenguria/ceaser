@@ -300,13 +300,27 @@ export default function ReportSheet({ conversationId, open, onClose }: ReportShe
                       {isPdfMode ? (
                         <div style={{ maxHeight: "280px", overflow: "hidden" }}>
                           <PlotlyChart figure={{
-                            ...section.chartData,
+                            data: section.chartData.data,
                             layout: {
                               ...section.chartData.layout,
+                              template: undefined,
                               height: 260,
-                              paper_bgcolor: "#fff",
+                              paper_bgcolor: "#ffffff",
                               plot_bgcolor: "#f8f8f8",
                               font: { color: "#333", size: 11 },
+                              xaxis: {
+                                ...section.chartData.layout?.xaxis,
+                                gridcolor: "#e5e5e5",
+                                linecolor: "#ccc",
+                                tickfont: { color: "#333" },
+                              },
+                              yaxis: {
+                                ...section.chartData.layout?.yaxis,
+                                gridcolor: "#e5e5e5",
+                                linecolor: "#ccc",
+                                tickfont: { color: "#333" },
+                              },
+                              colorway: ["#3b82f6", "#ef4444", "#10b981", "#f59e0b", "#8b5cf6", "#06b6d4"],
                             },
                           }} />
                         </div>

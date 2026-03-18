@@ -14,7 +14,14 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_TIMEOUT_SECONDS = 30
+def _sandbox_timeout() -> int:
+    try:
+        from app.core.config import get_settings
+        return get_settings().sandbox_timeout_seconds
+    except Exception:
+        return 30
+
+_TIMEOUT_SECONDS = _sandbox_timeout()
 
 # Use the current Python executable (from the venv) so the sandbox subprocess
 # can import pandas, plotly, numpy, etc.  Do NOT resolve() — that follows the

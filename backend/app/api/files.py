@@ -39,7 +39,7 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
         if get_settings().dev_mode and clerk_id == "dev_user":
             user = User(
                 clerk_id="dev_user",
-                email="dev@ceaser.local",
+                email=get_settings().dev_fallback_email,
                 first_name="Dev",
                 last_name="User",
                 organization_id="dev_org",

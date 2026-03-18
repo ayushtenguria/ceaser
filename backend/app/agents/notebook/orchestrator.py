@@ -25,7 +25,14 @@ from app.db.models import DatabaseConnection, FileUpload, NotebookCell
 
 logger = logging.getLogger(__name__)
 
-_CELL_TIMEOUT_SECONDS = 120  # Hard timeout per cell
+def _cell_timeout() -> int:
+    try:
+        from app.core.config import get_settings
+        return get_settings().cell_timeout_seconds
+    except Exception:
+        return 120
+
+_CELL_TIMEOUT_SECONDS = _cell_timeout()  # Hard timeout per cell
 
 
 async def execute_notebook_cells(

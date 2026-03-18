@@ -108,6 +108,7 @@ export interface ChatRequest {
   message: string;
   conversationId?: string;
   connectionId?: string;
+  connectionIds?: string[];
   fileId?: string;
   model?: "gemini" | "claude";
 }

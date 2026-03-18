@@ -25,7 +25,8 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
   const [advancedReasoning, setAdvancedReasoning] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const { connections, activeConnectionId, setActiveConnection } = useConnectionsStore();
+  const { connections, activeConnectionId, activeConnectionIds, setActiveConnection, setActiveConnectionIds, toggleConnectionId } = useConnectionsStore();
+  const [connDropdownOpen, setConnDropdownOpen] = useState(false);
 
   const activeConnection = connections.find((c) => c.id === activeConnectionId);
 
@@ -158,30 +159,66 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
               <Paperclip className="h-4 w-4" />
             </Button>
 
-            {/* Connectors */}
-            <Select
-              value={activeConnectionId || "none"}
-              onValueChange={(v) => setActiveConnection(v === "none" ? null : v)}
-            >
-              <SelectTrigger className="h-7 w-auto gap-1 border-0 bg-transparent px-2 text-xs text-muted-foreground hover:text-foreground [&>svg:last-child]:h-3 [&>svg:last-child]:w-3">
+            {/* Connector selector — multi-select */}
+            <div className="relative">
+              <button
+                onClick={() => setConnDropdownOpen((v) => !v)}
+                className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:text-foreground"
+              >
                 <Link2 className="h-3.5 w-3.5 shrink-0" />
-                <span>{activeConnection?.name || "Connectors"}</span>
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="none">No connection</SelectItem>
-                {connections.map((conn) => (
-                  <SelectItem key={conn.id} value={conn.id}>
-                    <span className="flex items-center gap-2">
-                      <span className={cn(
-                        "h-1.5 w-1.5 rounded-full",
-                        conn.isConnected ? "bg-emerald-500" : "bg-red-500"
-                      )} />
-                      {conn.name}
-                    </span>
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+                <span>
+                  {activeConnectionIds.length > 1
+                    ? `${activeConnectionIds.length} databases`
+                    : activeConnection?.name || "Connectors"}
+                </span>
+                <ChevronDown className="h-3 w-3" />
+              </button>
+              {connDropdownOpen && (
+                <div className="absolute bottom-full left-0 mb-1 w-56 rounded-lg border bg-popover p-1 shadow-lg z-50">
+                  {connections.length === 0 ? (
+                    <p className="px-2 py-1.5 text-xs text-muted-foreground">No connections</p>
+                  ) : (
+                    <>
+                      {connections.length > 1 && (
+                        <button
+                          onClick={() => {
+                            const allIds = connections.map((c) => c.id);
+                            setActiveConnectionIds(
+                              activeConnectionIds.length === connections.length ? [] : allIds
+                            );
+                          }}
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent"
+                        >
+                          <div className={cn(
+                            "h-3.5 w-3.5 rounded border flex items-center justify-center",
+                            activeConnectionIds.length === connections.length ? "bg-primary border-primary" : "border-muted-foreground"
+                          )}>
+                            {activeConnectionIds.length === connections.length && <span className="text-[8px] text-primary-foreground">&#10003;</span>}
+                          </div>
+                          All Databases ({connections.length})
+                        </button>
+                      )}
+                      {connections.map((conn) => (
+                        <button
+                          key={conn.id}
+                          onClick={() => toggleConnectionId(conn.id)}
+                          className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent"
+                        >
+                          <div className={cn(
+                            "h-3.5 w-3.5 rounded border flex items-center justify-center",
+                            activeConnectionIds.includes(conn.id) ? "bg-primary border-primary" : "border-muted-foreground"
+                          )}>
+                            {activeConnectionIds.includes(conn.id) && <span className="text-[8px] text-primary-foreground">&#10003;</span>}
+                          </div>
+                          <span className={cn("h-1.5 w-1.5 rounded-full", conn.isConnected ? "bg-emerald-500" : "bg-red-500")} />
+                          {conn.name}
+                        </button>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
+            </div>
 
             {/* Tools */}
             <Select value="auto" onValueChange={() => {}}>

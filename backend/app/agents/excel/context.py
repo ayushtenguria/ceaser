@@ -20,6 +20,24 @@ logger = logging.getLogger(__name__)
 _PARQUET_DIR = Path(__file__).resolve().parent.parent.parent.parent / "uploads" / "parquet"
 
 
+def _make_var_name(file_name: str, sheet_name: str, sheet_count: int) -> str:
+    """Create a clean, short DataFrame variable name."""
+    import re
+    prefix = Path(file_name).stem.lower().replace(" ", "_").replace("-", "_")
+    prefix = re.sub(r'^[a-f0-9]{20,}_', '', prefix)  # strip UUID prefix
+    prefix = prefix[:30]
+    sheet_clean = sheet_name.lower().replace(' ', '_')[:30]
+
+    if sheet_count == 1:
+        var = f"df_{prefix}" if prefix else f"df_{sheet_clean}"
+    else:
+        var = f"df_{prefix}_{sheet_clean}" if prefix else f"df_{sheet_clean}"
+
+    var = "".join(c if c.isalnum() or c == "_" else "_" for c in var)
+    var = re.sub(r'_+', '_', var).strip('_')
+    return var
+
+
 def save_dataframes_to_parquet(
     workbooks: list[WorkbookResult],
 ) -> dict[str, str]:
@@ -34,9 +52,7 @@ def save_dataframes_to_parquet(
         file_prefix = Path(wb.file_name).stem.lower().replace(" ", "_").replace("-", "_")
 
         for sheet in wb.sheets:
-            # Variable name: df_filename_sheetname
-            var_name = f"df_{file_prefix}_{sheet.name.lower().replace(' ', '_')}"
-            var_name = "".join(c if c.isalnum() or c == "_" else "_" for c in var_name)
+            var_name = _make_var_name(wb.file_name, sheet.name, len(wb.sheets))
 
             parquet_path = _PARQUET_DIR / f"{var_name}.parquet"
             sheet.df.to_parquet(str(parquet_path), index=False)
@@ -70,10 +86,8 @@ def build_excel_context(
     lines.append("-" * 40)
 
     for wb in workbooks:
-        file_prefix = Path(wb.file_name).stem.lower().replace(" ", "_").replace("-", "_")
         for sheet in wb.sheets:
-            var_name = f"df_{file_prefix}_{sheet.name.lower().replace(' ', '_')}"
-            var_name = "".join(c if c.isalnum() or c == "_" else "_" for c in var_name)
+            var_name = _make_var_name(wb.file_name, sheet.name, len(wb.sheets))
 
             lines.append(f"\n{var_name}  ({sheet.row_count:,} rows, {sheet.column_count} columns)")
             lines.append(f"  Source: {wb.file_name} -> {sheet.name}")
@@ -126,9 +140,7 @@ def generate_code_preamble(parquet_paths: dict[str, str]) -> str:
 def _sheet_to_var(workbooks: list[WorkbookResult], sheet_name: str) -> str:
     """Convert a sheet name to its DataFrame variable name."""
     for wb in workbooks:
-        file_prefix = Path(wb.file_name).stem.lower().replace(" ", "_").replace("-", "_")
         for sheet in wb.sheets:
             if sheet.name == sheet_name:
-                var_name = f"df_{file_prefix}_{sheet.name.lower().replace(' ', '_')}"
-                return "".join(c if c.isalnum() or c == "_" else "_" for c in var_name)
+                return _make_var_name(wb.file_name, sheet.name, len(wb.sheets))
     return f"df_{sheet_name.lower()}"

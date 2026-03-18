@@ -16,7 +16,7 @@ export function useChat() {
     setActiveConversation,
   } = useChatStore();
 
-  const { activeConnectionId } = useConnectionsStore();
+  const { activeConnectionId, activeConnectionIds } = useConnectionsStore();
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [pendingConvId, setPendingConvId] = useState<string | null>(null);
@@ -83,6 +83,7 @@ export function useChat() {
           message: content,
           conversationId: conversationId || undefined,
           connectionId: activeConnectionId || undefined,
+          connectionIds: activeConnectionIds.length > 1 ? activeConnectionIds : undefined,
           fileId,
           model: selectedModel,
         });
@@ -187,6 +188,7 @@ export function useChat() {
     [
       activeConversationId,
       activeConnectionId,
+      activeConnectionIds,
       selectedModel,
       addMessage,
       updateMessage,

@@ -63,6 +63,7 @@ class ChatRequest(_CamelModel):
     message: str = Field(..., min_length=1, max_length=10_000)
     conversation_id: uuid.UUID | None = None
     connection_id: uuid.UUID | None = None
+    connection_ids: list[uuid.UUID] | None = None  # For cross-DB queries
     file_id: uuid.UUID | None = None
     model: str = Field(default="gemini", pattern="^(gemini|claude)$")
 

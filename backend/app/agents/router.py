@@ -12,30 +12,27 @@ from app.agents.state import AgentState
 logger = logging.getLogger(__name__)
 
 _ROUTER_SYSTEM_PROMPT = """\
-You are a query router for a data analysis assistant. A database IS connected.
+You are a query router for a data analysis assistant. Data IS available.
 
-Given the user's query and the database schema below, decide which action to take:
+Given the user's query and the data context below, decide which action to take:
 
-1. "sql" — ANY question that can be answered by a SINGLE database query — lookups,
-   aggregations, filters, joins, rankings, comparisons, counts, sums, averages.
-   Choose sql when the answer is a fact that exists in the data.
+1. "sql" — question answerable by a SINGLE database query — lookups, aggregations,
+   filters, joins, rankings, comparisons. Choose only when a DATABASE is connected.
 
-2. "sql_then_viz" — same as sql, but when the user also wants a chart / plot / graph.
-   Choose this when they say "plot", "chart", "graph", "visualise", "trend".
+2. "sql_then_viz" — same as sql + a chart. Choose when database connected AND user
+   wants a visualization.
 
-3. "analyze" — for STRATEGIC or ADVISORY questions that need MULTIPLE analyses to answer.
-   Choose this when the user asks "what should we do", "how can we improve",
-   "why is X happening", "what are our biggest risks", "give me insights about",
-   "analyze our performance", "recommend strategies", "what's going wrong".
-   The analyst agent will automatically run multiple queries and synthesize insights.
-   WHEN IN DOUBT between sql and analyze, choose analyze for broad/strategic questions.
+3. "analyze" — STRATEGIC or ADVISORY questions needing MULTIPLE analyses.
+   "what should we do", "how can we improve", "give me insights", "recommend".
 
-4. "python" — only for computation on an uploaded file, or pure math.
+4. "python" — ANY question about uploaded files (Excel/CSV), data exploration,
+   "what is this data", "describe the data", "show columns", "summarize",
+   computation, visualization on file data, or when DATAFRAMES are available.
+   WHEN IN DOUBT and the context mentions DataFrames or Excel, choose python.
 
-5. "respond" — ONLY for greetings ("hi"), thank-yous, or questions completely
-   unrelated to the data.
+5. "respond" — ONLY for greetings or questions completely unrelated to data.
 
-Database schema:
+Data context:
 {schema_context}
 
 Respond with EXACTLY ONE word: sql, sql_then_viz, analyze, python, or respond.
@@ -50,18 +47,25 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
     # If there is no data source at all, default to a direct response.
     has_connection = bool(state.get("connection_id"))
     has_file = bool(state.get("file_id"))
+    has_file_context = any(
+        marker in schema_context
+        for marker in ("EXCEL DATA CONTEXT", "FILE DATA SUMMARY", "AVAILABLE DATAFRAMES", "CODE PREAMBLE")
+    )
 
-    if not has_connection and not has_file:
-        # Check if this looks like a data question — if so, tell user to connect
+    # Effective data source check
+    has_data = has_connection or has_file or has_file_context
+
+    if not has_data:
+        # No data at all — tell user to connect or upload
         data_keywords = (
             "revenue", "sales", "customer", "employee", "ticket", "order",
             "report", "top", "total", "average", "count", "how many",
             "show me", "list", "find", "query", "data", "table", "department",
             "product", "pipeline", "churn", "mrr", "arr", "deal",
-            "plot", "chart", "graph", "visuali", "trend",
+            "plot", "chart", "graph", "visuali", "trend", "what", "which",
+            "analyze", "about", "summary", "describe",
         )
         if any(kw in query.lower() for kw in data_keywords):
-            from langchain_core.messages import AIMessage
             return {
                 **state,
                 "next_action": "respond",
@@ -69,6 +73,12 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
             }
         return {**state, "next_action": "respond"}
 
+    # If only file data (no DB), always route to python
+    if not has_connection and (has_file or has_file_context):
+        logger.info("Router: file-only mode → python")
+        return {**state, "next_action": "python"}
+
+    # DB connected — use LLM to decide
     messages = [
         SystemMessage(content=_ROUTER_SYSTEM_PROMPT.format(schema_context=schema_context)),
         *state["messages"],
@@ -80,10 +90,6 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
     if action not in ("sql", "sql_then_viz", "analyze", "python", "respond"):
         logger.warning("Router returned unexpected action '%s', defaulting to 'sql'.", action)
         action = "sql"
-
-    # If the action requires SQL but only a file is attached (no DB), switch to python.
-    if action in ("sql", "sql_then_viz", "analyze") and not has_connection and has_file:
-        action = "python"
 
     logger.info("Router decision: %s", action)
     return {**state, "next_action": action}

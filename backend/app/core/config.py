@@ -43,6 +43,15 @@ class Settings(BaseSettings):
     # ── CORS ───────────────────────────────────────────────────────────
     cors_origins: list[str] = ["http://localhost:5173"]
 
+    # ── Agent tuning (override per deployment) ────────────────────────
+    max_retries: int = 3                 # Max agent retry attempts
+    sql_row_limit: int = 1000            # Default LIMIT added to SQL queries
+    sandbox_timeout_seconds: int = 30    # Python sandbox execution timeout
+    cell_timeout_seconds: int = 120      # Notebook cell execution timeout
+    max_excel_rows: int = 2_000_000      # Max rows to load from Excel files
+    query_timeout_seconds: int = 60      # Per-query timeout in agent graph
+    dev_fallback_email: str = "admin@ceaser.local"  # Dev mode user email
+
 
 @lru_cache
 def get_settings() -> Settings:
