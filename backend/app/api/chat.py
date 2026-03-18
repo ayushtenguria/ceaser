@@ -66,6 +66,7 @@ async def _build_schema_context(
     db: DbSession,
     connection_id: uuid.UUID | None,
     file_id: uuid.UUID | None,
+    user_question: str = "",
 ) -> str:
     """Build the text context the LLM needs to know about the data source."""
     parts: list[str] = []
@@ -105,9 +106,32 @@ async def _build_schema_context(
         if upload:
             # Use rich Excel context if available (from Excel Intelligence Engine)
             if upload.excel_context:
-                parts.append(upload.excel_context)
-                if upload.code_preamble:
-                    parts.append(f"\nCODE PREAMBLE (prepend to all Python code):\n{upload.code_preamble}")
+                from app.agents.excel.sheet_selector import (
+                    parse_excel_context_to_sheets, select_relevant_sheets,
+                    build_compact_summary, build_selected_context,
+                )
+
+                # Parse stored context into sheet metadata
+                all_sheet_metas = parse_excel_context_to_sheets(upload.excel_context)
+
+                if all_sheet_metas and len(all_sheet_metas) > 3:
+                    # Stage 1: Compact summary of ALL sheets (always sent)
+                    parts.append(build_compact_summary(all_sheet_metas))
+
+                    # Stage 2: Select relevant sheets based on user's question
+                    selected = select_relevant_sheets(user_question, all_sheet_metas, max_sheets=3)
+
+                    # Stage 3: Full detail for only selected sheets
+                    parts.append(build_selected_context(selected, upload.code_preamble or ""))
+
+                    logger.info("Smart context: %d/%d sheets selected, ~%d chars",
+                               len(selected), len(all_sheet_metas),
+                               sum(len(p) for p in parts))
+                else:
+                    # Few sheets — send everything (< 3 sheets is fine)
+                    parts.append(upload.excel_context)
+                    if upload.code_preamble:
+                        parts.append(f"\nCODE PREAMBLE (prepend to all Python code):\n{upload.code_preamble}")
             else:
                 # Fallback to basic file summary
                 try:
@@ -252,7 +276,7 @@ async def chat(
     effective_file_id = body.file_id or conversation.file_id
     logger.info("Chat context: connection=%s file=%s (body.file_id=%s, conv.file_id=%s)",
                 effective_connection_id, effective_file_id, body.file_id, conversation.file_id)
-    schema_context = await _build_schema_context(db, effective_connection_id, effective_file_id)
+    schema_context = await _build_schema_context(db, effective_connection_id, effective_file_id, user_question=body.message)
     logger.info("Schema context length: %d chars, has_excel=%s",
                 len(schema_context), "EXCEL" in schema_context or "DATAFRAME" in schema_context)
 

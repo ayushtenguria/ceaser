@@ -12,8 +12,7 @@ from typing import Any
 
 import pandas as pd
 
-from app.agents.excel.parser import SheetResult, WorkbookResult
-from app.agents.excel.relationships import Relationship
+from app.agents.excel.relationship_mapper import Relationship
 
 logger = logging.getLogger(__name__)
 
@@ -39,7 +38,7 @@ def _make_var_name(file_name: str, sheet_name: str, sheet_count: int) -> str:
 
 
 def save_dataframes_to_parquet(
-    workbooks: list[WorkbookResult],
+    workbooks: list[Any],
 ) -> dict[str, str]:
     """Save all DataFrames as parquet files for fast sandbox loading.
 
@@ -64,8 +63,8 @@ def save_dataframes_to_parquet(
 
 
 def build_excel_context(
-    workbooks: list[WorkbookResult],
-    relationships: list[Relationship],
+    workbooks: list[Any],
+    relationships: list[Any],
     parquet_paths: dict[str, str],
 ) -> str:
     """Build a text description of the Excel data for the LLM prompt.
@@ -113,7 +112,7 @@ def build_excel_context(
             tgt_var = _sheet_to_var(workbooks, rel.target_sheet)
             lines.append(
                 f"  {src_var}.{rel.source_column} -> {tgt_var}.{rel.target_column}"
-                f"  ({rel.relationship_type}, {rel.confidence:.0%} confidence)"
+                f"  ({getattr(rel, 'relationship_type', getattr(rel, 'rel_type', 'unknown'))}, {rel.confidence:.0%} confidence)"
             )
             lines.append(
                 f"    Code: pd.merge({src_var}, {tgt_var}, "
@@ -137,7 +136,7 @@ def generate_code_preamble(parquet_paths: dict[str, str]) -> str:
     return "\n".join(lines)
 
 
-def _sheet_to_var(workbooks: list[WorkbookResult], sheet_name: str) -> str:
+def _sheet_to_var(workbooks: list[Any], sheet_name: str) -> str:
     """Convert a sheet name to its DataFrame variable name."""
     for wb in workbooks:
         for sheet in wb.sheets:

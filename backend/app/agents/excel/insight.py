@@ -8,9 +8,7 @@ from dataclasses import dataclass, field
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from app.agents.excel.parser import WorkbookResult
-from app.agents.excel.quality import QualityReport
-from app.agents.excel.relationships import Relationship
+from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -52,9 +50,9 @@ Respond as JSON:
 
 
 async def generate_upload_insight(
-    workbooks: list[WorkbookResult],
-    relationships: list[Relationship],
-    quality_report: QualityReport,
+    workbooks: list[Any],
+    relationships: list[Any],
+    quality_report: Any,
     llm: BaseChatModel,
 ) -> UploadInsight:
     """Generate a complete insight summary after file upload."""
