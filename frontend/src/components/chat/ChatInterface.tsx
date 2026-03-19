@@ -5,28 +5,16 @@ import { Button } from "@/components/ui/button";
 import ChatInput from "@/components/chat/ChatInput";
 import MessageBubble from "@/components/chat/MessageBubble";
 import ReportSheet from "@/components/chat/ReportSheet";
+import NotebookDraftSheet from "@/components/chat/NotebookDraftSheet";
 import { useChat } from "@/hooks/useChat";
 import { useConnectionsStore } from "@/store/connections";
-import * as api from "@/lib/api";
 
 export default function ChatInterface() {
   const navigate = useNavigate();
   const { messages, isStreaming, sendMessage, suggestions, activeConversationId } = useChat();
   const bottomRef = useRef<HTMLDivElement>(null);
   const [reportOpen, setReportOpen] = useState(false);
-  const [savingNotebook, setSavingNotebook] = useState(false);
-
-  const handleSaveAsNotebook = useCallback(async () => {
-    if (!activeConversationId) return;
-    setSavingNotebook(true);
-    try {
-      const result = await api.saveConversationAsNotebook(activeConversationId);
-      navigate(`/notebooks/${result.notebookId}`);
-    } catch {
-    } finally {
-      setSavingNotebook(false);
-    }
-  }, [activeConversationId, navigate]);
+  const [notebookDraftOpen, setNotebookDraftOpen] = useState(false);
 
   // Auto-scroll to bottom on new messages or streaming updates
   useEffect(() => {
@@ -42,10 +30,9 @@ export default function ChatInterface() {
             variant="outline"
             size="sm"
             className="gap-1.5 text-xs"
-            onClick={handleSaveAsNotebook}
-            disabled={savingNotebook}
+            onClick={() => setNotebookDraftOpen(true)}
           >
-            {savingNotebook ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <BookMarked className="h-3.5 w-3.5" />}
+            <BookMarked className="h-3.5 w-3.5" />
             Save as Notebook
           </Button>
           <Button
@@ -112,6 +99,17 @@ export default function ChatInterface() {
         conversationId={activeConversationId}
         open={reportOpen}
         onClose={() => setReportOpen(false)}
+      />
+
+      {/* Notebook draft sheet */}
+      <NotebookDraftSheet
+        conversationId={activeConversationId}
+        open={notebookDraftOpen}
+        onClose={() => setNotebookDraftOpen(false)}
+        onSaved={(id) => {
+          setNotebookDraftOpen(false);
+          navigate(`/notebooks/${id}`);
+        }}
       />
     </div>
   );

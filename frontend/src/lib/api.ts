@@ -458,8 +458,16 @@ export async function generateNotebookCells(description: string): Promise<any> {
 
 // --- Report Generation ---
 
-export async function saveConversationAsNotebook(conversationId: string): Promise<any> {
-  const { data } = await api.post(`/conversations/${conversationId}/notebook`);
+export async function getNotebookDraft(conversationId: string): Promise<any> {
+  const { data } = await api.post(`/conversations/${conversationId}/notebook/draft`);
+  return data;
+}
+
+export async function saveConversationAsNotebook(
+  conversationId: string,
+  draft?: { title: string; description: string; steps: any[] },
+): Promise<any> {
+  const { data } = await api.post(`/conversations/${conversationId}/notebook`, draft || {});
   return data;
 }
 

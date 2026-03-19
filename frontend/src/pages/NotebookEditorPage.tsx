@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from "react";
 import { useParams } from "react-router-dom";
 import {
   Play, Loader2, Trash2, GripVertical, FileText, FileUp,
-  TextCursorInput, Bot, Code2,
+  TextCursorInput, Bot, Code2, Clock, ChevronRight,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
@@ -31,10 +31,13 @@ export default function NotebookEditorPage() {
   const [cellResults, setCellResults] = useState<Record<string, any>>({});
   const [runningCellId, setRunningCellId] = useState<string | null>(null);
   const [userInputs, setUserInputs] = useState<Record<string, any>>({});
+  const [activeTab, setActiveTab] = useState<"editor" | "history">("editor");
+  const [runHistory, setRunHistory] = useState<any[]>([]);
 
   useEffect(() => {
     if (!notebookId) return;
     api.getNotebook(notebookId).then(setNotebook).catch(() => {}).finally(() => setIsLoading(false));
+    api.getNotebookRuns(notebookId).then(setRunHistory).catch(() => {});
   }, [notebookId]);
 
   const handleAddCell = useCallback(async (cellType: string) => {
@@ -99,7 +102,7 @@ export default function NotebookEditorPage() {
   return (
     <div className="mx-auto max-w-4xl p-6">
       {/* Header */}
-      <div className="mb-6 flex items-center justify-between">
+      <div className="mb-4 flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-semibold">{notebook.name}</h2>
           {notebook.description && <p className="text-sm text-muted-foreground">{notebook.description}</p>}
@@ -110,7 +113,63 @@ export default function NotebookEditorPage() {
         </Button>
       </div>
 
-      {/* Cells */}
+      {/* Tabs */}
+      <div className="mb-4 flex gap-1 border-b">
+        <button
+          onClick={() => setActiveTab("editor")}
+          className={cn("px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+            activeTab === "editor" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground")}
+        >
+          Editor ({cells.length} cells)
+        </button>
+        <button
+          onClick={() => setActiveTab("history")}
+          className={cn("flex items-center gap-1.5 px-4 py-2 text-sm font-medium border-b-2 -mb-px transition-colors",
+            activeTab === "history" ? "border-primary text-primary" : "border-transparent text-muted-foreground hover:text-foreground")}
+        >
+          <Clock className="h-3.5 w-3.5" />
+          Run History ({runHistory.length})
+        </button>
+      </div>
+
+      {/* Run History Tab */}
+      {activeTab === "history" && (
+        <div className="space-y-3">
+          {runHistory.length === 0 ? (
+            <div className="py-16 text-center">
+              <Clock className="mx-auto mb-3 h-8 w-8 text-muted-foreground" />
+              <p className="text-sm text-muted-foreground">No runs yet. Click "Run All" to execute.</p>
+            </div>
+          ) : (
+            runHistory.map((run: any) => (
+              <Card key={run.id} className="cursor-pointer hover:border-primary/50 transition-colors">
+                <CardContent className="flex items-center justify-between p-4">
+                  <div className="flex items-center gap-3">
+                    <div className={cn(
+                      "h-2.5 w-2.5 rounded-full",
+                      run.status === "completed" ? "bg-emerald-500" : run.status === "failed" ? "bg-destructive" : "bg-amber-500"
+                    )} />
+                    <div>
+                      <p className="text-sm font-medium">
+                        {new Date(run.startedAt || run.createdAt).toLocaleDateString()} at {new Date(run.startedAt || run.createdAt).toLocaleTimeString()}
+                      </p>
+                      <p className="text-xs text-muted-foreground">
+                        {run.status} · {run.totalExecutionMs ? `${(run.totalExecutionMs / 1000).toFixed(1)}s` : "—"} · {run.cellResults?.length || 0} cells
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                </CardContent>
+              </Card>
+            ))
+          )}
+        </div>
+      )}
+
+      {/* Cells (Editor Tab) */}
+      {activeTab === "editor" && (
+      <>
+      {/* --- existing cells code stays here --- */}
       <div className="space-y-3">
         {cells.map((cell: any) => {
           const meta = CELL_TYPES.find((t) => t.value === cell.cellType) || CELL_TYPES[0];
@@ -215,6 +274,8 @@ export default function NotebookEditorPage() {
           </Button>
         ))}
       </div>
+      </>
+      )}
     </div>
   );
 }

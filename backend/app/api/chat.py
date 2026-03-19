@@ -407,15 +407,14 @@ def _sse(data: dict) -> str:
 # Save as Notebook
 # ---------------------------------------------------------------------------
 
-@router.post("/conversations/{conversation_id}/notebook")
-async def save_conversation_as_notebook(
+@router.post("/conversations/{conversation_id}/notebook/draft")
+async def get_notebook_draft(
     conversation_id: uuid.UUID,
     current_user: CurrentUser,
     db: DbSession,
 ) -> dict:
-    """Extract a reusable notebook from a conversation's analysis history."""
-    from app.agents.notebook.extractor import extract_notebook_from_conversation
-    from app.db.models import Notebook, NotebookCell
+    """Extract a notebook DRAFT from conversation — returns steps for user review."""
+    from app.agents.notebook.extractor import extract_notebook_draft
 
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
 
@@ -431,7 +430,6 @@ async def save_conversation_as_notebook(
     if not db_messages:
         raise HTTPException(status_code=400, detail="Conversation has no messages.")
 
-    # Convert to dicts
     messages = [
         {
             "role": m.role,
@@ -439,23 +437,76 @@ async def save_conversation_as_notebook(
             "sql_query": m.sql_query,
             "table_data": m.table_data,
             "plotly_figure": m.plotly_figure,
+            "error": m.error,
         }
         for m in db_messages
     ]
 
-    # Get conversation title for notebook name
     conv_stmt = select(Conversation).where(Conversation.id == conversation_id)
     conv_result = await db.execute(conv_stmt)
     conversation = conv_result.scalar_one_or_none()
-    conv_title = conversation.title if conversation else ""
 
     llm = get_llm()
-    extracted = await extract_notebook_from_conversation(messages, llm, conv_title)
+    draft = await extract_notebook_draft(messages, llm, conversation.title if conversation else "")
 
-    # Create the notebook
+    return {
+        "conversationId": str(conversation_id),
+        "connectionId": str(conversation.connection_id) if conversation and conversation.connection_id else None,
+        **draft,
+    }
+
+
+@router.post("/conversations/{conversation_id}/notebook")
+async def save_conversation_as_notebook(
+    conversation_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+    body: dict | None = None,
+) -> dict:
+    """Save a notebook from a reviewed draft. Accepts the steps the user approved."""
+    from app.db.models import Notebook, NotebookCell
+    from app.agents.notebook.extractor import extract_notebook_draft
+
+    user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
+
+    conv_stmt = select(Conversation).where(Conversation.id == conversation_id)
+    conv_result = await db.execute(conv_stmt)
+    conversation = conv_result.scalar_one_or_none()
+
+    # If body has steps (from reviewed draft), use those
+    if body and body.get("steps"):
+        title = body.get("title", "Analysis Notebook")
+        description = body.get("description", "")
+        steps = [s for s in body["steps"] if s.get("included", True)]
+    else:
+        # No body — generate draft and save directly (backward compat)
+        msg_stmt = (
+            select(Message)
+            .where(Message.conversation_id == conversation_id)
+            .order_by(Message.created_at)
+        )
+        msg_result = await db.execute(msg_stmt)
+        db_messages = list(msg_result.scalars().all())
+
+        if not db_messages:
+            raise HTTPException(status_code=400, detail="No messages.")
+
+        messages = [
+            {"role": m.role, "content": m.content or "", "sql_query": m.sql_query,
+             "table_data": m.table_data, "plotly_figure": m.plotly_figure, "error": m.error}
+            for m in db_messages
+        ]
+
+        llm = get_llm()
+        draft = await extract_notebook_draft(messages, llm, conversation.title if conversation else "")
+        title = draft["title"]
+        description = draft["description"]
+        steps = [s for s in draft["steps"] if s.get("included", True)]
+
+    # Create notebook
     notebook = Notebook(
-        name=extracted["name"],
-        description=extracted["description"],
+        name=title,
+        description=description,
         user_id=user.id,
         organization_id=user.organization_id or "",
         connection_id=conversation.connection_id if conversation else None,
@@ -463,27 +514,34 @@ async def save_conversation_as_notebook(
     db.add(notebook)
     await db.flush()
 
-    # Create cells
-    for i, cell_data in enumerate(extracted["cells"]):
+    # File cell at top
+    file_cell = NotebookCell(
+        notebook_id=notebook.id, order=0,
+        cell_type="file", content="Upload your data file",
+        config={"accepted_types": [".xlsx", ".csv"], "description": "Upload data"},
+    )
+    db.add(file_cell)
+
+    # Create cells from steps
+    for i, step in enumerate(steps):
         cell = NotebookCell(
             notebook_id=notebook.id,
-            order=i,
-            cell_type=cell_data["cell_type"],
-            content=cell_data["content"],
-            config=cell_data.get("config"),
-            output_variable=cell_data.get("output_variable", ""),
+            order=i + 1,
+            cell_type=step.get("cell_type", "prompt"),
+            content=step.get("prompt", ""),
+            output_variable=f"result_{i + 1}",
         )
         db.add(cell)
 
     await db.commit()
 
-    logger.info("Saved conversation %s as notebook %s (%d cells)",
-                conversation_id, notebook.id, len(extracted["cells"]))
+    logger.info("Saved conversation %s as notebook %s (%d steps)",
+                conversation_id, notebook.id, len(steps))
 
     return {
         "notebookId": str(notebook.id),
-        "name": extracted["name"],
-        "cellCount": len(extracted["cells"]),
+        "name": title,
+        "cellCount": len(steps) + 1,  # +1 for file cell
     }
 
 

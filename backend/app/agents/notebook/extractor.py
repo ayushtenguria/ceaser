@@ -1,16 +1,19 @@
-"""Notebook Extractor Agent — extracts a reusable notebook skeleton from a conversation.
+"""Notebook Extractor Agent — intelligently extracts reusable steps from conversations.
 
-Analyzes the conversation messages, identifies the analysis steps (prompts + queries),
-and creates a notebook with:
-1. A file/connection cell at the top (for swapping data source)
-2. Prompt cells for each analysis step (preserving the working query patterns)
-3. Text cells for section headers
+Smart extraction:
+- Skips corrections ("sorry", "no not that", "wrong")
+- Skips failed queries (messages with errors)
+- Skips duplicate/repeated questions
+- Only keeps the FINAL version when user refined a query
+- Groups related follow-ups into single steps
+- Returns a DRAFT for user review before saving
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import re
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
@@ -18,197 +21,252 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
 
-_EXTRACT_PROMPT = """\
-You are a notebook designer. Analyze this conversation between a user and a data analyst AI.
-Extract the REUSABLE analysis steps — the questions the user asked that produced useful results.
+# Patterns that indicate a correction/throwaway message
+_CORRECTION_PATTERNS = [
+    r"^(sorry|oops|wait|no |nope|not that|wrong|ignore|scratch|never\s?mind|my bad|actually\s*,?\s*$)",
+    r"^(ok|okay|yes|yeah|sure|thanks|thank you|cool|great|perfect|got it|nice)[\s!.]*$",
+]
+_CORRECTION_RE = [re.compile(p, re.IGNORECASE) for p in _CORRECTION_PATTERNS]
 
-Conversation:
+# Minimum message length to be considered a real analysis step
+_MIN_STEP_LENGTH = 10
+
+
+_EXTRACT_PROMPT = """\
+You are a notebook designer. Analyze this conversation and extract ONLY the meaningful
+analysis steps — the questions that produced useful, correct results.
+
+Conversation (each message marked as [USER] or [ASSISTANT] with status):
 {conversation}
 
 Your job:
-1. Identify each distinct analysis step (user question that got a meaningful answer)
-2. For each step, write a GENERIC prompt that would work with any similar dataset
-   - Replace specific table/column names with generic references where possible
-   - But keep the analytical intent clear
-3. Group related steps under section headers
-4. Add a file upload cell at the very beginning
-5. Skip greetings, small talk, failed queries, and clarification messages
+1. SKIP:
+   - Corrections ("sorry", "no not that", "wrong one")
+   - Greetings and small talk
+   - Failed queries (marked as FAILED)
+   - Duplicate questions (keep only the FINAL refined version)
+   - Vague/incomplete messages
 
-Return a JSON array of cells:
-[
-  {{"cell_type": "file", "content": "Upload your data file", "config": {{"accepted_types": [".xlsx", ".csv"], "description": "Upload the dataset to analyze"}}, "output_variable": ""}},
-  {{"cell_type": "text", "content": "# Section Title", "config": null, "output_variable": ""}},
-  {{"cell_type": "prompt", "content": "The analysis prompt here", "config": null, "output_variable": "result_1"}},
-  ...
-]
+2. KEEP:
+   - Questions that got successful data/chart/analysis results
+   - Only the FINAL version if the user refined a question multiple times
+   - Each step should be SELF-CONTAINED (make sense without previous context)
 
-Rules:
-- 1 file cell at the top (always)
-- Group with text cells as section headers
-- Each prompt should be self-contained and reusable
-- Keep the original analytical intent but make it work with new data
-- Include 3-8 prompt cells (skip redundant/failed queries)
-- If a query produced a chart, mention "plot" or "chart" in the prompt
-- Set output_variable for prompts that later steps reference
+3. For each step, provide:
+   - A clean, reusable prompt (generic enough to work with different data)
+   - A short label (2-5 words)
+   - Whether it produces a chart
+
+Return JSON:
+{{
+  "title": "Notebook title based on the analysis theme",
+  "description": "One-line description",
+  "steps": [
+    {{
+      "label": "Short label",
+      "prompt": "The reusable analysis prompt",
+      "produces_chart": false,
+      "original_question": "What the user actually asked"
+    }}
+  ]
+}}
 """
 
 
-async def extract_notebook_from_conversation(
+async def extract_notebook_draft(
     messages: list[dict[str, Any]],
     llm: BaseChatModel,
     notebook_name: str = "",
 ) -> dict[str, Any]:
-    """Extract a reusable notebook skeleton from conversation messages.
+    """Extract a notebook DRAFT from conversation — for user review before saving.
 
     Returns:
-        dict with "name", "description", "cells" (list of cell dicts)
+        dict with "title", "description", "steps" (list of proposed steps),
+        and "skipped" (list of messages that were excluded with reasons)
     """
-    # Build conversation summary — focus on user questions and assistant results
+    # Pre-filter: deterministic cleanup
+    filtered, skipped = _prefilter_messages(messages)
+
+    if not filtered:
+        return {
+            "title": notebook_name or "Analysis Notebook",
+            "description": "No meaningful analysis steps found",
+            "steps": [],
+            "skipped": skipped,
+        }
+
+    # Build conversation text for LLM
     conv_lines: list[str] = []
-    analysis_count = 0
-
-    for i, msg in enumerate(messages):
-        role = msg.get("role", "unknown")
+    for i, msg in enumerate(filtered):
+        role = "USER" if msg.get("role") == "user" else "ASSISTANT"
         content = msg.get("content", "")[:400]
-        has_table = bool(msg.get("table_data"))
-        has_chart = bool(msg.get("plotly_figure"))
-        sql = msg.get("sql_query", "")
+        status = "OK"
+        if msg.get("error"):
+            status = "FAILED"
+        elif msg.get("table_data") or msg.get("plotly_figure"):
+            status = "HAS_DATA"
 
-        if role == "user":
-            conv_lines.append(f"[{i}] USER: {content}")
-        elif role == "assistant":
-            extras = []
-            if has_table:
-                extras.append("produced table")
-            if has_chart:
-                extras.append("produced chart")
-            if sql:
-                extras.append(f"SQL: {sql[:150]}")
-            extra_str = f" ({', '.join(extras)})" if extras else ""
-            conv_lines.append(f"[{i}] ASSISTANT: {content[:200]}{extra_str}")
-            if has_table or has_chart:
-                analysis_count += 1
+        conv_lines.append(f"[{i}] {role} ({status}): {content}")
 
     conversation_text = "\n".join(conv_lines)
 
-    # Generate notebook name if not provided
-    if not notebook_name:
-        # Use first user message as name hint
-        for msg in messages:
-            if msg.get("role") == "user" and msg.get("content"):
-                notebook_name = msg["content"][:60]
-                break
-        notebook_name = notebook_name or "Analysis Notebook"
-
+    # LLM extraction
     try:
         prompt_messages = [
             SystemMessage(content=_EXTRACT_PROMPT.format(conversation=conversation_text)),
-            HumanMessage(content="Extract the notebook."),
+            HumanMessage(content="Extract the notebook steps."),
         ]
 
         response = await llm.ainvoke(prompt_messages)
         raw: str = response.content.strip()  # type: ignore[union-attr]
 
-        # Strip markdown fences
         if raw.startswith("```"):
             lines = raw.split("\n")
             lines = [ln for ln in lines if not ln.strip().startswith("```")]
             raw = "\n".join(lines).strip()
 
-        cells = json.loads(raw)
+        data = json.loads(raw)
 
-        if not isinstance(cells, list) or len(cells) < 2:
-            cells = _fallback_extraction(messages)
-
-        # Validate cells
-        valid_types = {"text", "file", "input", "prompt", "code"}
-        cleaned_cells: list[dict[str, Any]] = []
-        for cell in cells:
-            if not isinstance(cell, dict):
-                continue
-            ct = cell.get("cell_type", "")
-            if ct not in valid_types:
-                continue
-            cleaned_cells.append({
-                "cell_type": ct,
-                "content": cell.get("content", ""),
-                "config": cell.get("config"),
-                "output_variable": cell.get("output_variable", ""),
+        steps = []
+        for s in data.get("steps", []):
+            steps.append({
+                "label": s.get("label", "Analysis Step"),
+                "prompt": s.get("prompt", ""),
+                "produces_chart": s.get("produces_chart", False),
+                "original_question": s.get("original_question", ""),
+                "cell_type": "prompt",
+                "included": True,  # User can toggle this off in preview
             })
 
-        if not cleaned_cells:
-            cleaned_cells = _fallback_extraction(messages)
-
-        logger.info("Extracted notebook: %d cells from %d messages (%d analyses)",
-                     len(cleaned_cells), len(messages), analysis_count)
-
-        return {
-            "name": notebook_name,
-            "description": f"Extracted from conversation with {len(messages)} messages and {analysis_count} analyses",
-            "cells": cleaned_cells,
+        result = {
+            "title": data.get("title", notebook_name or "Analysis Notebook"),
+            "description": data.get("description", ""),
+            "steps": steps,
+            "skipped": skipped,
         }
+
+        logger.info("Extracted draft: %d steps from %d messages (%d skipped)",
+                     len(steps), len(messages), len(skipped))
+        return result
 
     except Exception as exc:
-        logger.warning("Notebook extraction failed: %s", exc)
-        return {
-            "name": notebook_name,
-            "description": "Auto-extracted analysis notebook",
-            "cells": _fallback_extraction(messages),
-        }
+        logger.warning("LLM extraction failed, using fallback: %s", exc)
+        return _fallback_extraction(filtered, skipped, notebook_name)
 
 
-def _fallback_extraction(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Fallback: create cells directly from user messages that got results."""
-    cells: list[dict[str, Any]] = [
-        {
-            "cell_type": "file",
-            "content": "Upload your data file",
-            "config": {"accepted_types": [".xlsx", ".csv"], "description": "Upload the dataset to analyze"},
-            "output_variable": "",
-        },
-    ]
+def _prefilter_messages(messages: list[dict[str, Any]]) -> tuple[list[dict], list[dict]]:
+    """Deterministic pre-filter: remove corrections, duplicates, failures.
 
-    seen_prompts: set[str] = set()
+    Returns (kept_messages, skipped_with_reasons)
+    """
+    kept: list[dict] = []
+    skipped: list[dict] = []
 
-    for msg in messages:
+    # Track user questions to detect duplicates/refinements
+    seen_questions: list[str] = []
+
+    for i, msg in enumerate(messages):
+        role = msg.get("role", "")
+        content = (msg.get("content") or "").strip()
+
+        # Always keep assistant messages (they carry data)
+        if role == "assistant":
+            # Skip assistant errors
+            if msg.get("error") and not msg.get("table_data") and not msg.get("plotly_figure"):
+                skipped.append({"index": i, "content": content[:80], "reason": "Failed query"})
+                continue
+            kept.append(msg)
+            continue
+
+        if role != "user":
+            continue
+
+        # Skip empty/short messages
+        if len(content) < _MIN_STEP_LENGTH:
+            skipped.append({"index": i, "content": content, "reason": "Too short"})
+            continue
+
+        # Skip corrections
+        if _is_correction(content):
+            skipped.append({"index": i, "content": content[:80], "reason": "Correction/acknowledgment"})
+            continue
+
+        # Detect duplicate/refined questions
+        is_duplicate = False
+        content_lower = content.lower().strip()
+        for prev_q in seen_questions:
+            similarity = _quick_similarity(content_lower, prev_q)
+            if similarity > 0.7:
+                # This is a refinement — remove the old version, keep the new one
+                # Find and remove the old user message from kept
+                kept = [m for m in kept if (m.get("content") or "").lower().strip() != prev_q]
+                skipped.append({"index": i, "content": f"(Refined version of earlier question)", "reason": "Superseded by refinement"})
+                # Actually keep the NEW version
+                is_duplicate = False  # Keep this one
+                break
+
+        seen_questions.append(content_lower)
+
+        # Check if the NEXT assistant message has useful output
+        has_useful_response = False
+        for next_msg in messages[i + 1:]:
+            if next_msg.get("role") == "assistant":
+                if (next_msg.get("table_data") or next_msg.get("plotly_figure") or
+                        len(next_msg.get("content", "")) > 100):
+                    has_useful_response = True
+                break
+
+        if not has_useful_response:
+            skipped.append({"index": i, "content": content[:80], "reason": "No useful response"})
+            continue
+
+        kept.append(msg)
+
+    return kept, skipped
+
+
+def _is_correction(text: str) -> bool:
+    """Check if a message is a correction/throwaway."""
+    for pattern in _CORRECTION_RE:
+        if pattern.search(text.strip()):
+            return True
+    return False
+
+
+def _quick_similarity(a: str, b: str) -> float:
+    """Quick word-overlap similarity. O(n) with sets."""
+    words_a = set(a.split())
+    words_b = set(b.split())
+    if not words_a or not words_b:
+        return 0.0
+    overlap = len(words_a & words_b)
+    return overlap / min(len(words_a), len(words_b))
+
+
+def _fallback_extraction(
+    filtered: list[dict], skipped: list[dict], name: str
+) -> dict[str, Any]:
+    """Fallback: create steps from filtered user messages."""
+    steps = []
+    for msg in filtered:
         if msg.get("role") != "user":
             continue
         content = (msg.get("content") or "").strip()
-        if not content or len(content) < 5:
+        if len(content) < _MIN_STEP_LENGTH:
             continue
 
-        # Skip duplicates and greetings
-        content_lower = content.lower()
-        if content_lower in seen_prompts:
-            continue
-        if any(content_lower.startswith(g) for g in ("hi", "hello", "hey", "thanks", "ok", "yes", "no")):
-            continue
-
-        # Check if the next assistant message had useful output
-        msg_idx = messages.index(msg)
-        has_useful_output = False
-        for next_msg in messages[msg_idx + 1:]:
-            if next_msg.get("role") == "assistant":
-                if next_msg.get("table_data") or next_msg.get("plotly_figure") or len(next_msg.get("content", "")) > 100:
-                    has_useful_output = True
-                break
-
-        if has_useful_output:
-            seen_prompts.add(content_lower)
-            cells.append({
-                "cell_type": "prompt",
-                "content": content,
-                "config": None,
-                "output_variable": f"result_{len(cells)}",
-            })
-
-    # Add at least one prompt if none found
-    if len(cells) == 1:
-        cells.append({
+        steps.append({
+            "label": content[:40],
+            "prompt": content,
+            "produces_chart": any(w in content.lower() for w in ("chart", "plot", "graph", "trend", "visuali")),
+            "original_question": content,
             "cell_type": "prompt",
-            "content": "Analyze the uploaded data",
-            "config": None,
-            "output_variable": "result_1",
+            "included": True,
         })
 
-    return cells
+    return {
+        "title": name or "Analysis Notebook",
+        "description": "Auto-extracted analysis steps",
+        "steps": steps[:10],
+        "skipped": skipped,
+    }
