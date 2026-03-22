@@ -11,13 +11,20 @@ import { useConnectionsStore } from "@/store/connections";
 const clerkEnabled = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 function AuthenticatedLayout() {
-  const { setConnections } = useConnectionsStore();
+  const { setConnections, activeConnectionId, setActiveConnection, toggleConnectionId } = useConnectionsStore();
 
   useEffect(() => {
     api.getConnections()
-      .then(setConnections)
-      .catch(() => {}); // Silent fail
-  }, [setConnections]);
+      .then((conns) => {
+        setConnections(conns);
+        // Auto-select if user has exactly 1 connection and nothing selected
+        if (conns.length === 1 && !activeConnectionId) {
+          setActiveConnection(conns[0].id);
+          toggleConnectionId(conns[0].id);
+        }
+      })
+      .catch(() => {});
+  }, [setConnections, activeConnectionId, setActiveConnection, toggleConnectionId]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-background">

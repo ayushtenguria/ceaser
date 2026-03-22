@@ -1,4 +1,4 @@
-import { AlertCircle, Bot, Bookmark, ChevronRight, Copy, Check, Table2, User } from "lucide-react";
+import { AlertCircle, Bot, Bookmark, ChevronRight, Copy, Check, Download, Table2, User } from "lucide-react";
 import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
@@ -176,6 +176,30 @@ function CollapsibleTable({ data }: { data: import("@/types").TableData }) {
   const [expanded, setExpanded] = useState(false);
   const rowCount = data.totalRows ?? (data as any).total_rows ?? data.rows?.length ?? 0;
 
+  const handleDownloadCsv = useCallback(() => {
+    const columns = data.columns || [];
+    const rows = data.rows || [];
+    if (!columns.length || !rows.length) return;
+
+    const csvContent = [
+      columns.join(","),
+      ...rows.map((row) => columns.map((col) => {
+        const val = row[col];
+        const str = val === null || val === undefined ? "" : String(val);
+        return str.includes(",") || str.includes('"') || str.includes("\n")
+          ? `"${str.replace(/"/g, '""')}"` : str;
+      }).join(",")),
+    ].join("\n");
+
+    const blob = new Blob([csvContent], { type: "text/csv" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "data.csv";
+    a.click();
+    URL.revokeObjectURL(url);
+  }, [data]);
+
   return (
     <div className="w-full overflow-hidden rounded-lg border">
       <button
@@ -187,6 +211,13 @@ function CollapsibleTable({ data }: { data: import("@/types").TableData }) {
           <Table2 className="h-3.5 w-3.5" />
           Data Table ({rowCount} {rowCount === 1 ? "row" : "rows"})
         </span>
+        <button
+          onClick={(e) => { e.stopPropagation(); handleDownloadCsv(); }}
+          className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+        >
+          <Download className="h-3 w-3" />
+          CSV
+        </button>
       </button>
       {expanded && <DataTable data={data} />}
     </div>

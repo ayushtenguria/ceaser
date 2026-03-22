@@ -173,6 +173,24 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
   const showStandardFields =
     form.dbType !== "sqlite" && form.dbType !== "bigquery";
 
+  // Human-readable connection error messages
+  function _humanizeConnectionError(error: string): string {
+    const e = error.toLowerCase();
+    if (e.includes("connection refused") || e.includes("could not connect"))
+      return "Connection refused — check that your database is running and the host/port are correct. If you have a firewall, whitelist Ceaser's IP above.";
+    if (e.includes("timeout") || e.includes("timed out"))
+      return "Connection timed out — your database may be behind a firewall. Whitelist Ceaser's IP above, or check if the host is reachable.";
+    if (e.includes("password") || e.includes("authentication"))
+      return "Authentication failed — double-check your username and password. Make sure the user has access to the specified database.";
+    if (e.includes("does not exist") || e.includes("unknown database"))
+      return "Database not found — verify the database name exists on the server.";
+    if (e.includes("ssl") || e.includes("certificate"))
+      return "SSL error — your database may require SSL. Contact support for help.";
+    if (e.includes("too many connections"))
+      return "Too many connections — your database has reached its connection limit. Try again in a few minutes.";
+    return error;
+  }
+
   return (
     <form onSubmit={handleSubmit} className="space-y-4">
       {/* Name */}
@@ -317,14 +335,34 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
         </>
       )}
 
+      {/* Firewall notice */}
+      {showStandardFields && (
+        <div className="rounded-lg border border-amber-500/30 bg-amber-500/5 px-3 py-2">
+          <p className="text-xs text-amber-400 font-medium mb-1">Firewall Whitelisting</p>
+          <p className="text-xs text-muted-foreground">
+            If your database has a firewall, allow inbound connections from Ceaser's IP:
+          </p>
+          <code className="mt-1 block rounded bg-muted px-2 py-1 text-xs font-mono select-all">
+            {window.location.hostname === "localhost" ? "127.0.0.1 (local dev)" : window.location.hostname}
+          </code>
+          <p className="text-[10px] text-muted-foreground mt-1">
+            Also ensure you've created a <strong>read-only database user</strong>. See the <a href="/setup" className="text-primary underline">Setup Guide</a>.
+          </p>
+        </div>
+      )}
+
       {/* Test result */}
       {testResult && (
-        <div className="flex items-center gap-2">
-          <Badge variant={testResult.success ? "default" : "destructive"}>
-            {testResult.success ? "Connected" : "Failed"}
-          </Badge>
+        <div className="rounded-lg border p-3">
+          <div className="flex items-center gap-2 mb-1">
+            <Badge variant={testResult.success ? "default" : "destructive"}>
+              {testResult.success ? "Connected" : "Failed"}
+            </Badge>
+          </div>
           {testResult.error && (
-            <span className="text-xs text-destructive">{testResult.error}</span>
+            <p className="text-xs text-destructive mt-1">
+              {_humanizeConnectionError(testResult.error)}
+            </p>
           )}
         </div>
       )}

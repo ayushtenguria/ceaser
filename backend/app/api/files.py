@@ -82,7 +82,8 @@ async def upload_file(
     user_dir = _UPLOAD_DIR / str(user.id)
     user_dir.mkdir(parents=True, exist_ok=True)
 
-    safe_name = f"{uuid.uuid4().hex}_{file.filename}"
+    clean_filename = Path(file.filename).name  # Strip path components
+    safe_name = f"{uuid.uuid4().hex}_{clean_filename}"
     dest_path = user_dir / safe_name
 
     contents = await file.read()

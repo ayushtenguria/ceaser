@@ -34,7 +34,7 @@ class Settings(BaseSettings):
 
     # ── Super admin ────────────────────────────────────────────────────
     # Override via SUPER_ADMIN_EMAILS env var in production
-    super_admin_emails: list[str] = ["ayush.sharma.ug20@nsut.ac.in"]
+    super_admin_emails: list[str] = []  # Set via SUPER_ADMIN_EMAILS env var
 
     # ── LLM model names ──────────────────────────────────────────────
     gemini_model: str = "gemini-2.0-flash"

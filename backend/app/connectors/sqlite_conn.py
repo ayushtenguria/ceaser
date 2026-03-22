@@ -69,7 +69,8 @@ class SQLiteConnector(BaseConnector):
 
         for table_row in table_rows:
             table_name = table_row[0] if isinstance(table_row, tuple) else table_row["name"]
-            async with self._conn.execute(f'PRAGMA table_info("{table_name}")') as cursor:
+            escaped = table_name.replace('"', '""')
+            async with self._conn.execute(f'PRAGMA table_info("{escaped}")') as cursor:
                 col_rows = await cursor.fetchall()
 
             cols: list[dict[str, Any]] = []

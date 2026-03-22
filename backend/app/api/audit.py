@@ -28,9 +28,14 @@ async def list_audit_logs(
     offset: int = Query(0, ge=0),
 ) -> list[AuditLog]:
     """List audit logs for the organization. Newest first."""
-    await require_permission(Permission.VIEW_AUDIT, current_user, db)
-    # For now, just show logs. In production, filter by org_id.
-    stmt = select(AuditLog).order_by(AuditLog.created_at.desc())
+    user = await require_permission(Permission.VIEW_AUDIT, current_user, db)
+
+    # Filter by org: only show logs from users in the same organization
+    org_user_ids = select(User.id).where(User.organization_id == (user.organization_id or ""))
+
+    stmt = select(AuditLog).where(
+        AuditLog.user_id.in_(org_user_ids)
+    ).order_by(AuditLog.created_at.desc())
 
     if action:
         stmt = stmt.where(AuditLog.action == action)

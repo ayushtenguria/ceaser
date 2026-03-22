@@ -16,6 +16,7 @@ import {
   PanelLeft,
   X,
   BookMarked,
+  Activity,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ScrollArea } from "@/components/ui/scroll-area";
@@ -33,17 +34,33 @@ import * as api from "@/lib/api";
 
 const clerkEnabled = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
-const NAV_ITEMS = [
-  { label: "Chat", icon: MessageSquare, path: "/chat", adminOnly: false },
-  { label: "Reports", icon: BarChart3, path: "/reports", adminOnly: false },
-  { label: "Notebooks", icon: BookMarked, path: "/notebooks", adminOnly: false },
-  { label: "Connections", icon: Database, path: "/connections", adminOnly: false },
-  { label: "Metrics", icon: BookOpen, path: "/metrics", adminOnly: false },
-  { label: "Files", icon: FileUp, path: "/files", adminOnly: false },
-  { label: "Setup", icon: Shield, path: "/setup", adminOnly: false },
-  { label: "Org Settings", icon: Users, path: "/org-settings", adminOnly: false },
-  { label: "Audit Log", icon: FileText, path: "/audit", adminOnly: true },
-  { label: "Admin", icon: Settings, path: "/admin", adminOnly: true },
+const NAV_GROUPS = [
+  {
+    label: null, // No label for primary group
+    items: [
+      { label: "Chat", icon: MessageSquare, path: "/chat", adminOnly: false },
+      { label: "Reports", icon: BarChart3, path: "/reports", adminOnly: false },
+      { label: "Notebooks", icon: BookMarked, path: "/notebooks", adminOnly: false },
+    ],
+  },
+  {
+    label: "Data",
+    items: [
+      { label: "Connections", icon: Database, path: "/connections", adminOnly: false },
+      { label: "Files", icon: FileUp, path: "/files", adminOnly: false },
+      { label: "Definitions", icon: BookOpen, path: "/metrics", adminOnly: false },
+    ],
+  },
+  {
+    label: "Settings",
+    items: [
+      { label: "Usage", icon: Activity, path: "/usage", adminOnly: false },
+      { label: "Setup", icon: Shield, path: "/setup", adminOnly: false },
+      { label: "Org Settings", icon: Users, path: "/org-settings", adminOnly: false },
+      { label: "Audit Log", icon: FileText, path: "/audit", adminOnly: true },
+      { label: "Admin", icon: Settings, path: "/admin", adminOnly: true },
+    ],
+  },
 ] as const;
 
 export default function Sidebar() {
@@ -51,6 +68,7 @@ export default function Sidebar() {
   const location = useLocation();
   const [collapsed, setCollapsed] = useState(false);
   const [userRole, setUserRole] = useState<string>("member");
+  const [searchQuery, setSearchQuery] = useState("");
 
   const {
     conversations,
@@ -65,8 +83,8 @@ export default function Sidebar() {
       .catch(() => {});
   }, []);
 
-  const visibleNavItems = NAV_ITEMS.filter(
-    (item) => !item.adminOnly || userRole === "super_admin" || userRole === "admin"
+  const filteredConversations = conversations.filter((c) =>
+    !searchQuery || c.title.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
   const handleNewChat = useCallback(() => {
@@ -162,33 +180,52 @@ export default function Sidebar() {
         </div>
 
         {/* Navigation */}
-        <nav className="space-y-1 px-3">
-          {visibleNavItems.map(({ label, icon: Icon, path }) => {
-            const isActive = location.pathname.startsWith(path);
-            return collapsed ? (
-              <Tooltip key={path}>
-                <TooltipTrigger asChild>
-                  <Button
-                    variant={isActive ? "secondary" : "ghost"}
-                    size="icon"
-                    className="w-full"
-                    onClick={() => navigate(path)}
-                  >
-                    <Icon className="h-4 w-4" />
-                  </Button>
-                </TooltipTrigger>
-                <TooltipContent side="right">{label}</TooltipContent>
-              </Tooltip>
-            ) : (
-              <Button
-                key={path}
-                variant={isActive ? "secondary" : "ghost"}
-                className="w-full justify-start gap-2"
-                onClick={() => navigate(path)}
-              >
-                <Icon className="h-4 w-4" />
-                {label}
-              </Button>
+        <nav className="space-y-4 px-3">
+          {NAV_GROUPS.map((group, gi) => {
+            const visibleItems = group.items.filter(
+              (item) => !item.adminOnly || userRole === "super_admin" || userRole === "admin"
+            );
+            if (visibleItems.length === 0) return null;
+
+            return (
+              <div key={gi}>
+                {group.label && !collapsed && (
+                  <p className="mb-1 px-2 text-[10px] font-semibold uppercase tracking-wider text-muted-foreground/60">
+                    {group.label}
+                  </p>
+                )}
+                {group.label && collapsed && <Separator className="my-1" />}
+                <div className="space-y-0.5">
+                  {visibleItems.map(({ label, icon: Icon, path }) => {
+                    const isActive = location.pathname.startsWith(path);
+                    return collapsed ? (
+                      <Tooltip key={path}>
+                        <TooltipTrigger asChild>
+                          <Button
+                            variant={isActive ? "secondary" : "ghost"}
+                            size="icon"
+                            className="w-full"
+                            onClick={() => navigate(path)}
+                          >
+                            <Icon className="h-4 w-4" />
+                          </Button>
+                        </TooltipTrigger>
+                        <TooltipContent side="right">{label}</TooltipContent>
+                      </Tooltip>
+                    ) : (
+                      <Button
+                        key={path}
+                        variant={isActive ? "secondary" : "ghost"}
+                        className="w-full justify-start gap-2"
+                        onClick={() => navigate(path)}
+                      >
+                        <Icon className="h-4 w-4" />
+                        {label}
+                      </Button>
+                    );
+                  })}
+                </div>
+              </div>
             );
           })}
         </nav>
@@ -201,14 +238,23 @@ export default function Sidebar() {
             <p className="mb-2 px-2 text-xs font-medium uppercase text-muted-foreground">
               Recent
             </p>
+            <div className="px-2 mb-2">
+              <input
+                type="text"
+                placeholder="Search chats..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="w-full rounded-md border bg-background px-2 py-1 text-xs outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground"
+              />
+            </div>
             <ScrollArea className="h-full">
               <div className="space-y-0.5 pb-4">
-                {conversations.length === 0 && (
+                {filteredConversations.length === 0 && (
                   <p className="px-2 text-xs text-muted-foreground">
                     No conversations yet
                   </p>
                 )}
-                {conversations.map((convo) => (
+                {filteredConversations.map((convo) => (
                   <div key={convo.id} className="group relative">
                     <button
                       onClick={() => handleConversationClick(convo.id)}

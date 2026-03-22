@@ -15,13 +15,18 @@ import OrgSettingsPage from "@/pages/OrgSettingsPage";
 import AuditPage from "@/pages/AuditPage";
 import NotebooksPage from "@/pages/NotebooksPage";
 import NotebookEditorPage from "@/pages/NotebookEditorPage";
+import LandingPage from "@/pages/LandingPage";
+import TermsPage from "@/pages/TermsPage";
+import PrivacyPage from "@/pages/PrivacyPage";
+import UsagePage from "@/pages/UsagePage";
+import ChangelogPage from "@/pages/ChangelogPage";
 
 const clerkEnabled = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 function ClerkRootRedirect() {
   const { isSignedIn, isLoaded } = useAuth();
   if (!isLoaded) return null;
-  return isSignedIn ? <Navigate to="/chat" replace /> : <Navigate to="/sign-in" replace />;
+  return isSignedIn ? <Navigate to="/chat" replace /> : <LandingPage />;
 }
 
 function RootRedirect() {
@@ -34,6 +39,9 @@ export default function App() {
     <ErrorBoundary>
       <Routes>
         <Route path="/" element={<RootRedirect />} />
+        <Route path="/terms" element={<TermsPage />} />
+        <Route path="/privacy" element={<PrivacyPage />} />
+        <Route path="/changelog" element={<ChangelogPage />} />
         <Route path="/sign-in/*" element={<SignInPage />} />
         <Route path="/sign-up/*" element={<SignUpPage />} />
         <Route element={<AppLayout />}>
@@ -49,6 +57,7 @@ export default function App() {
           <Route path="/audit" element={<AuditPage />} />
           <Route path="/notebooks" element={<NotebooksPage />} />
           <Route path="/notebooks/:notebookId" element={<NotebookEditorPage />} />
+          <Route path="/usage" element={<UsagePage />} />
         </Route>
       </Routes>
     </ErrorBoundary>

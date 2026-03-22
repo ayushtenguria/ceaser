@@ -18,11 +18,15 @@ router = APIRouter(prefix="/auth", tags=["auth"])
 
 
 @router.post("/sync", response_model=UserResponse, status_code=status.HTTP_200_OK)
-async def sync_user(payload: UserSyncRequest, db: DbSession) -> User:
+async def sync_user(payload: UserSyncRequest, current_user: CurrentUser, db: DbSession) -> User:
     """Create or update a local user record from Clerk data.
 
     Called by the frontend after Clerk sign-in/sign-up, or by a Clerk webhook.
     """
+    # Verify the sync request matches the authenticated user
+    if payload.clerk_id != current_user.user_id and current_user.user_id != "dev_user":
+        raise HTTPException(status_code=403, detail="Cannot sync a different user's data.")
+
     stmt = select(User).where(User.clerk_id == payload.clerk_id)
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()

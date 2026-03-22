@@ -10,12 +10,13 @@ const PAGE_TITLES: Record<string, string> = {
   "/connections": "Connections",
   "/files": "Files",
   "/reports": "Reports",
-  "/metrics": "Business Metrics",
+  "/metrics": "Business Definitions",
   "/setup": "Setup Guide",
   "/org-settings": "Organization Settings",
   "/audit": "Audit Log",
   "/admin": "Admin Dashboard",
   "/notebooks": "Notebooks",
+  "/usage": "Usage",
 };
 
 function getPageTitle(pathname: string): string {

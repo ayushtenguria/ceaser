@@ -52,6 +52,9 @@ async def create_connection(
     """Register a new external database connection (password is encrypted at rest)."""
     user = await require_permission(Permission.MANAGE_CONNECTIONS, current_user, db)
 
+    from app.core.plan_enforcement import check_connection_limit
+    await check_connection_limit(db, user.organization_id or current_user.org_id or "")
+
     connection = DatabaseConnection(
         name=body.name,
         db_type=body.db_type,

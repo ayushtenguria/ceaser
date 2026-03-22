@@ -4,28 +4,53 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+.eggs/
+*.egg-info/
 
-# Environment
+# Environment — NEVER commit these
 .env
-.env.local
+.env.*
+!.env.example
+backend/.env
+frontend/.env
 
 # Build output
 dist/
 build/
-*.egg-info/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.sublime-*
 
 # OS
 .DS_Store
 Thumbs.db
+desktop.ini
 
-# Uploads
+# Uploads & user data
 uploads/
+logs/
+*.parquet
 
 # Temp
 *.tmp
+*.bak
+
+# Package lock (optional — remove if you want to lock)
+# package-lock.json
+
+# Python
+*.pyo
+*.pyd
+.Python
+pip-log.txt
+
+# Secrets & credentials
+*.pem
+*.key
+*.cert
+credentials.json
+service-account.json

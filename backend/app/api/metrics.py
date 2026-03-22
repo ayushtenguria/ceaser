@@ -23,6 +23,7 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
     user = result.scalar_one_or_none()
     if user is None:
         if clerk_id == "dev_user":
+            from app.core.config import get_settings
             user = User(clerk_id="dev_user", email=get_settings().dev_fallback_email, first_name="Dev", last_name="User", organization_id="dev_org")
             db.add(user)
             await db.flush()

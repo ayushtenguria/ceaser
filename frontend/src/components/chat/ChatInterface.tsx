@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { BarChart3, BookMarked, Database, FileText, Loader2, MessageSquare } from "lucide-react";
+import { BarChart3, BookMarked, Database, FileSpreadsheet, FileText, Loader2, MessageSquare } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import ChatInput from "@/components/chat/ChatInput";
 import MessageBubble from "@/components/chat/MessageBubble";
@@ -8,10 +8,11 @@ import ReportSheet from "@/components/chat/ReportSheet";
 import NotebookDraftSheet from "@/components/chat/NotebookDraftSheet";
 import { useChat } from "@/hooks/useChat";
 import { useConnectionsStore } from "@/store/connections";
+import * as api from "@/lib/api";
 
 export default function ChatInterface() {
   const navigate = useNavigate();
-  const { messages, isStreaming, sendMessage, suggestions, activeConversationId } = useChat();
+  const { messages, isStreaming, streamStatus, sendMessage, suggestions, activeConversationId } = useChat();
   const bottomRef = useRef<HTMLDivElement>(null);
   const [reportOpen, setReportOpen] = useState(false);
   const [notebookDraftOpen, setNotebookDraftOpen] = useState(false);
@@ -20,6 +21,29 @@ export default function ChatInterface() {
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isStreaming]);
+
+  function _formatStatus(status: string): string {
+    if (!status) return "Analyzing your question...";
+    const s = status.toLowerCase();
+    if (s.includes("analysing") || s.includes("analyzing")) return "Understanding your question...";
+    if (s.includes("decided to use: sql")) return "Preparing database query...";
+    if (s.includes("decided to use: python")) return "Preparing analysis code...";
+    if (s.includes("decided to use: analyze")) return "Running deep analysis...";
+    if (s.includes("decided to use: respond")) return "Composing response...";
+    if (s.includes("generating sql") || s.includes("sql agent")) return "Writing SQL query...";
+    if (s.includes("executing") || s.includes("sql execute")) return "Running query on database...";
+    if (s.includes("fixing query")) return "Fixing query...";
+    if (s.includes("verifying")) return "Checking results...";
+    if (s.includes("breaking into")) return "Breaking into sub-queries...";
+    if (s.includes("part ")) return status; // "Part 1/2: ..." — show as-is
+    if (s.includes("multi-database")) return "Querying multiple databases...";
+    if (s.includes("loading schemas")) return "Loading database schemas...";
+    if (s.includes("planning")) return "Planning analysis strategy...";
+    if (s.includes("deep analysis")) return "Running comprehensive analysis...";
+    if (s.includes("joining")) return "Merging results from multiple sources...";
+    // Strip technical prefixes
+    return status.replace(/^(decided to use: |sql |code )/, "").trim() || "Processing...";
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -57,10 +81,19 @@ export default function ChatInterface() {
               <MessageBubble key={message.id} message={message} />
             ))}
             {isStreaming && (
-              <div className="flex items-center gap-2 px-4 text-sm text-muted-foreground">
-                <div className="h-2 w-2 animate-pulse rounded-full bg-primary" />
-                Thinking...
-              </div>
+                <div className="rounded-lg border bg-card/50 px-4 py-3 mx-4">
+                  <div className="flex items-center gap-3">
+                    <div className="relative h-5 w-5 shrink-0">
+                      <div className="absolute inset-0 animate-ping rounded-full bg-primary/20" />
+                      <div className="relative h-5 w-5 animate-spin rounded-full border-2 border-primary border-t-transparent" />
+                    </div>
+                    <div className="min-w-0">
+                      <p className="text-sm font-medium truncate">
+                        {_formatStatus(streamStatus)}
+                      </p>
+                    </div>
+                  </div>
+                </div>
             )}
             <div ref={bottomRef} />
           </div>
@@ -119,6 +152,21 @@ function EmptyState({ onSuggestionClick }: { onSuggestionClick: (message: string
   const navigate = useNavigate();
   const { connections, activeConnectionId } = useConnectionsStore();
   const hasConnection = connections.length > 0 || activeConnectionId;
+  const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
+  const [loadingSuggestions, setLoadingSuggestions] = useState(false);
+
+  // Fetch schema-aware suggestions when connection is active
+  useEffect(() => {
+    if (activeConnectionId) {
+      setLoadingSuggestions(true);
+      api.getSuggestions(activeConnectionId)
+        .then((s) => setDynamicSuggestions(s))
+        .catch(() => {})
+        .finally(() => setLoadingSuggestions(false));
+    }
+  }, [activeConnectionId]);
+
+  const displaySuggestions = dynamicSuggestions.length > 0 ? dynamicSuggestions : SUGGESTIONS;
 
   return (
     <div className="flex h-full flex-1 flex-col items-center justify-center py-24">
@@ -133,34 +181,61 @@ function EmptyState({ onSuggestionClick }: { onSuggestionClick: (message: string
             are ready for AI-powered insights.
           </p>
           <div className="grid max-w-lg gap-3">
-            {SUGGESTIONS.map((suggestion) => (
-              <button
-                key={suggestion}
-                onClick={() => onSuggestionClick(suggestion)}
-                className="flex items-start gap-3 rounded-lg border bg-card p-3 text-left text-sm transition-colors hover:bg-accent"
-              >
-                <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
-                <span>{suggestion}</span>
-              </button>
-            ))}
+            {loadingSuggestions ? (
+              <div className="flex items-center justify-center py-4">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : (
+              displaySuggestions.map((suggestion) => (
+                <button
+                  key={suggestion}
+                  onClick={() => onSuggestionClick(suggestion)}
+                  className="flex items-start gap-3 rounded-lg border bg-card p-3 text-left text-sm transition-colors hover:bg-accent"
+                >
+                  <MessageSquare className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" />
+                  <span>{suggestion}</span>
+                </button>
+              ))
+            )}
           </div>
         </>
       ) : (
         <>
           <p className="mb-6 max-w-md text-center text-muted-foreground">
-            Connect a database or upload a file to get started with AI-powered
-            data insights.
+            Get started in 2 minutes — connect your database or upload an Excel file.
           </p>
-          <div className="flex gap-3">
-            <Button variant="outline" onClick={() => navigate("/connections")}>
-              <Database className="mr-2 h-4 w-4" />
-              Connect Database
-            </Button>
-            <Button variant="outline" onClick={() => navigate("/files")}>
-              <MessageSquare className="mr-2 h-4 w-4" />
-              Upload File
-            </Button>
+
+          {/* Quick start cards */}
+          <div className="grid max-w-lg gap-4 md:grid-cols-2">
+            <button
+              onClick={() => navigate("/connections")}
+              className="flex flex-col items-center gap-3 rounded-xl border bg-card p-6 text-center transition-all hover:border-primary/50 hover:shadow-lg"
+            >
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-primary/10">
+                <Database className="h-6 w-6 text-primary" />
+              </div>
+              <div>
+                <p className="font-medium">Connect Database</p>
+                <p className="mt-1 text-xs text-muted-foreground">PostgreSQL, MySQL, SQLite</p>
+              </div>
+            </button>
+            <button
+              onClick={() => navigate("/files")}
+              className="flex flex-col items-center gap-3 rounded-xl border bg-card p-6 text-center transition-all hover:border-primary/50 hover:shadow-lg"
+            >
+              <div className="flex h-12 w-12 items-center justify-center rounded-lg bg-emerald-500/10">
+                <FileSpreadsheet className="h-6 w-6 text-emerald-400" />
+              </div>
+              <div>
+                <p className="font-medium">Upload Excel / CSV</p>
+                <p className="mt-1 text-xs text-muted-foreground">Drag & drop or click to upload</p>
+              </div>
+            </button>
           </div>
+
+          <p className="mt-6 text-xs text-muted-foreground">
+            Need help? Check the <a href="/setup" className="text-primary underline">Setup Guide</a>
+          </p>
         </>
       )}
     </div>

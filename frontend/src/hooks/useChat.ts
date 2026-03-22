@@ -21,6 +21,7 @@ export function useChat() {
   const [error, setError] = useState<string | null>(null);
   const [pendingConvId, setPendingConvId] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [streamStatus, setStreamStatus] = useState<string>("");
 
   // Show messages from active conversation, or from temp conversation while streaming
   const effectiveConvId = activeConversationId || pendingConvId;
@@ -154,6 +155,7 @@ export function useChat() {
               break;
             }
             case "status":
+              setStreamStatus(chunk.content || "");
               break;
             case "done":
               break;
@@ -183,6 +185,7 @@ export function useChat() {
       } finally {
         setIsStreaming(false);
         setPendingConvId(null);
+        setStreamStatus("");
       }
     },
     [
@@ -202,6 +205,7 @@ export function useChat() {
     conversations,
     activeConversationId,
     isStreaming,
+    streamStatus,
     error,
     sendMessage,
     suggestions,

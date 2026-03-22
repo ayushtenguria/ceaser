@@ -233,6 +233,14 @@ async def chat(
     """
     user = await require_permission(Permission.QUERY_DATA, current_user, db)
 
+    # Rate limiting
+    from app.core.rate_limiter import check_rate_limit
+    check_rate_limit(current_user.user_id, max_requests=30, window_seconds=60)
+
+    # Check plan limits
+    from app.core.plan_enforcement import check_query_limit
+    await check_query_limit(db, user.organization_id or "")
+
     # ── Resolve or create conversation ──────────────────────────────
     if body.conversation_id:
         # Look up conversation — allow access if user owns it or is in same org
@@ -607,6 +615,10 @@ async def generate_conversation_report(
     from app.agents.report.orchestrator import generate_report_from_conversation
 
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
+
+    # Check plan limits
+    from app.core.plan_enforcement import check_report_limit
+    await check_report_limit(db, user.organization_id or "")
 
     # Verify conversation exists
     stmt = select(Conversation).where(Conversation.id == conversation_id)
