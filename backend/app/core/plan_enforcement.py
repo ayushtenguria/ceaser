@@ -22,20 +22,49 @@ from app.db.models import AuditLog, DatabaseConnection, FileUpload, Report, User
 logger = logging.getLogger(__name__)
 
 
+async def _is_super_admin(db: AsyncSession, org_id: str) -> bool:
+    """Check if this org belongs to a super admin (unlimited access)."""
+    if not org_id:
+        return False
+    stmt = select(User).where(User.organization_id == org_id, User.is_super_admin == True)
+    result = await db.execute(stmt)
+    return result.scalar_one_or_none() is not None
+
+
 async def get_org_plan(db: AsyncSession, org_id: str) -> OrganizationPlan | None:
-    """Get the plan for an organization. Returns None if no plan (unlimited)."""
+    """Get the plan for an organization. Auto-creates Free plan for existing orgs without one."""
     if not org_id:
         return None
     stmt = select(OrganizationPlan).where(OrganizationPlan.organization_id == org_id)
     result = await db.execute(stmt)
-    return result.scalar_one_or_none()
+    plan = result.scalar_one_or_none()
+
+    # Auto-create Free plan for existing orgs that don't have one
+    if plan is None:
+        plan = OrganizationPlan(
+            organization_id=org_id,
+            plan_name="free",
+            max_seats=5,
+            max_connections=1,
+            max_queries_per_day=50,
+            max_reports=5,
+        )
+        db.add(plan)
+        await db.flush()
+        logger.info("Auto-created Free plan for existing org %s", org_id)
+
+    return plan
 
 
 async def check_query_limit(db: AsyncSession, org_id: str) -> None:
     """Check if org has exceeded daily query limit. Raises 429 if exceeded."""
+    # Super admins bypass all limits
+    if await _is_super_admin(db, org_id):
+        return
+
     plan = await get_org_plan(db, org_id)
     if not plan:
-        return  # No plan = no limits
+        return
 
     today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     stmt = (
@@ -58,6 +87,8 @@ async def check_query_limit(db: AsyncSession, org_id: str) -> None:
 
 async def check_connection_limit(db: AsyncSession, org_id: str) -> None:
     """Check if org can add another connection."""
+    if await _is_super_admin(db, org_id):
+        return
     plan = await get_org_plan(db, org_id)
     if not plan:
         return
@@ -79,6 +110,8 @@ async def check_connection_limit(db: AsyncSession, org_id: str) -> None:
 
 async def check_report_limit(db: AsyncSession, org_id: str) -> None:
     """Check if org can generate another report this month."""
+    if await _is_super_admin(db, org_id):
+        return
     plan = await get_org_plan(db, org_id)
     if not plan:
         return

@@ -174,8 +174,15 @@ export function useChat() {
           });
         }
       } catch (err) {
-        const errorMessage =
+        let errorMessage =
           err instanceof Error ? err.message : "An unexpected error occurred";
+
+        // Detect plan limit errors
+        if (errorMessage.includes("429") || errorMessage.includes("limit reached") || errorMessage.includes("too many")) {
+          errorMessage = "You've reached your plan limit. Visit Usage & Plan to upgrade.";
+        } else if (errorMessage.includes("402") || errorMessage.includes("Upgrade")) {
+          errorMessage = "This feature requires a plan upgrade. Visit Usage & Plan to see options.";
+        }
         setError(errorMessage);
         updateMessage(tempConvId, assistantMessageId, {
           content: errorMessage,

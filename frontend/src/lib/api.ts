@@ -74,6 +74,11 @@ export async function getPermissions(): Promise<{ role: string; isSuperAdmin: bo
   return data;
 }
 
+export async function getMyPlan(): Promise<any> {
+  const { data } = await api.get("/auth/me/plan");
+  return data;
+}
+
 export async function getSuggestions(connectionId?: string, conversationId?: string): Promise<string[]> {
   const params: Record<string, string> = {};
   if (connectionId) params.connection_id = connectionId;

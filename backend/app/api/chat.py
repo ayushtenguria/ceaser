@@ -233,13 +233,13 @@ async def chat(
     """
     user = await require_permission(Permission.QUERY_DATA, current_user, db)
 
-    # Rate limiting
-    from app.core.rate_limiter import check_rate_limit
-    check_rate_limit(current_user.user_id, max_requests=30, window_seconds=60)
+    # Super admins bypass rate limiting and plan limits
+    if not user.is_super_admin:
+        from app.core.rate_limiter import check_rate_limit
+        check_rate_limit(current_user.user_id, max_requests=30, window_seconds=60)
 
-    # Check plan limits
-    from app.core.plan_enforcement import check_query_limit
-    await check_query_limit(db, user.organization_id or "")
+        from app.core.plan_enforcement import check_query_limit
+        await check_query_limit(db, user.organization_id or "")
 
     # ── Resolve or create conversation ──────────────────────────────
     if body.conversation_id:

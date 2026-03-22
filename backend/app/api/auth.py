@@ -63,6 +63,27 @@ async def sync_user(payload: UserSyncRequest, current_user: CurrentUser, db: DbS
 
     await db.flush()
     await db.refresh(user)
+
+    # Auto-create Free plan for org if none exists
+    if user.organization_id:
+        from app.db.models import OrganizationPlan
+        plan_stmt = select(OrganizationPlan).where(
+            OrganizationPlan.organization_id == user.organization_id
+        )
+        plan_result = await db.execute(plan_stmt)
+        existing_plan = plan_result.scalar_one_or_none()
+        if existing_plan is None:
+            free_plan = OrganizationPlan(
+                organization_id=user.organization_id,
+                plan_name="free",
+                max_seats=5,
+                max_connections=1,
+                max_queries_per_day=50,
+                max_reports=5,
+            )
+            db.add(free_plan)
+            logger.info("Auto-created Free plan for org %s", user.organization_id)
+
     return user
 
 
@@ -79,6 +100,83 @@ async def get_me(current_user: CurrentUser, db: DbSession) -> User:
             detail="User not found. Please call /auth/sync first.",
         )
     return user
+
+
+@router.get("/me/plan")
+async def get_my_plan(current_user: CurrentUser, db: DbSession) -> dict:
+    """Return the current user's organization plan and usage."""
+    from app.db.models import OrganizationPlan, AuditLog, DatabaseConnection, Report
+    from datetime import datetime
+    from sqlalchemy import func
+
+    user = await get_user_with_role(db, current_user.user_id)
+    org_id = user.organization_id or ""
+
+    # Super admin = unlimited everything
+    is_admin = user.is_super_admin
+
+    # Get plan
+    plan_stmt = select(OrganizationPlan).where(OrganizationPlan.organization_id == org_id)
+    plan_result = await db.execute(plan_stmt)
+    plan = plan_result.scalar_one_or_none()
+
+    if is_admin:
+        plan_name = "enterprise"
+        max_queries = -1  # unlimited
+        max_connections = -1
+        max_reports = -1
+        max_seats = -1
+    else:
+        plan_name = plan.plan_name if plan else "free"
+        max_queries = plan.max_queries_per_day if plan else 50
+        max_connections = plan.max_connections if plan else 1
+        max_reports = plan.max_reports if plan else 5
+        max_seats = plan.max_seats if plan else 5
+
+    # Get today's query count
+    today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
+    query_count_stmt = (
+        select(func.count()).select_from(AuditLog)
+        .where(AuditLog.action == "chat_query", AuditLog.created_at >= today)
+    )
+    queries_today = (await db.execute(query_count_stmt)).scalar() or 0
+
+    # Get connection count
+    conn_count_stmt = (
+        select(func.count()).select_from(DatabaseConnection)
+        .where(DatabaseConnection.organization_id == org_id)
+    )
+    connections_used = (await db.execute(conn_count_stmt)).scalar() or 0
+
+    # Get monthly report count
+    month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+    report_count_stmt = (
+        select(func.count()).select_from(Report)
+        .where(Report.organization_id == org_id, Report.created_at >= month_start)
+    )
+    reports_this_month = (await db.execute(report_count_stmt)).scalar() or 0
+
+    # Get seat count
+    from app.db.models import User as UserModel
+    seat_count_stmt = (
+        select(func.count()).select_from(UserModel)
+        .where(UserModel.organization_id == org_id)
+    )
+    seats_used = (await db.execute(seat_count_stmt)).scalar() or 0
+
+    return {
+        "planName": plan_name,
+        "usage": {
+            "queriesToday": {"used": queries_today, "limit": max_queries},
+            "connections": {"used": connections_used, "limit": max_connections},
+            "reportsThisMonth": {"used": reports_this_month, "limit": max_reports},
+            "seats": {"used": seats_used, "limit": max_seats},
+        },
+        "upgrades": {
+            "starter": {"price": "$79/mo", "queries": 100, "connections": 3, "reports": 30, "seats": 3},
+            "business": {"price": "$249/mo", "queries": 500, "connections": 10, "reports": -1, "seats": 10},
+        },
+    }
 
 
 @router.get("/me/permissions")
