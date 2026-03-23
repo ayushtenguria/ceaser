@@ -302,6 +302,47 @@ export async function deleteMetric(id: string): Promise<void> {
   await api.delete(`/metrics/${id}`);
 }
 
+// --- Billing ---
+
+export async function createCheckout(planName: string): Promise<{ checkoutUrl: string; sessionId: string }> {
+  const { data } = await api.post("/billing/checkout", {
+    planName,
+    successUrl: `${window.location.origin}/usage?upgraded=true`,
+    cancelUrl: `${window.location.origin}/usage?cancelled=true`,
+  });
+  return data;
+}
+
+export async function getSubscription(): Promise<{
+  hasSubscription: boolean;
+  planName: string;
+  status: string | null;
+  provider: string | null;
+  cancelAtPeriodEnd: boolean;
+  currentPeriodEnd: string | null;
+}> {
+  const { data } = await api.get("/billing/subscription");
+  return data;
+}
+
+export async function cancelSubscription(): Promise<{ status: string }> {
+  const { data } = await api.post("/billing/cancel");
+  return data;
+}
+
+export async function getInvoices(): Promise<Array<{
+  id: string;
+  amount: number;
+  currency: string;
+  status: string;
+  planName: string;
+  provider: string;
+  createdAt: string;
+}>> {
+  const { data } = await api.get("/billing/invoices");
+  return data;
+}
+
 // --- Audit ---
 
 export async function getAuditLogs(params?: {

@@ -52,6 +52,28 @@ class Settings(BaseSettings):
     query_timeout_seconds: int = 60      # Per-query timeout in agent graph
     dev_fallback_email: str = "admin@ceaser.local"  # Dev mode user email
 
+    # ── Payment gateway ──────────────────────────────────────────────────
+    payment_provider: str = ""  # "stripe", "razorpay", or "cashfree"
+
+    # Stripe
+    stripe_secret_key: str = ""
+    stripe_publishable_key: str = ""
+    stripe_webhook_secret: str = ""
+    stripe_price_map: str = ""  # "starter:price_xxx,business:price_yyy"
+
+    # Razorpay
+    razorpay_key_id: str = ""
+    razorpay_key_secret: str = ""
+    razorpay_webhook_secret: str = ""
+    razorpay_plan_map: str = ""  # "starter:plan_xxx,business:plan_yyy"
+
+    # Cashfree
+    cashfree_app_id: str = ""
+    cashfree_secret_key: str = ""
+    cashfree_webhook_secret: str = ""
+    cashfree_plan_map: str = ""  # "starter:plan_xxx,business:plan_yyy"
+    cashfree_sandbox: bool = False
+
 
 @lru_cache
 def get_settings() -> Settings:

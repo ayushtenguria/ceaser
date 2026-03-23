@@ -325,6 +325,39 @@ class NotebookRun(Base):
     )
 
 
+class Subscription(Base):
+    """Payment subscription linked to an organization."""
+
+    __tablename__ = "subscriptions"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[str] = mapped_column(String(255), index=True)
+    provider: Mapped[str] = mapped_column(String(50))  # stripe, razorpay, cashfree
+    provider_subscription_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    plan_name: Mapped[str] = mapped_column(String(100))
+    status: Mapped[str] = mapped_column(String(50), default="incomplete")  # active, past_due, cancelled, incomplete
+    current_period_end: Mapped[datetime | None] = mapped_column(nullable=True)
+    cancel_at_period_end: Mapped[bool] = mapped_column(default=False)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+
+class Payment(Base):
+    """Individual payment record for audit trail."""
+
+    __tablename__ = "payments"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[str] = mapped_column(String(255), index=True)
+    provider: Mapped[str] = mapped_column(String(50))
+    provider_payment_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
+    amount: Mapped[int] = mapped_column(default=0)  # in smallest currency unit (cents/paise)
+    currency: Mapped[str] = mapped_column(String(10), default="usd")
+    status: Mapped[str] = mapped_column(String(50), default="pending")  # pending, success, failed, refunded
+    plan_name: Mapped[str] = mapped_column(String(100), default="")
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
 class NotebookCellResult(Base):
     """Output of a single cell from a specific notebook run."""
 
