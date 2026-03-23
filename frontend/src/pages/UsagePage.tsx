@@ -227,18 +227,25 @@ export default function UsagePage() {
   );
 }
 
+// Static class maps — Tailwind JIT can't detect dynamically interpolated classes
+const PLAN_BORDER: Record<string, string> = {
+  sky: "border-sky-500/30",
+  purple: "border-purple-500/30",
+};
+const PLAN_TEXT: Record<string, string> = {
+  sky: "text-sky-400",
+  purple: "text-purple-400",
+};
+
 function PlanCard({ name, price, color, features, onUpgrade, loading, highlighted }: {
   name: string; price: string; color: string; features: string[];
   onUpgrade: () => void; loading: boolean; highlighted?: boolean;
 }) {
-  const borderClass = highlighted ? `border-${color}-500/30` : "";
-  const textClass = `text-${color}-400`;
-
   return (
-    <div className={`rounded-lg border bg-card p-4 ${borderClass}`}>
+    <div className={`rounded-lg border bg-card p-4 ${highlighted ? PLAN_BORDER[color] || "" : ""}`}>
       <div className="flex items-center justify-between mb-2">
         <h4 className="font-medium">{name}</h4>
-        <span className={`text-lg font-bold ${textClass}`}>{price}<span className="text-xs text-muted-foreground">/mo</span></span>
+        <span className={`text-lg font-bold ${PLAN_TEXT[color] || ""}`}>{price}<span className="text-xs text-muted-foreground">/mo</span></span>
       </div>
       <ul className="space-y-1 text-xs text-muted-foreground mb-3">
         {features.map((f) => <li key={f}>{f}</li>)}

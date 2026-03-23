@@ -6,11 +6,12 @@ import logging
 
 from fastapi import APIRouter, HTTPException, Request, status
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 
 from app.core.deps import CurrentUser, DbSession
 from app.core.permissions import get_user_with_role
 from app.db.models import OrganizationPlan, Subscription, Payment
-from app.payments.base import PaymentEvent
+from app.payments.base import PaymentEvent, PaymentProvider
 from app.payments.service import PLAN_LIMITS, get_payment_provider
 
 logger = logging.getLogger(__name__)
@@ -73,9 +74,20 @@ async def create_checkout(
 @router.post("/webhooks/{provider_name}")
 async def handle_webhook(provider_name: str, request: Request, db: DbSession) -> dict:
     """Handle payment provider webhooks. Verifies signature and updates plan."""
+    # Validate provider_name matches configured provider
     provider = get_payment_provider()
     if not provider:
         raise HTTPException(status_code=501, detail="Payment not configured")
+
+    from app.core.config import get_settings
+    settings = get_settings()
+    configured_provider = settings.payment_provider.lower()
+    if provider_name.lower() != configured_provider:
+        logger.warning(
+            "Webhook received for %s but configured provider is %s",
+            provider_name, configured_provider,
+        )
+        raise HTTPException(status_code=404, detail="Unknown provider")
 
     payload = await request.body()
     headers = dict(request.headers)
@@ -86,7 +98,10 @@ async def handle_webhook(provider_name: str, request: Request, db: DbSession) ->
         logger.warning("Webhook verification failed for %s: %s", provider_name, e)
         raise HTTPException(status_code=400, detail="Invalid webhook signature")
 
-    logger.info("Webhook event: %s from %s, sub=%s", event.event_type, event.provider, event.provider_subscription_id)
+    logger.info(
+        "Webhook event: type=%s provider=%s sub_id=%s",
+        event.event_type, event.provider, event.provider_subscription_id,
+    )
 
     if event.event_type == "payment.success":
         await _handle_payment_success(db, event)
@@ -112,11 +127,16 @@ async def _handle_payment_success(db: DbSession, event: PaymentEvent) -> None:
             result = await db.execute(stmt)
             sub = result.scalar_one_or_none()
             if sub:
-                org_id = sub.organization_id
+                org_id = org_id or sub.organization_id
                 plan_name = plan_name or sub.plan_name
 
     if not org_id or not plan_name:
-        logger.error("Cannot process payment: missing org_id or plan_name. Event: %s", event)
+        logger.error("Cannot process payment: missing org_id or plan_name")
+        return
+
+    # Validate plan_name is a known plan (prevent injection of arbitrary plan names)
+    if plan_name not in PLAN_LIMITS:
+        logger.error("Unknown plan name in webhook: %s", plan_name)
         return
 
     # Update subscription status
@@ -139,22 +159,29 @@ async def _handle_payment_success(db: DbSession, event: PaymentEvent) -> None:
             )
             db.add(sub)
 
-    # Record payment (idempotent by provider_payment_id)
+    # Record payment (idempotent by provider_payment_id, race-safe)
     if event.provider_payment_id:
-        existing = await db.execute(
-            select(Payment).where(Payment.provider_payment_id == event.provider_payment_id)
-        )
-        if not existing.scalar_one_or_none():
-            payment = Payment(
-                organization_id=org_id,
-                provider=event.provider,
-                provider_payment_id=event.provider_payment_id,
-                amount=event.amount or 0,
-                currency=event.currency or "usd",
-                status="success",
-                plan_name=plan_name,
+        try:
+            existing = await db.execute(
+                select(Payment).where(Payment.provider_payment_id == event.provider_payment_id)
             )
-            db.add(payment)
+            if not existing.scalar_one_or_none():
+                payment = Payment(
+                    organization_id=org_id,
+                    provider=event.provider,
+                    provider_payment_id=event.provider_payment_id,
+                    amount=event.amount or 0,
+                    currency=event.currency or "usd",
+                    status="success",
+                    plan_name=plan_name,
+                )
+                db.add(payment)
+                await db.flush()
+        except IntegrityError:
+            # Duplicate payment_id from concurrent webhook — safe to ignore
+            await db.rollback()
+            logger.info("Duplicate payment ignored: %s", event.provider_payment_id)
+            return
 
     # Upgrade org plan limits
     await _upgrade_org_plan(db, org_id, plan_name)
@@ -190,7 +217,7 @@ async def _handle_subscription_updated(db: DbSession, event: PaymentEvent) -> No
     result = await db.execute(stmt)
     sub = result.scalar_one_or_none()
 
-    if sub and event.plan_name:
+    if sub and event.plan_name and event.plan_name in PLAN_LIMITS:
         sub.plan_name = event.plan_name
         await _upgrade_org_plan(db, sub.organization_id, event.plan_name)
 
