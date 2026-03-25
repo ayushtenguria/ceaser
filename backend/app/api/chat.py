@@ -62,17 +62,61 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
     return user
 
 
+async def _verify_org_connection(db: DbSession, connection_id: uuid.UUID, org_id: str) -> DatabaseConnection:
+    """Load a connection and verify it belongs to the given org. Raises 404 if not."""
+    stmt = select(DatabaseConnection).where(
+        DatabaseConnection.id == connection_id,
+        DatabaseConnection.organization_id == org_id,
+    )
+    result = await db.execute(stmt)
+    conn = result.scalar_one_or_none()
+    if conn is None:
+        raise HTTPException(status_code=404, detail="Connection not found.")
+    return conn
+
+
+async def _verify_org_file(db: DbSession, file_id: uuid.UUID, org_id: str) -> FileUpload:
+    """Load a file and verify it belongs to the given org. Raises 404 if not."""
+    stmt = select(FileUpload).where(
+        FileUpload.id == file_id,
+        FileUpload.organization_id == org_id,
+    )
+    result = await db.execute(stmt)
+    upload = result.scalar_one_or_none()
+    if upload is None:
+        raise HTTPException(status_code=404, detail="File not found.")
+    return upload
+
+
+async def _verify_org_conversation(db: DbSession, conversation_id: uuid.UUID, org_id: str) -> Conversation:
+    """Load a conversation and verify it belongs to a user in the given org."""
+    stmt = (
+        select(Conversation)
+        .join(User, Conversation.user_id == User.id)
+        .where(Conversation.id == conversation_id, User.organization_id == org_id)
+    )
+    result = await db.execute(stmt)
+    conv = result.scalar_one_or_none()
+    if conv is None:
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    return conv
+
+
 async def _build_schema_context(
     db: DbSession,
     connection_id: uuid.UUID | None,
     file_id: uuid.UUID | None,
+    org_id: str = "",
     user_question: str = "",
 ) -> str:
     """Build the text context the LLM needs to know about the data source."""
     parts: list[str] = []
 
     if connection_id:
-        stmt = select(DatabaseConnection).where(DatabaseConnection.id == connection_id)
+        stmt = select(DatabaseConnection).where(
+            DatabaseConnection.id == connection_id,
+            DatabaseConnection.organization_id == org_id,
+        ) if org_id else select(DatabaseConnection).where(DatabaseConnection.id == connection_id)
         result = await db.execute(stmt)
         conn = result.scalar_one_or_none()
         if conn:
@@ -100,7 +144,10 @@ async def _build_schema_context(
                 parts.append(format_schema_for_llm(schema))
 
     if file_id:
-        stmt = select(FileUpload).where(FileUpload.id == file_id)
+        stmt = select(FileUpload).where(
+            FileUpload.id == file_id,
+            FileUpload.organization_id == org_id,
+        ) if org_id else select(FileUpload).where(FileUpload.id == file_id)
         result = await db.execute(stmt)
         upload = result.scalar_one_or_none()
         if upload:
@@ -143,9 +190,10 @@ async def _build_schema_context(
 
     # Append metric definitions (semantic layer) if any exist.
     if connection_id:
-        metrics_stmt = select(MetricDefinition).where(
-            MetricDefinition.connection_id == connection_id
-        )
+        metrics_filter = [MetricDefinition.connection_id == connection_id]
+        if org_id:
+            metrics_filter.append(MetricDefinition.organization_id == org_id)
+        metrics_stmt = select(MetricDefinition).where(*metrics_filter)
         metrics_result = await db.execute(metrics_stmt)
         metrics = list(metrics_result.scalars().all())
         if metrics:
@@ -176,15 +224,18 @@ async def get_suggestions(
     from app.core.permissions import require_permission, Permission
 
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
+    org_id = user.organization_id or ""
 
     schema_context = ""
     if connection_id:
-        schema_context = await _build_schema_context(db, connection_id, None)
+        await _verify_org_connection(db, connection_id, org_id)
+        schema_context = await _build_schema_context(db, connection_id, None, org_id=org_id)
 
     llm = get_llm()
 
     # If conversation_id provided, use conversation history for context-aware suggestions
     if conversation_id:
+        await _verify_org_conversation(db, conversation_id, org_id)
         msg_stmt = (
             select(Message)
             .where(Message.conversation_id == conversation_id)
@@ -241,16 +292,28 @@ async def chat(
         from app.core.plan_enforcement import check_query_limit
         await check_query_limit(db, user.organization_id or "")
 
+    org_id = user.organization_id or ""
+
+    # ── Feature gates ─────────────────────────────────────────────
+    from app.core.features import check_feature, has_feature, Feature
+    if body.model == "claude":
+        await check_feature(Feature.CLAUDE_MODEL, db, org_id)
+    if body.connection_ids and len(body.connection_ids) > 1:
+        await check_feature(Feature.MULTI_DB, db, org_id)
+    if body.file_id:
+        await check_feature(Feature.FILE_UPLOAD, db, org_id)
+
+    # ── Validate connection belongs to this org ───────────────────
+    if body.connection_id:
+        await _verify_org_connection(db, body.connection_id, org_id)
+
+    # ── Validate file belongs to this org ─────────────────────────
+    if body.file_id:
+        await _verify_org_file(db, body.file_id, org_id)
+
     # ── Resolve or create conversation ──────────────────────────────
     if body.conversation_id:
-        # Look up conversation — allow access if user owns it or is in same org
-        stmt = select(Conversation).where(Conversation.id == body.conversation_id)
-        result = await db.execute(stmt)
-        conversation = result.scalar_one_or_none()
-        if conversation is None:
-            raise HTTPException(status_code=404, detail="Conversation not found.")
-        # For now allow the conversation owner to continue their own conversations
-        # In production, add proper org-level check here
+        conversation = await _verify_org_conversation(db, body.conversation_id, org_id)
     else:
         title = body.message[:80] if len(body.message) > 0 else "New Conversation"
         conversation = Conversation(
@@ -284,7 +347,7 @@ async def chat(
     effective_file_id = body.file_id or conversation.file_id
     logger.info("Chat context: connection=%s file=%s (body.file_id=%s, conv.file_id=%s)",
                 effective_connection_id, effective_file_id, body.file_id, conversation.file_id)
-    schema_context = await _build_schema_context(db, effective_connection_id, effective_file_id, user_question=body.message)
+    schema_context = await _build_schema_context(db, effective_connection_id, effective_file_id, org_id=org_id, user_question=body.message)
     logger.info("Schema context length: %d chars, has_excel=%s",
                 len(schema_context), "EXCEL" in schema_context or "DATAFRAME" in schema_context)
 
@@ -425,6 +488,8 @@ async def get_notebook_draft(
     from app.agents.notebook.extractor import extract_notebook_draft
 
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
+    org_id = user.organization_id or ""
+    conversation = await _verify_org_conversation(db, conversation_id, org_id)
 
     # Load conversation messages
     msg_stmt = (
@@ -450,10 +515,6 @@ async def get_notebook_draft(
         for m in db_messages
     ]
 
-    conv_stmt = select(Conversation).where(Conversation.id == conversation_id)
-    conv_result = await db.execute(conv_stmt)
-    conversation = conv_result.scalar_one_or_none()
-
     llm = get_llm()
     draft = await extract_notebook_draft(messages, llm, conversation.title if conversation else "")
 
@@ -476,10 +537,8 @@ async def save_conversation_as_notebook(
     from app.agents.notebook.extractor import extract_notebook_draft
 
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
-
-    conv_stmt = select(Conversation).where(Conversation.id == conversation_id)
-    conv_result = await db.execute(conv_stmt)
-    conversation = conv_result.scalar_one_or_none()
+    org_id = user.organization_id or ""
+    conversation = await _verify_org_conversation(db, conversation_id, org_id)
 
     # If body has steps (from reviewed draft), use those
     if body and body.get("steps"):
@@ -615,17 +674,14 @@ async def generate_conversation_report(
     from app.agents.report.orchestrator import generate_report_from_conversation
 
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
+    org_id = user.organization_id or ""
 
     # Check plan limits
     from app.core.plan_enforcement import check_report_limit
-    await check_report_limit(db, user.organization_id or "")
+    await check_report_limit(db, org_id)
 
-    # Verify conversation exists
-    stmt = select(Conversation).where(Conversation.id == conversation_id)
-    result = await db.execute(stmt)
-    conversation = result.scalar_one_or_none()
-    if conversation is None:
-        raise HTTPException(status_code=404, detail="Conversation not found.")
+    # Verify conversation belongs to this org
+    conversation = await _verify_org_conversation(db, conversation_id, org_id)
 
     llm = get_llm()
 
@@ -698,15 +754,7 @@ async def get_conversation(
 ) -> Conversation:
     """Get a single conversation by ID."""
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
-    stmt = select(Conversation).where(
-        Conversation.id == conversation_id,
-        Conversation.user_id == user.id,
-    )
-    result = await db.execute(stmt)
-    conversation = result.scalar_one_or_none()
-    if conversation is None:
-        raise HTTPException(status_code=404, detail="Conversation not found.")
-    return conversation
+    return await _verify_org_conversation(db, conversation_id, user.organization_id or "")
 
 
 @router.get("/conversations/{conversation_id}/messages", response_model=list[MessageResponse])
@@ -717,15 +765,7 @@ async def list_messages(
 ) -> list[Message]:
     """Get all messages in a conversation, ordered by creation time."""
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
-
-    # Verify ownership.
-    conv_stmt = select(Conversation).where(
-        Conversation.id == conversation_id,
-        Conversation.user_id == user.id,
-    )
-    conv_result = await db.execute(conv_stmt)
-    if conv_result.scalar_one_or_none() is None:
-        raise HTTPException(status_code=404, detail="Conversation not found.")
+    await _verify_org_conversation(db, conversation_id, user.organization_id or "")
 
     stmt = (
         select(Message)
@@ -744,14 +784,7 @@ async def delete_conversation(
 ) -> None:
     """Delete a conversation and all its messages."""
     user = await require_permission(Permission.QUERY_DATA, current_user, db)
-    stmt = select(Conversation).where(
-        Conversation.id == conversation_id,
-        Conversation.user_id == user.id,
-    )
-    result = await db.execute(stmt)
-    conversation = result.scalar_one_or_none()
-    if conversation is None:
-        raise HTTPException(status_code=404, detail="Conversation not found.")
+    conversation = await _verify_org_conversation(db, conversation_id, user.organization_id or "")
 
     # Delete messages first (cascade could handle this, but explicit is clearer).
     msg_stmt = select(Message).where(Message.conversation_id == conversation_id)

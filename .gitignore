@@ -48,6 +48,9 @@ logs/
 .Python
 pip-log.txt
 
+# Internal docs (not for repo)
+/*.md
+
 # Secrets & credentials
 *.pem
 *.key

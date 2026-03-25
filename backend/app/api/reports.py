@@ -66,6 +66,8 @@ async def create_report(
 ) -> Report:
     """Save a new report from chat results."""
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
+    from app.core.features import check_feature, Feature
+    await check_feature(Feature.REPORTS, db, user.organization_id or "")
 
     report = Report(
         name=body.name,

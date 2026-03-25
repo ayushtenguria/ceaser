@@ -164,6 +164,10 @@ async def get_my_plan(current_user: CurrentUser, db: DbSession) -> dict:
     )
     seats_used = (await db.execute(seat_count_stmt)).scalar() or 0
 
+    # Get feature flags
+    from app.core.features import get_all_features
+    features = await get_all_features(db, org_id)
+
     return {
         "planName": plan_name,
         "usage": {
@@ -172,6 +176,7 @@ async def get_my_plan(current_user: CurrentUser, db: DbSession) -> dict:
             "reportsThisMonth": {"used": reports_this_month, "limit": max_reports},
             "seats": {"used": seats_used, "limit": max_seats},
         },
+        "features": features,
         "upgrades": {
             "starter": {"price": "$79/mo", "queries": 100, "connections": 3, "reports": 30, "seats": 3},
             "business": {"price": "$249/mo", "queries": 500, "connections": 10, "reports": -1, "seats": 10},

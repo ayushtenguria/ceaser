@@ -67,6 +67,8 @@ async def create_notebook(
 ) -> Notebook:
     """Create a new notebook with optional initial cells."""
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
+    from app.core.features import check_feature, Feature
+    await check_feature(Feature.NOTEBOOKS, db, user.organization_id or "")
 
     notebook = Notebook(
         name=body.name,
@@ -364,7 +366,9 @@ async def list_runs(
     notebook_id: uuid.UUID, current_user: CurrentUser, db: DbSession,
 ) -> list[NotebookRun]:
     """List past runs of a notebook."""
-    await require_permission(Permission.VIEW_DATA, current_user, db)
+    user = await require_permission(Permission.VIEW_DATA, current_user, db)
+    # Verify notebook belongs to this org
+    await _load_notebook(db, notebook_id, user)
     stmt = (
         select(NotebookRun)
         .options(selectinload(NotebookRun.cell_results))
@@ -381,7 +385,9 @@ async def get_run(
     notebook_id: uuid.UUID, run_id: uuid.UUID, current_user: CurrentUser, db: DbSession,
 ) -> NotebookRun:
     """Get a specific run with all cell results."""
-    await require_permission(Permission.VIEW_DATA, current_user, db)
+    user = await require_permission(Permission.VIEW_DATA, current_user, db)
+    # Verify notebook belongs to this org
+    await _load_notebook(db, notebook_id, user)
     stmt = (
         select(NotebookRun)
         .options(selectinload(NotebookRun.cell_results))

@@ -6,7 +6,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from pydantic import BaseModel, ConfigDict, EmailStr, Field
+from pydantic import BaseModel, ConfigDict, EmailStr, Field, field_validator
 
 
 def to_camel(s: str) -> str:
@@ -66,6 +66,12 @@ class ChatRequest(_CamelModel):
     connection_ids: list[uuid.UUID] | None = None  # For cross-DB queries
     file_id: uuid.UUID | None = None
     model: str = Field(default="gemini", pattern="^(gemini|claude)$")
+
+    @field_validator("message")
+    @classmethod
+    def strip_null_bytes(cls, v: str) -> str:
+        """Remove null bytes that PostgreSQL text columns cannot store."""
+        return v.replace("\x00", "")
 
 
 class StreamChunk(BaseModel):

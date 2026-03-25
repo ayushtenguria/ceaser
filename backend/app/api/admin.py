@@ -229,6 +229,9 @@ async def get_org_plan(org_id: str, current_user: CurrentUser, db: DbSession) ->
         await db.flush()
         await db.refresh(plan)
 
+    from app.core.features import get_all_features
+    features = await get_all_features(db, org_id)
+
     return {
         "organizationId": org_id,
         "planName": plan.plan_name,
@@ -236,6 +239,7 @@ async def get_org_plan(org_id: str, current_user: CurrentUser, db: DbSession) ->
         "maxConnections": plan.max_connections,
         "maxQueriesPerDay": plan.max_queries_per_day,
         "maxReports": plan.max_reports,
+        "features": features,
         "isActive": plan.is_active,
         "trialEndsAt": plan.trial_ends_at.isoformat() if plan.trial_ends_at else None,
     }
@@ -264,6 +268,9 @@ async def update_org_plan(org_id: str, body: PlanUpdate, current_user: CurrentUs
     await db.flush()
     await db.refresh(plan)
 
+    from app.core.features import get_all_features
+    features = await get_all_features(db, org_id)
+
     return {
         "organizationId": org_id,
         "planName": plan.plan_name,
@@ -271,5 +278,48 @@ async def update_org_plan(org_id: str, body: PlanUpdate, current_user: CurrentUs
         "maxConnections": plan.max_connections,
         "maxQueriesPerDay": plan.max_queries_per_day,
         "maxReports": plan.max_reports,
+        "features": features,
         "isActive": plan.is_active,
     }
+
+
+@router.patch("/organizations/{org_id}/features")
+async def update_org_features(org_id: str, body: dict, current_user: CurrentUser, db: DbSession) -> dict:
+    """Toggle feature flags per org (super admin only).
+
+    Body: {"notebooks": true, "advanced_analytics": false, ...}
+    Only specified features are overridden; omitted ones fall back to plan defaults.
+    Pass null to remove an override.
+    """
+    await _require_admin(current_user, db)
+
+    from app.db.models import OrganizationPlan
+    from app.core.features import Feature, get_all_features
+
+    # Validate feature names
+    valid_features = {f.value for f in Feature}
+    for key in body:
+        if key not in valid_features:
+            raise HTTPException(status_code=400, detail=f"Unknown feature: '{key}'. Valid: {sorted(valid_features)}")
+
+    stmt = select(OrganizationPlan).where(OrganizationPlan.organization_id == org_id)
+    result = await db.execute(stmt)
+    plan = result.scalar_one_or_none()
+    if plan is None:
+        raise HTTPException(status_code=404, detail="Organization plan not found.")
+
+    # Merge with existing overrides
+    current = plan.features or {}
+    for key, value in body.items():
+        if value is None:
+            current.pop(key, None)  # Remove override → fall back to plan default
+        else:
+            current[key] = bool(value)
+
+    plan.features = current
+    from sqlalchemy.orm.attributes import flag_modified
+    flag_modified(plan, "features")
+    await db.flush()
+
+    features = await get_all_features(db, org_id)
+    return {"organizationId": org_id, "features": features, "overrides": current}

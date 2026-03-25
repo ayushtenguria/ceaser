@@ -49,13 +49,18 @@ async def list_audit_logs(
 
 @router.get("/stats")
 async def audit_stats(current_user: CurrentUser, db: DbSession) -> dict:
-    """Get summary stats of recent activity."""
-    await require_permission(Permission.VIEW_AUDIT, current_user, db)
+    """Get summary stats of recent activity for the organization."""
+    user = await require_permission(Permission.VIEW_AUDIT, current_user, db)
+    org_id = user.organization_id or ""
+
+    # Only count logs from users in the same organization
+    org_user_ids = select(User.id).where(User.organization_id == org_id)
+
     # Count by action type in the last 24 hours
     since = datetime.utcnow().replace(hour=0, minute=0, second=0)
     stmt = (
         select(AuditLog.action, func.count())
-        .where(AuditLog.created_at >= since)
+        .where(AuditLog.created_at >= since, AuditLog.user_id.in_(org_user_ids))
         .group_by(AuditLog.action)
     )
     result = await db.execute(stmt)

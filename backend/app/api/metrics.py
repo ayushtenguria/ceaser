@@ -72,7 +72,11 @@ async def update_metric(
 ) -> MetricDefinition:
     """Update a metric definition."""
     user = await require_permission(Permission.MANAGE_METRICS, current_user, db)
-    stmt = select(MetricDefinition).where(MetricDefinition.id == metric_id, MetricDefinition.user_id == user.id)
+    org_id = user.organization_id or ""
+    stmt = select(MetricDefinition).where(
+        MetricDefinition.id == metric_id,
+        MetricDefinition.organization_id == org_id,
+    )
     result = await db.execute(stmt)
     metric = result.scalar_one_or_none()
     if metric is None:
@@ -92,7 +96,11 @@ async def update_metric(
 async def delete_metric(metric_id: uuid.UUID, current_user: CurrentUser, db: DbSession) -> None:
     """Delete a metric definition."""
     user = await require_permission(Permission.MANAGE_METRICS, current_user, db)
-    stmt = select(MetricDefinition).where(MetricDefinition.id == metric_id, MetricDefinition.user_id == user.id)
+    org_id = user.organization_id or ""
+    stmt = select(MetricDefinition).where(
+        MetricDefinition.id == metric_id,
+        MetricDefinition.organization_id == org_id,
+    )
     result = await db.execute(stmt)
     metric = result.scalar_one_or_none()
     if metric is None:
