@@ -98,6 +98,8 @@ def _build_runner_script(user_code: str, figure_path: str) -> str:
 async def execute_python(code: str) -> ExecutionResult:
     """Execute *code* in an isolated subprocess, returning captured output.
 
+    * ``ceaser://`` file references are resolved to real URLs/paths server-side
+      before execution. The resolved code is never stored or returned.
     * Stdout and stderr are captured.
     * If the code defines a variable ``fig`` that is a Plotly figure, it is
       serialised to JSON and included in the result.
@@ -105,11 +107,22 @@ async def execute_python(code: str) -> ExecutionResult:
     """
     result = ExecutionResult()
 
+    # Resolve ceaser:// aliases to real storage URLs (signed URLs for Supabase,
+    # local paths for filesystem). This happens ONLY here — the resolved code
+    # is written to a temp file and deleted after execution.
+    resolved_code = code
+    if "ceaser://" in code:
+        try:
+            from app.agents.excel.context import resolve_ceaser_refs
+            resolved_code = await resolve_ceaser_refs(code)
+        except Exception as exc:
+            logger.warning("Failed to resolve ceaser:// refs: %s", exc)
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         script_path = Path(tmp_dir) / "runner.py"
         figure_path = Path(tmp_dir) / "figure.json"
 
-        runner = _build_runner_script(code, str(figure_path))
+        runner = _build_runner_script(resolved_code, str(figure_path))
         script_path.write_text(runner)
 
         try:

@@ -1,7 +1,8 @@
 """Context Builder Agent — builds LLM-ready descriptions and saves DataFrames as parquet.
 
 Parquet files are saved via the storage backend (local or Supabase).
-Code preamble generates pd.read_parquet() with either local paths or signed URLs.
+Code preamble uses safe ceaser:// aliases — never exposes real URLs.
+Real URLs are resolved only at sandbox execution time, server-side.
 """
 
 from __future__ import annotations
@@ -16,6 +17,9 @@ import pandas as pd
 from app.agents.excel.relationship_mapper import Relationship
 
 logger = logging.getLogger(__name__)
+
+# Protocol prefix for safe file references (never contains real URLs/tokens)
+CEASER_PROTOCOL = "ceaser://"
 
 
 def _make_var_name(file_name: str, sheet_name: str, sheet_count: int) -> str:
@@ -42,19 +46,16 @@ def save_dataframes_to_parquet(
 ) -> dict[str, str]:
     """Save all DataFrames as parquet via storage backend.
 
-    Returns a mapping: df_variable_name -> remote_path (storage key)
-
-    This function is called from asyncio.to_thread, so we schedule
-    async uploads back on the main event loop.
+    Returns a mapping: df_variable_name -> remote_path (storage key).
+    The remote_path is a storage key like 'parquet/org/df_name.parquet',
+    NOT a URL. URLs are only generated at execution time.
     """
     import asyncio
-    import concurrent.futures
     from app.services.storage import get_storage
     storage = get_storage()
 
     paths: dict[str, str] = {}
 
-    # Get the running event loop (from the main thread)
     try:
         loop = asyncio.get_event_loop()
         has_loop = loop.is_running()
@@ -66,15 +67,13 @@ def save_dataframes_to_parquet(
             var_name = _make_var_name(wb.file_name, sheet.name, len(wb.sheets))
             remote_path = f"parquet/{org_id}/{var_name}.parquet"
 
-            # Serialize to bytes in memory
             buf = sheet.df.to_parquet(index=False)
 
-            # Schedule upload on the main event loop from this thread
             if has_loop:
                 future = asyncio.run_coroutine_threadsafe(
                     storage.upload(buf, remote_path), loop
                 )
-                future.result(timeout=60)  # Block this thread until upload completes
+                future.result(timeout=60)
             else:
                 asyncio.run(storage.upload(buf, remote_path))
 
@@ -84,41 +83,53 @@ def save_dataframes_to_parquet(
     return paths
 
 
-async def generate_code_preamble_async(parquet_paths: dict[str, str]) -> str:
-    """Generate Python code that pre-loads all DataFrames.
+def generate_code_preamble(parquet_paths: dict[str, str]) -> str:
+    """Generate Python code that pre-loads all DataFrames using safe aliases.
 
-    For local storage: uses filesystem paths
-    For Supabase: uses signed URLs (valid 10 min)
+    The code uses ceaser:// protocol references instead of real URLs:
+        df_sales = pd.read_parquet("ceaser://parquet/org/df_sales.parquet")
+
+    These are resolved to real URLs/paths only at sandbox execution time
+    by the sandbox executor. This ensures:
+    - LLMs never see real storage URLs or tokens
+    - Frontend never sees signed URLs in code blocks
+    - Database never stores signed URLs
     """
-    from app.services.storage import get_storage
-    storage = get_storage()
-
     lines = ["import pandas as pd", "import plotly.express as px", ""]
 
     for var_name, remote_path in parquet_paths.items():
-        url = await storage.download_url(remote_path)
-        lines.append(f'{var_name} = pd.read_parquet("{url}")')
+        safe_ref = f"{CEASER_PROTOCOL}{remote_path}"
+        lines.append(f'{var_name} = pd.read_parquet("{safe_ref}")')
 
     lines.append("")
     return "\n".join(lines)
 
 
-def generate_code_preamble(parquet_paths: dict[str, str]) -> str:
-    """Sync wrapper for generate_code_preamble_async.
+async def resolve_ceaser_refs(code: str) -> str:
+    """Replace ceaser:// references with real storage URLs/paths.
 
-    Called from asyncio.to_thread context — schedules async work on the main loop.
+    Called ONLY by the sandbox executor right before execution.
+    The resolved code is never stored, sent to LLMs, or returned to clients.
     """
-    import asyncio
-    try:
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            future = asyncio.run_coroutine_threadsafe(
-                generate_code_preamble_async(parquet_paths), loop
-            )
-            return future.result(timeout=30)
-        return loop.run_until_complete(generate_code_preamble_async(parquet_paths))
-    except RuntimeError:
-        return asyncio.run(generate_code_preamble_async(parquet_paths))
+    import re
+    from app.services.storage import get_storage
+    storage = get_storage()
+
+    pattern = re.compile(r'ceaser://([^\s"\']+)')
+    matches = pattern.findall(code)
+
+    if not matches:
+        return code
+
+    resolved = code
+    for remote_path in set(matches):
+        try:
+            real_url = await storage.download_url(remote_path)
+            resolved = resolved.replace(f"{CEASER_PROTOCOL}{remote_path}", real_url)
+        except Exception as exc:
+            logger.warning("Could not resolve ceaser://%s: %s", remote_path, exc)
+
+    return resolved
 
 
 def build_excel_context(

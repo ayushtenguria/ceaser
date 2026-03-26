@@ -151,14 +151,9 @@ async def _build_schema_context(
         result = await db.execute(stmt)
         upload = result.scalar_one_or_none()
         if upload:
-            # Regenerate code_preamble with fresh URLs (signed URLs expire)
-            fresh_preamble = upload.code_preamble or ""
-            if upload.parquet_paths:
-                try:
-                    from app.agents.excel.context import generate_code_preamble_async
-                    fresh_preamble = await generate_code_preamble_async(upload.parquet_paths)
-                except Exception as exc:
-                    logger.warning("Could not regenerate code preamble: %s", exc)
+            # code_preamble uses safe ceaser:// aliases — no real URLs exposed.
+            # Aliases are resolved to real URLs only at sandbox execution time.
+            preamble = upload.code_preamble or ""
 
             # Use rich Excel context if available (from Excel Intelligence Engine)
             if upload.excel_context:
@@ -172,24 +167,25 @@ async def _build_schema_context(
                 if all_sheet_metas and len(all_sheet_metas) > 3:
                     parts.append(build_compact_summary(all_sheet_metas))
                     selected = select_relevant_sheets(user_question, all_sheet_metas, max_sheets=3)
-                    parts.append(build_selected_context(selected, fresh_preamble))
+                    parts.append(build_selected_context(selected, preamble))
 
                     logger.info("Smart context: %d/%d sheets selected, ~%d chars",
                                len(selected), len(all_sheet_metas),
                                sum(len(p) for p in parts))
                 else:
                     parts.append(upload.excel_context)
-                    if fresh_preamble:
-                        parts.append(f"\nCODE PREAMBLE (prepend to all Python code):\n{fresh_preamble}")
+                    if preamble:
+                        parts.append(f"\nCODE PREAMBLE (prepend to all Python code):\n{preamble}")
             else:
-                # Fallback to basic file summary
+                # Fallback to basic file summary — resolve path for parsing only
                 try:
                     from app.services.storage import get_storage
                     storage = get_storage()
                     local_path = await storage.download_url(upload.file_path)
                     df, _ = parse_file(local_path, upload.file_type)
                     parts.append(get_file_summary(df))
-                    parts.append(f"\nFile path for code: {local_path}")
+                    # Use ceaser:// alias for code, not the real path
+                    parts.append(f"\nFile path for code: ceaser://{upload.file_path}")
                 except Exception as exc:
                     logger.warning("Could not parse file for context: %s", exc)
 

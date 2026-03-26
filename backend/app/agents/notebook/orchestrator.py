@@ -149,17 +149,17 @@ async def _execute_file_cell(
     if upload is None:
         return _error_result(cell_id, "File not found.")
 
-    # If Excel processing already done, use parquet paths (resolve via storage backend)
+    # If Excel processing already done, use safe ceaser:// aliases
+    # (resolved to real URLs at sandbox execution time only)
     if upload.parquet_paths:
-        from app.services.storage import get_storage
-        storage = get_storage()
+        from app.agents.excel.context import CEASER_PROTOCOL
         for var_name, remote_path in upload.parquet_paths.items():
-            resolved = await storage.download_url(remote_path)
-            info = {"columns": [], "rows": 0, "path": resolved}
+            safe_ref = f"{CEASER_PROTOCOL}{remote_path}"
+            info = {"columns": [], "rows": 0, "path": safe_ref}
             if upload.column_info:
                 info["columns"] = [c["name"] for c in upload.column_info.get("columns", [])]
                 info["rows"] = upload.column_info.get("row_count", 0)
-            ctx.add_file(cell_id, var_name, resolved, info)
+            ctx.add_file(cell_id, var_name, safe_ref, info)
 
         text = f"Loaded {upload.filename}: {len(upload.parquet_paths)} sheet(s)"
         return {"status": "success", "text": text}
