@@ -74,6 +74,12 @@ class Settings(BaseSettings):
     cashfree_plan_map: str = ""  # "starter:plan_xxx,business:plan_yyy"
     cashfree_sandbox: bool = False
 
+    # ── Storage ──────────────────────────────────────────────────────
+    storage_backend: str = "local"  # "local" or "supabase"
+    supabase_url: str = ""
+    supabase_service_key: str = ""
+    supabase_bucket: str = "ceaser-files"
+
 
 @lru_cache
 def get_settings() -> Settings:

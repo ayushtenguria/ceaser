@@ -149,14 +149,17 @@ async def _execute_file_cell(
     if upload is None:
         return _error_result(cell_id, "File not found.")
 
-    # If Excel processing already done, use parquet paths
+    # If Excel processing already done, use parquet paths (resolve via storage backend)
     if upload.parquet_paths:
-        for var_name, path in upload.parquet_paths.items():
-            info = {"columns": [], "rows": 0, "path": path}
+        from app.services.storage import get_storage
+        storage = get_storage()
+        for var_name, remote_path in upload.parquet_paths.items():
+            resolved = await storage.download_url(remote_path)
+            info = {"columns": [], "rows": 0, "path": resolved}
             if upload.column_info:
                 info["columns"] = [c["name"] for c in upload.column_info.get("columns", [])]
                 info["rows"] = upload.column_info.get("row_count", 0)
-            ctx.add_file(cell_id, var_name, path, info)
+            ctx.add_file(cell_id, var_name, resolved, info)
 
         text = f"Loaded {upload.filename}: {len(upload.parquet_paths)} sheet(s)"
         return {"status": "success", "text": text}

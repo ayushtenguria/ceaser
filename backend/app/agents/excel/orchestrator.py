@@ -30,6 +30,7 @@ logger = logging.getLogger(__name__)
 async def process_excel_upload(
     file_path: str,
     llm: BaseChatModel | None = None,
+    org_id: str = "default",
 ) -> dict[str, Any]:
     """Run the full 7-agent Excel pipeline. NEVER raises — always returns a result."""
     start_time = time.monotonic()
@@ -116,7 +117,7 @@ async def process_excel_upload(
         rel_compat = _make_rel_compat(relationships)
 
         from app.agents.excel.context import save_dataframes_to_parquet, build_excel_context, generate_code_preamble
-        parquet_paths = await asyncio.to_thread(save_dataframes_to_parquet, [wb_compat])
+        parquet_paths = await asyncio.to_thread(save_dataframes_to_parquet, [wb_compat], org_id)
         excel_context = await asyncio.to_thread(build_excel_context, [wb_compat], rel_compat, parquet_paths)
         code_preamble = generate_code_preamble(parquet_paths)
         logger.info("Agent 6 (Context): %d parquet files, %d char context", len(parquet_paths), len(excel_context))

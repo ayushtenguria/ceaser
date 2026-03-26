@@ -154,11 +154,14 @@ async def _execute_file_query(
             result.error = "No parquet files found for this file source"
             return result
 
-        # Load the first parquet file (or all and concat)
+        # Load parquet files (via storage backend for signed URLs / local paths)
+        from app.services.storage import get_storage
+        storage = get_storage()
         dfs = []
         for var_name, path in sub.parquet_paths.items():
             try:
-                df = pd.read_parquet(path)
+                url = await storage.download_url(path)
+                df = pd.read_parquet(url)
                 dfs.append(df)
             except Exception as exc:
                 logger.warning("Failed to read parquet %s: %s", path, exc)

@@ -78,28 +78,42 @@ async def upload_file(
             detail=f"Unsupported file type '{ext}'. Allowed: {allowed}",
         )
 
-    # ── Save to disk ────────────────────────────────────────────────
-    user_dir = _UPLOAD_DIR / str(user.id)
-    user_dir.mkdir(parents=True, exist_ok=True)
+    # ── Save file via storage backend ────────────────────────────────
+    from app.services.storage import get_storage
 
     clean_filename = Path(file.filename).name  # Strip path components
     safe_name = f"{uuid.uuid4().hex}_{clean_filename}"
-    dest_path = user_dir / safe_name
+    org_id = user.organization_id or "default"
+    remote_path = f"uploads/{org_id}/{user.id}/{safe_name}"
 
     contents = await file.read()
     if len(contents) > _MAX_FILE_SIZE:
         raise HTTPException(status_code=400, detail="File exceeds 100 MB limit.")
 
-    dest_path.write_bytes(contents)
-    logger.info("Saved uploaded file: %s (%d bytes)", dest_path, len(contents))
+    storage = get_storage()
+    stored_path = await storage.upload(contents, remote_path)
+    logger.info("Saved uploaded file: %s (%d bytes)", stored_path, len(contents))
+
+    # Get a local-readable path for parsing (local: same path, supabase: signed URL or temp)
+    local_path = await storage.download_url(remote_path)
+    dest_path = Path(local_path) if not local_path.startswith("http") else None
 
     # ── Parse & extract metadata ────────────────────────────────────
+    # For Supabase, we need a local file for the Excel pipeline to read.
+    # Write a temp copy if we don't have a local path.
+    import tempfile
+    _temp_dir = None
+    parse_path = str(dest_path) if dest_path else ""
+    if not dest_path:
+        _temp_dir = tempfile.mkdtemp(prefix="ceaser_upload_")
+        parse_path = str(Path(_temp_dir) / safe_name)
+        Path(parse_path).write_bytes(contents)
+
     column_info: dict | None = None
     try:
-        _, column_info = parse_file(str(dest_path), file_type)
+        _, column_info = parse_file(parse_path, file_type)
     except Exception as exc:
         logger.warning("Could not parse uploaded file: %s", exc)
-        # File is saved; we just won't have column_info.
 
     # ── Run Excel Intelligence Engine for xlsx/xls/csv files ───────
     excel_context = None
@@ -111,7 +125,7 @@ async def upload_file(
         from app.agents.excel.orchestrator import process_excel_upload
         from app.core.deps import get_llm
         llm = get_llm()
-        excel_result = await process_excel_upload(str(dest_path), llm)
+        excel_result = await process_excel_upload(parse_path, llm, org_id=org_id)
         excel_context = excel_result.get("excel_context")
         code_preamble = excel_result.get("code_preamble")
         parquet_paths_data = excel_result.get("parquet_paths")
@@ -123,12 +137,17 @@ async def upload_file(
         logger.info("Excel processing complete for %s", file.filename)
     except Exception as exc:
         logger.warning("Excel processing failed (file still saved): %s", exc)
+    finally:
+        # Clean up temp file (Supabase case)
+        if _temp_dir:
+            import shutil
+            shutil.rmtree(_temp_dir, ignore_errors=True)
 
     # ── Persist record ──────────────────────────────────────────────
     upload = FileUpload(
         filename=file.filename,
         file_type=file_type,
-        file_path=str(dest_path),
+        file_path=remote_path,  # Store the remote/relative path, not absolute
         size_bytes=len(contents),
         organization_id=user.organization_id or current_user.org_id or "",
         user_id=user.id,
@@ -171,12 +190,20 @@ async def delete_file(
     if upload is None:
         raise HTTPException(status_code=404, detail="File not found.")
 
-    # Remove from disk.
+    # Remove from storage
+    from app.services.storage import get_storage
     try:
-        if os.path.exists(upload.file_path):
-            os.remove(upload.file_path)
-            logger.info("Deleted file from disk: %s", upload.file_path)
-    except OSError as exc:
-        logger.warning("Could not delete file from disk: %s", exc)
+        storage = get_storage()
+        await storage.delete(upload.file_path)
+        # Also delete parquet files
+        if upload.parquet_paths:
+            for path in upload.parquet_paths.values():
+                try:
+                    await storage.delete(path)
+                except Exception:
+                    pass
+        logger.info("Deleted file from storage: %s", upload.file_path)
+    except Exception as exc:
+        logger.warning("Could not delete file from storage: %s", exc)
 
     await db.delete(upload)

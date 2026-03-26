@@ -1,11 +1,12 @@
 """Context Builder Agent — builds LLM-ready descriptions and saves DataFrames as parquet.
 
-No SQLite — DataFrames are saved as parquet for fast loading in the sandbox,
-and a text schema description is generated for the LLM prompt.
+Parquet files are saved via the storage backend (local or Supabase).
+Code preamble generates pd.read_parquet() with either local paths or signed URLs.
 """
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from pathlib import Path
 from typing import Any
@@ -15,8 +16,6 @@ import pandas as pd
 from app.agents.excel.relationship_mapper import Relationship
 
 logger = logging.getLogger(__name__)
-
-_PARQUET_DIR = Path(__file__).resolve().parent.parent.parent.parent / "uploads" / "parquet"
 
 
 def _make_var_name(file_name: str, sheet_name: str, sheet_count: int) -> str:
@@ -39,27 +38,87 @@ def _make_var_name(file_name: str, sheet_name: str, sheet_count: int) -> str:
 
 def save_dataframes_to_parquet(
     workbooks: list[Any],
+    org_id: str = "default",
 ) -> dict[str, str]:
-    """Save all DataFrames as parquet files for fast sandbox loading.
+    """Save all DataFrames as parquet via storage backend.
 
-    Returns a mapping: df_variable_name -> parquet_file_path
+    Returns a mapping: df_variable_name -> remote_path (storage key)
+
+    This function is called from asyncio.to_thread, so we schedule
+    async uploads back on the main event loop.
     """
-    _PARQUET_DIR.mkdir(parents=True, exist_ok=True)
+    import asyncio
+    import concurrent.futures
+    from app.services.storage import get_storage
+    storage = get_storage()
+
     paths: dict[str, str] = {}
 
-    for wb in workbooks:
-        file_prefix = Path(wb.file_name).stem.lower().replace(" ", "_").replace("-", "_")
+    # Get the running event loop (from the main thread)
+    try:
+        loop = asyncio.get_event_loop()
+        has_loop = loop.is_running()
+    except RuntimeError:
+        has_loop = False
 
+    for wb in workbooks:
         for sheet in wb.sheets:
             var_name = _make_var_name(wb.file_name, sheet.name, len(wb.sheets))
+            remote_path = f"parquet/{org_id}/{var_name}.parquet"
 
-            parquet_path = _PARQUET_DIR / f"{var_name}.parquet"
-            sheet.df.to_parquet(str(parquet_path), index=False)
-            paths[var_name] = str(parquet_path)
+            # Serialize to bytes in memory
+            buf = sheet.df.to_parquet(index=False)
 
-            logger.info("Saved %s: %d rows -> %s", var_name, len(sheet.df), parquet_path)
+            # Schedule upload on the main event loop from this thread
+            if has_loop:
+                future = asyncio.run_coroutine_threadsafe(
+                    storage.upload(buf, remote_path), loop
+                )
+                future.result(timeout=60)  # Block this thread until upload completes
+            else:
+                asyncio.run(storage.upload(buf, remote_path))
+
+            paths[var_name] = remote_path
+            logger.info("Saved %s: %d rows -> %s", var_name, len(sheet.df), remote_path)
 
     return paths
+
+
+async def generate_code_preamble_async(parquet_paths: dict[str, str]) -> str:
+    """Generate Python code that pre-loads all DataFrames.
+
+    For local storage: uses filesystem paths
+    For Supabase: uses signed URLs (valid 10 min)
+    """
+    from app.services.storage import get_storage
+    storage = get_storage()
+
+    lines = ["import pandas as pd", "import plotly.express as px", ""]
+
+    for var_name, remote_path in parquet_paths.items():
+        url = await storage.download_url(remote_path)
+        lines.append(f'{var_name} = pd.read_parquet("{url}")')
+
+    lines.append("")
+    return "\n".join(lines)
+
+
+def generate_code_preamble(parquet_paths: dict[str, str]) -> str:
+    """Sync wrapper for generate_code_preamble_async.
+
+    Called from asyncio.to_thread context — schedules async work on the main loop.
+    """
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            future = asyncio.run_coroutine_threadsafe(
+                generate_code_preamble_async(parquet_paths), loop
+            )
+            return future.result(timeout=30)
+        return loop.run_until_complete(generate_code_preamble_async(parquet_paths))
+    except RuntimeError:
+        return asyncio.run(generate_code_preamble_async(parquet_paths))
 
 
 def build_excel_context(
@@ -67,10 +126,7 @@ def build_excel_context(
     relationships: list[Any],
     parquet_paths: dict[str, str],
 ) -> str:
-    """Build a text description of the Excel data for the LLM prompt.
-
-    Similar to the DB schema context but for DataFrames.
-    """
+    """Build a text description of the Excel data for the LLM prompt."""
     lines: list[str] = [
         "EXCEL DATA CONTEXT",
         "=" * 50,
@@ -80,7 +136,6 @@ def build_excel_context(
         "",
     ]
 
-    # DataFrames available
     lines.append("AVAILABLE DATAFRAMES (pre-loaded in Python):")
     lines.append("-" * 40)
 
@@ -95,7 +150,6 @@ def build_excel_context(
                 col_type = sheet.column_types.get(col, "unknown")
                 parts = [f"    {col}: {col_type}"]
 
-                # Sample values (max 5)
                 samples = sheet.sample_values.get(col, [])
                 if samples:
                     sample_str = ", ".join(repr(v) for v in samples[:5])
@@ -103,7 +157,6 @@ def build_excel_context(
 
                 lines.append(" ".join(parts))
 
-    # Relationships
     if relationships:
         lines.append("\n\nRELATIONSHIPS (use pd.merge for JOINs):")
         lines.append("=" * 50)
@@ -119,20 +172,6 @@ def build_excel_context(
                 f"left_on='{rel.source_column}', right_on='{rel.target_column}')"
             )
 
-    return "\n".join(lines)
-
-
-def generate_code_preamble(parquet_paths: dict[str, str]) -> str:
-    """Generate Python code that pre-loads all DataFrames.
-
-    This code is prepended to every sandbox execution for Excel queries.
-    """
-    lines = ["import pandas as pd", "import plotly.express as px", ""]
-
-    for var_name, path in parquet_paths.items():
-        lines.append(f'{var_name} = pd.read_parquet("{path}")')
-
-    lines.append("")
     return "\n".join(lines)
 
 

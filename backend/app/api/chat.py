@@ -151,6 +151,15 @@ async def _build_schema_context(
         result = await db.execute(stmt)
         upload = result.scalar_one_or_none()
         if upload:
+            # Regenerate code_preamble with fresh URLs (signed URLs expire)
+            fresh_preamble = upload.code_preamble or ""
+            if upload.parquet_paths:
+                try:
+                    from app.agents.excel.context import generate_code_preamble_async
+                    fresh_preamble = await generate_code_preamble_async(upload.parquet_paths)
+                except Exception as exc:
+                    logger.warning("Could not regenerate code preamble: %s", exc)
+
             # Use rich Excel context if available (from Excel Intelligence Engine)
             if upload.excel_context:
                 from app.agents.excel.sheet_selector import (
@@ -158,33 +167,29 @@ async def _build_schema_context(
                     build_compact_summary, build_selected_context,
                 )
 
-                # Parse stored context into sheet metadata
                 all_sheet_metas = parse_excel_context_to_sheets(upload.excel_context)
 
                 if all_sheet_metas and len(all_sheet_metas) > 3:
-                    # Stage 1: Compact summary of ALL sheets (always sent)
                     parts.append(build_compact_summary(all_sheet_metas))
-
-                    # Stage 2: Select relevant sheets based on user's question
                     selected = select_relevant_sheets(user_question, all_sheet_metas, max_sheets=3)
-
-                    # Stage 3: Full detail for only selected sheets
-                    parts.append(build_selected_context(selected, upload.code_preamble or ""))
+                    parts.append(build_selected_context(selected, fresh_preamble))
 
                     logger.info("Smart context: %d/%d sheets selected, ~%d chars",
                                len(selected), len(all_sheet_metas),
                                sum(len(p) for p in parts))
                 else:
-                    # Few sheets — send everything (< 3 sheets is fine)
                     parts.append(upload.excel_context)
-                    if upload.code_preamble:
-                        parts.append(f"\nCODE PREAMBLE (prepend to all Python code):\n{upload.code_preamble}")
+                    if fresh_preamble:
+                        parts.append(f"\nCODE PREAMBLE (prepend to all Python code):\n{fresh_preamble}")
             else:
                 # Fallback to basic file summary
                 try:
-                    df, _ = parse_file(upload.file_path, upload.file_type)
+                    from app.services.storage import get_storage
+                    storage = get_storage()
+                    local_path = await storage.download_url(upload.file_path)
+                    df, _ = parse_file(local_path, upload.file_type)
                     parts.append(get_file_summary(df))
-                    parts.append(f"\nFile path for code: {upload.file_path}")
+                    parts.append(f"\nFile path for code: {local_path}")
                 except Exception as exc:
                     logger.warning("Could not parse file for context: %s", exc)
 
