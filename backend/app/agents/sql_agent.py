@@ -34,6 +34,17 @@ CRITICAL RULES:
 12. For JOINs, prefer LEFT JOIN unless an INNER JOIN is clearly needed.
 13. When the schema shows foreign keys (FK), use those for joins — do NOT guess join columns.
 
+FUZZY MATCHING RULES (for dirty/inconsistent data):
+14. When filtering text/categorical columns, ALWAYS use LOWER(TRIM(col)) for comparison \
+    to handle case differences and whitespace: WHERE LOWER(TRIM(status)) = 'open'
+15. For city/location/name columns, use ILIKE with wildcards to catch abbreviations and \
+    spelling variations: WHERE city ILIKE '%gurgaon%' OR city ILIKE '%gurugram%'
+16. If the schema shows a column marked as [DIRTY DATA] with known variations, include \
+    ALL listed variations in your WHERE clause using OR / ILIKE ANY.
+17. For columns with low unique counts (< 20 distinct values), prefer GROUP BY with \
+    LOWER(TRIM(col)) to merge case variants: GROUP BY LOWER(TRIM(status))
+18. When the agent memory mentions aliases (e.g., "GGN = Gurgaon"), include all aliases.
+
 {schema_context}
 """
 

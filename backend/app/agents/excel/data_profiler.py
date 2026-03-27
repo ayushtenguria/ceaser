@@ -30,6 +30,7 @@ class ColumnProfile:
     mean_val: float | None = None
     outlier_count: int = 0
     top_values: list[str] = field(default_factory=list)
+    suspected_typos: list[tuple[str, str]] = field(default_factory=list)  # (typo, likely_correct)
 
 
 @dataclass
@@ -66,6 +67,8 @@ def profile_sheet(sheet: ExtractedSheet) -> SheetProfile:
         profile.columns.append(cp)
         if cp.null_pct > 20:
             profile.warnings.append(f"{col}: {cp.null_pct:.0f}% null")
+        for typo, correct in cp.suspected_typos:
+            profile.warnings.append(f"{col}: probable typo '{typo}' (did you mean '{correct}'?)")
 
     return profile
 
@@ -118,4 +121,65 @@ def _profile_column(series: pd.Series, name: str) -> ColumnProfile:
         except Exception:
             pass
 
+    # Fuzzy duplicate detection for string columns with low cardinality
+    if non_null.dtype == "object" and cp.unique_count <= 50:
+        cp.suspected_typos = _detect_fuzzy_duplicates(non_null)
+
     return cp
+
+
+def _detect_fuzzy_duplicates(series: pd.Series) -> list[tuple[str, str]]:
+    """Find values that are likely typos of other values using edit distance.
+
+    Returns list of (suspected_typo, likely_correct_value) tuples.
+    """
+    value_counts = series.value_counts()
+    values = [str(v) for v in value_counts.index if isinstance(v, str) and len(str(v)) > 1]
+
+    if len(values) < 2 or len(values) > 100:
+        return []
+
+    typos: list[tuple[str, str]] = []
+
+    for i, val_a in enumerate(values):
+        for val_b in values[i + 1:]:
+            # Only flag if one is much less common than the other (likely typo)
+            count_a = value_counts.get(val_a, 0)
+            count_b = value_counts.get(val_b, 0)
+            if min(count_a, count_b) >= max(count_a, count_b) * 0.8:
+                continue  # Both have similar counts — probably intentional variants
+
+            dist = _edit_distance(val_a.lower(), val_b.lower())
+            max_len = max(len(val_a), len(val_b))
+
+            # Flag if edit distance is small relative to string length
+            # Short strings (3-5 chars): allow dist 2 (open/opne)
+            # Medium strings (6-10 chars): allow dist 3 (enterprise/enterprize)
+            # Long strings (11+): allow dist ~25% of length
+            threshold = 2 if max_len <= 5 else (3 if max_len <= 10 else max(3, max_len // 4))
+            if max_len > 2 and dist <= threshold:
+                typo = val_a if count_a < count_b else val_b
+                correct = val_b if count_a < count_b else val_a
+                typos.append((typo, correct))
+
+    return typos[:10]  # Cap to avoid noise
+
+
+def _edit_distance(s1: str, s2: str) -> int:
+    """Levenshtein edit distance between two strings."""
+    if len(s1) < len(s2):
+        return _edit_distance(s2, s1)
+    if len(s2) == 0:
+        return len(s1)
+
+    prev_row = list(range(len(s2) + 1))
+    for i, c1 in enumerate(s1):
+        curr_row = [i + 1]
+        for j, c2 in enumerate(s2):
+            ins = prev_row[j + 1] + 1
+            dele = curr_row[j] + 1
+            sub = prev_row[j] + (0 if c1 == c2 else 1)
+            curr_row.append(min(ins, dele, sub))
+        prev_row = curr_row
+
+    return prev_row[-1]

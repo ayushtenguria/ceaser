@@ -212,7 +212,7 @@ async def _execute_prompt_cell(
     # Build schema context from notebook context
     schema_context = ctx.build_prompt_context()
 
-    llm = get_llm()
+    llm = get_llm(tier="heavy")  # Notebook prompt cells generate SQL/code
 
     # Collect results from the agent run
     collected_text = ""

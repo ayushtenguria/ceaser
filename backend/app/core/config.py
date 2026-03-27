@@ -37,7 +37,11 @@ class Settings(BaseSettings):
     super_admin_emails: list[str] = []  # Set via SUPER_ADMIN_EMAILS env var
 
     # ── LLM model names ──────────────────────────────────────────────
-    gemini_model: str = "gemini-2.0-flash"
+    gemini_model: str = "gemini-2.0-flash"            # Heavy tier: SQL, Python, analysis, reports
+    gemini_model_light: str = "gemini-2.0-flash"       # Light tier: router, verifier, suggestions, memory
+    # When more models are enabled on your API key, upgrade to:
+    # gemini_model: gemini-2.5-flash (or gemini-3-flash when available)
+    # gemini_model_light: gemini-2.0-flash-lite (or gemini-3.1-flash-lite)
     claude_model: str = "claude-sonnet-4-20250514"
 
     # ── CORS ───────────────────────────────────────────────────────────
@@ -73,6 +77,24 @@ class Settings(BaseSettings):
     cashfree_webhook_secret: str = ""
     cashfree_plan_map: str = ""  # "starter:plan_xxx,business:plan_yyy"
     cashfree_sandbox: bool = False
+
+    # ── Notifications ────────────────────────────────────────────────
+    slack_webhook_url: str = ""
+    slack_bot_token: str = ""
+    sendgrid_api_key: str = ""
+    sendgrid_from_email: str = "reports@ceaser.app"
+
+    # ── Snowflake ─────────────────────────────────────────────────────
+    snowflake_account: str = ""
+    snowflake_user: str = ""
+    snowflake_password: str = ""
+    snowflake_warehouse: str = ""
+    snowflake_database: str = ""
+    snowflake_schema: str = ""
+
+    # ── BigQuery ──────────────────────────────────────────────────────
+    bigquery_project_id: str = ""
+    bigquery_credentials_json: str = ""  # base64-encoded service account JSON
 
     # ── Storage ──────────────────────────────────────────────────────
     storage_backend: str = "local"  # "local" or "supabase"

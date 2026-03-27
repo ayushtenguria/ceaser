@@ -198,15 +198,144 @@ async def _build_schema_context(
         metrics_result = await db.execute(metrics_stmt)
         metrics = list(metrics_result.scalars().all())
         if metrics:
-            metric_lines = ["\n\nBUSINESS METRICS (use these exact definitions when the user references these terms)", "=" * 50]
-            for m in metrics:
-                metric_lines.append(f"\n{m.name} ({m.category})")
-                if m.description:
-                    metric_lines.append(f"  Description: {m.description}")
-                metric_lines.append(f"  SQL: {m.sql_expression}")
-            parts.append("\n".join(metric_lines))
+            locked = [m for m in metrics if m.is_locked]
+            unlocked = [m for m in metrics if not m.is_locked]
+
+            metric_lines: list[str] = []
+
+            if locked:
+                metric_lines.append("\n\nMANDATORY METRIC DEFINITIONS (use these EXACTLY as written — DO NOT deviate or generate alternative SQL)")
+                metric_lines.append("=" * 70)
+                for m in locked:
+                    metric_lines.append(f"\n  {m.name} ({m.category})")
+                    if m.description:
+                        metric_lines.append(f"    Description: {m.description}")
+                    metric_lines.append(f"    SQL: {m.sql_expression}")
+                    metric_lines.append(f"    ** THIS DEFINITION IS LOCKED — you MUST use it exactly as shown **")
+
+            if unlocked:
+                metric_lines.append("\n\nSUGGESTED METRIC DEFINITIONS (use as guidance when user references these terms)")
+                metric_lines.append("=" * 70)
+                for m in unlocked:
+                    metric_lines.append(f"\n  {m.name} ({m.category})")
+                    if m.description:
+                        metric_lines.append(f"    Description: {m.description}")
+                    metric_lines.append(f"    SQL: {m.sql_expression}")
+
+            if metric_lines:
+                parts.append("\n".join(metric_lines))
 
     return "\n\n".join(parts) if parts else ""
+
+
+async def _build_multi_file_context(
+    db: DbSession,
+    file_ids: list[str],
+    org_id: str,
+    user_question: str = "",
+) -> tuple[str, list[dict]]:
+    """Build unified context from ALL files in a conversation.
+
+    Returns (context_string, cross_file_relationships).
+    """
+    parts: list[str] = []
+    file_contexts: list[dict] = []
+
+    for fid in file_ids:
+        try:
+            fid_uuid = uuid.UUID(fid)
+        except ValueError:
+            continue
+
+        stmt = select(FileUpload).where(FileUpload.id == fid_uuid)
+        if org_id:
+            stmt = stmt.where(FileUpload.organization_id == org_id)
+        result = await db.execute(stmt)
+        upload = result.scalar_one_or_none()
+        if not upload:
+            continue
+
+        # Collect file info for cross-file relationship discovery
+        file_contexts.append({
+            "filename": upload.filename,
+            "parquet_paths": upload.parquet_paths or {},
+            "column_info": upload.column_info or {},
+        })
+
+        # Build context per file using the same safe preamble logic
+        preamble = upload.code_preamble or ""
+
+        if upload.excel_context:
+            from app.agents.excel.sheet_selector import (
+                parse_excel_context_to_sheets, select_relevant_sheets,
+                build_compact_summary, build_selected_context,
+            )
+            all_sheet_metas = parse_excel_context_to_sheets(upload.excel_context)
+
+            if all_sheet_metas and len(all_sheet_metas) > 3:
+                parts.append(build_compact_summary(all_sheet_metas))
+                selected = select_relevant_sheets(user_question, all_sheet_metas, max_sheets=3)
+                parts.append(build_selected_context(selected, preamble))
+            else:
+                parts.append(upload.excel_context)
+                if preamble:
+                    parts.append(f"\nCODE PREAMBLE (prepend to all Python code):\n{preamble}")
+        elif preamble:
+            parts.append(f"FILE: {upload.filename}\n{preamble}")
+
+    # Cross-file relationship discovery
+    cross_rels: list[dict] = []
+    if len(file_contexts) > 1:
+        from app.agents.excel.cross_file import discover_cross_file_relationships, format_cross_file_context
+        cross_rels = discover_cross_file_relationships(file_contexts)
+        rel_context = format_cross_file_context(cross_rels)
+        if rel_context:
+            parts.append(rel_context)
+
+    context = "\n\n".join(parts) if parts else ""
+    return context, cross_rels
+
+
+def _build_adaptive_history(
+    prev_msgs: list,
+    max_chars: int = 12000,
+) -> list[dict[str, str]]:
+    """Build conversation history adaptively based on token budget.
+
+    Instead of a fixed 10 messages, includes as many messages as fit
+    within the character budget. Prioritizes recent messages.
+    Short messages (corrections, follow-ups) are cheap; long messages
+    (with table summaries) cost more.
+    """
+    history: list[dict[str, str]] = []
+    total_chars = 0
+
+    # Walk backward from most recent (excluding the latest user msg)
+    for msg in reversed(prev_msgs[:-1]):
+        content = msg.content or ""
+
+        # For assistant messages, add brief data summary (not raw SQL/JSON)
+        if msg.role == "assistant":
+            if msg.table_data:
+                cols = msg.table_data.get("columns", [])
+                rows = msg.table_data.get("rows", [])
+                total = msg.table_data.get("total_rows", len(rows))
+                content += f"\n(Data returned: {total} rows, columns: {', '.join(cols[:8])})"
+            if msg.plotly_figure:
+                content += "\n(A chart was generated)"
+
+        msg_chars = len(content)
+
+        # Check budget
+        if total_chars + msg_chars > max_chars:
+            break
+
+        total_chars += msg_chars
+        history.append({"role": msg.role, "content": content})
+
+    # Reverse to chronological order
+    history.reverse()
+    return history
 
 
 # ---------------------------------------------------------------------------
@@ -232,7 +361,7 @@ async def get_suggestions(
         await _verify_org_connection(db, connection_id, org_id)
         schema_context = await _build_schema_context(db, connection_id, None, org_id=org_id)
 
-    llm = get_llm()
+    llm = get_llm(tier="light")  # Suggestions use light model
 
     # If conversation_id provided, use conversation history for context-aware suggestions
     if conversation_id:
@@ -343,16 +472,52 @@ async def chat(
     # Re-attach the conversation object to this session after commit
     await db.refresh(conversation)
 
-    # ── Build context ───────────────────────────────────────────────
-    effective_connection_id = body.connection_id or conversation.connection_id
-    effective_file_id = body.file_id or conversation.file_id
-    logger.info("Chat context: connection=%s file=%s (body.file_id=%s, conv.file_id=%s)",
-                effective_connection_id, effective_file_id, body.file_id, conversation.file_id)
-    schema_context = await _build_schema_context(db, effective_connection_id, effective_file_id, org_id=org_id, user_question=body.message)
-    logger.info("Schema context length: %d chars, has_excel=%s",
-                len(schema_context), "EXCEL" in schema_context or "DATAFRAME" in schema_context)
+    # ── Accumulate files per conversation ────────────────────────────
+    if body.file_id:
+        existing_ids = conversation.file_ids or []
+        str_file_id = str(body.file_id)
+        if str_file_id not in existing_ids:
+            existing_ids.append(str_file_id)
+            conversation.file_ids = existing_ids
+            # Also set file_id for backward compat (latest file)
+            conversation.file_id = body.file_id
+            from sqlalchemy.orm.attributes import flag_modified
+            flag_modified(conversation, "file_ids")
+            await db.flush()
 
-    # ── Load conversation history for follow-up context ──────────
+    # ── Build context (all files in conversation) ─────────────────
+    effective_connection_id = body.connection_id or conversation.connection_id
+    all_file_ids = conversation.file_ids or []
+    if not all_file_ids and conversation.file_id:
+        all_file_ids = [str(conversation.file_id)]
+
+    # Build schema context with ALL files
+    schema_context = ""
+    if effective_connection_id or all_file_ids:
+        # Connection context
+        schema_context = await _build_schema_context(
+            db, effective_connection_id, None, org_id=org_id, user_question=body.message
+        )
+        # Multi-file context
+        if all_file_ids:
+            file_context, cross_rels = await _build_multi_file_context(db, all_file_ids, org_id, body.message)
+            if file_context:
+                schema_context = (schema_context + "\n\n" + file_context) if schema_context else file_context
+
+    logger.info("Chat context: connection=%s files=%d",
+                effective_connection_id, len(all_file_ids))
+
+    # ── Load agent memories (org + user) ──────────────────────────
+    from app.services.memory import load_memories, format_memories_for_prompt
+    memories = await load_memories(db, org_id, user.id)
+    memory_context = format_memories_for_prompt(memories)
+    if memory_context:
+        schema_context = schema_context + "\n" + memory_context
+
+    logger.info("Schema context length: %d chars, memories=%d, has_excel=%s",
+                len(schema_context), len(memories), "EXCEL" in schema_context or "DATAFRAME" in schema_context)
+
+    # ── Load conversation history (adaptive — fits as many as token budget allows)
     history_messages: list[dict[str, str]] = []
     if body.conversation_id:
         hist_stmt = (
@@ -362,21 +527,11 @@ async def chat(
         )
         hist_result = await db.execute(hist_stmt)
         prev_msgs = list(hist_result.scalars().all())
-        # Take last 10 messages (exclude the one we just added)
-        for msg in prev_msgs[-11:-1]:
-            content = msg.content or ""
-            # For assistant messages, add a brief data summary (not raw SQL/JSON)
-            if msg.role == "assistant":
-                if msg.table_data:
-                    cols = msg.table_data.get("columns", [])
-                    rows = msg.table_data.get("rows", [])
-                    total = msg.table_data.get("total_rows", len(rows))
-                    content += f"\n(Data returned: {total} rows, columns: {', '.join(cols[:8])})"
-                if msg.plotly_figure:
-                    content += "\n(A chart was generated)"
-            history_messages.append({"role": msg.role, "content": content})
+        history_messages = _build_adaptive_history(prev_msgs, max_chars=12000)
+        logger.info("Adaptive history: %d messages loaded (of %d total)", len(history_messages), len(prev_msgs))
 
-    llm = get_llm(model=body.model)
+    llm = get_llm(model=body.model, tier="heavy")
+    llm_light = get_llm(tier="light")
 
     # ── Stream SSE ──────────────────────────────────────────────────
     conversation_id = conversation.id
@@ -397,10 +552,11 @@ async def chat(
             query=body.message,
             connection_id=str(effective_connection_id) if effective_connection_id else None,
             connection_ids=[str(cid) for cid in body.connection_ids] if body.connection_ids else None,
-            file_id=str(effective_file_id) if effective_file_id else None,
+            file_id=str(body.file_id) if body.file_id else (str(conversation.file_id) if conversation.file_id else None),
             schema_context=schema_context,
             history=history_messages,
             llm=llm,
+            llm_light=llm_light,
             db=db,
         ):
             # Transform chunk types to match frontend expectations.
@@ -465,6 +621,22 @@ async def chat(
             details={"question": body.message, "sql": collected_sql, "model": body.model},
         )
 
+        # ── Extract memories async (non-blocking) ────────────────
+        try:
+            from app.agents.memory_extractor import extract_memories
+            await extract_memories(
+                user_message=body.message,
+                assistant_response=collected_text or "",
+                sql_query=collected_sql,
+                llm=llm_light,  # LIGHT — simple extraction task
+                db=db,
+                org_id=org_id,
+                user_id=user.id,
+                conversation_id=conversation_id,
+            )
+        except Exception as exc:
+            logger.debug("Memory extraction skipped: %s", exc)
+
         yield _sse({"type": "done", "content": str(assistant_msg.id)})
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
@@ -516,7 +688,7 @@ async def get_notebook_draft(
         for m in db_messages
     ]
 
-    llm = get_llm()
+    llm = get_llm(tier="light")  # Notebook extraction is a simple task
     draft = await extract_notebook_draft(messages, llm, conversation.title if conversation else "")
 
     return {
@@ -565,7 +737,7 @@ async def save_conversation_as_notebook(
             for m in db_messages
         ]
 
-        llm = get_llm()
+        llm = get_llm(tier="light")
         draft = await extract_notebook_draft(messages, llm, conversation.title if conversation else "")
         title = draft["title"]
         description = draft["description"]
@@ -684,7 +856,7 @@ async def generate_conversation_report(
     # Verify conversation belongs to this org
     conversation = await _verify_org_conversation(db, conversation_id, org_id)
 
-    llm = get_llm()
+    llm = get_llm(tier="heavy")  # Reports need best quality
 
     async def stream():
         final_report = None

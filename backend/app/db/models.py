@@ -91,6 +91,7 @@ class Conversation(Base):
     file_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("file_uploads.id"), nullable=True
     )
+    file_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)  # accumulated file UUIDs
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
@@ -217,6 +218,7 @@ class MetricDefinition(Base):
     connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("database_connections.id"), nullable=True)
     organization_id: Mapped[str] = mapped_column(String(255), default="")
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    is_locked: Mapped[bool] = mapped_column(default=False)  # Locked = AI must use this exact definition
     created_at: Mapped[datetime] = mapped_column(default=func.now())
     updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
 
@@ -356,6 +358,49 @@ class Payment(Base):
     status: Mapped[str] = mapped_column(String(50), default="pending")  # pending, success, failed, refunded
     plan_name: Mapped[str] = mapped_column(String(100), default="")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class AgentMemory(Base):
+    """Persistent memory for the AI agent — org-level and user-level knowledge.
+
+    Memories are injected into the LLM prompt to improve accuracy over time.
+    Three tiers: working (conversation), episodic (user), semantic (org).
+    """
+
+    __tablename__ = "agent_memories"
+    __table_args__ = (
+        Index("ix_agent_memories_org_active", "organization_id", "is_active"),
+        Index("ix_agent_memories_user", "user_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[str] = mapped_column(String(255), index=True)  # hard namespace
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)  # null = org-level
+
+    # Type classification
+    memory_type: Mapped[str] = mapped_column(String(50))
+    # correction, preference, column_alias, domain_term, business_rule, table_note, learned_fact
+
+    content: Mapped[str] = mapped_column(Text)  # atomic fact, plain text
+
+    # Provenance
+    source: Mapped[str] = mapped_column(String(50), default="auto_extracted")
+    # auto_extracted, user_correction, admin_manual, agent_learned
+    source_conversation_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True
+    )
+
+    # Scoring
+    confidence: Mapped[float] = mapped_column(default=0.7)  # 0-1
+    access_count: Mapped[int] = mapped_column(default=0)
+    last_accessed_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
+    # Lifecycle
+    expires_at: Mapped[datetime | None] = mapped_column(nullable=True)  # null = no expiry (org-level)
+    is_active: Mapped[bool] = mapped_column(default=True)
+
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
 
 class NotebookCellResult(Base):

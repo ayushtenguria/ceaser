@@ -260,6 +260,7 @@ class MetricUpdate(_CamelModel):
     description: str | None = None
     sql_expression: str | None = None
     category: str | None = None
+    is_locked: bool | None = None
 
 class MetricResponse(BaseModel):
     """Public representation of a metric definition."""
@@ -272,6 +273,7 @@ class MetricResponse(BaseModel):
     category: str
     connection_id: uuid.UUID | None
     organization_id: str
+    is_locked: bool = False
     created_at: datetime
     updated_at: datetime
 

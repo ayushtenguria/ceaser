@@ -1,5 +1,5 @@
 import { useEffect, useState, useCallback } from "react";
-import { Plus, Trash2, Pencil, BookOpen, Loader2 } from "lucide-react";
+import { Plus, Trash2, Pencil, BookOpen, Loader2, Lock, Unlock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -15,6 +15,7 @@ interface Metric {
   sqlExpression: string;
   category: string;
   connectionId: string | null;
+  isLocked: boolean;
   createdAt: string;
 }
 
@@ -32,6 +33,13 @@ export default function MetricsPage() {
     try {
       await api.deleteMetric(id);
       setMetrics((prev) => prev.filter((m) => m.id !== id));
+    } catch {}
+  }, []);
+
+  const handleToggleLock = useCallback(async (metric: Metric) => {
+    try {
+      const updated = await api.updateMetric(metric.id, { isLocked: !metric.isLocked });
+      setMetrics((prev) => prev.map((m) => (m.id === metric.id ? updated : m)));
     } catch {}
   }, []);
 
@@ -102,17 +110,31 @@ export default function MetricsPage() {
               <h3 className="mb-3 text-sm font-medium uppercase text-muted-foreground">{category}</h3>
               <div className="space-y-2">
                 {items.map((metric) => (
-                  <Card key={metric.id}>
+                  <Card key={metric.id} className={metric.isLocked ? "border-amber-500/30" : ""}>
                     <CardContent className="flex items-center justify-between p-4">
                       <div className="flex-1">
                         <div className="flex items-center gap-2">
                           <p className="font-medium">{metric.name}</p>
                           <Badge variant="outline" className="text-xs">{metric.category}</Badge>
+                          {metric.isLocked && (
+                            <Badge variant="outline" className="text-xs text-amber-400 border-amber-500/30">
+                              <Lock className="mr-1 h-2.5 w-2.5" />Locked
+                            </Badge>
+                          )}
                         </div>
                         {metric.description && <p className="mt-0.5 text-xs text-muted-foreground">{metric.description}</p>}
                         <pre className="mt-2 rounded bg-muted/50 px-3 py-1.5 text-xs text-emerald-400">{metric.sqlExpression}</pre>
                       </div>
                       <div className="ml-4 flex gap-1">
+                        <Button
+                          variant="ghost"
+                          size="icon"
+                          className={`h-8 w-8 ${metric.isLocked ? "text-amber-400" : "text-muted-foreground"}`}
+                          onClick={() => handleToggleLock(metric)}
+                          title={metric.isLocked ? "Unlock — AI can adapt this definition" : "Lock — AI must use this exact definition"}
+                        >
+                          {metric.isLocked ? <Lock className="h-3.5 w-3.5" /> : <Unlock className="h-3.5 w-3.5" />}
+                        </Button>
                         <Button variant="ghost" size="icon" className="h-8 w-8" onClick={() => { setEditingMetric(metric); setDialogOpen(true); }}>
                           <Pencil className="h-3.5 w-3.5" />
                         </Button>

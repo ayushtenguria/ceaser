@@ -183,6 +183,15 @@ def format_schema_for_llm(schema: SchemaInfo) -> str:
             if col.sample_values:
                 vals = ", ".join(f"'{v}'" for v in col.sample_values[:15])
                 parts.append(f"  values: [{vals}]")
+                # Flag columns that appear to have inconsistent values
+                # (case variations, similar strings that might be typos)
+                str_vals = [str(v).lower().strip() for v in col.sample_values if v]
+                unique_lower = set(str_vals)
+                if len(unique_lower) < len(col.sample_values) and col.data_type.upper() in (
+                    "VARCHAR", "TEXT", "STRING", "CHARACTER VARYING",
+                    "VARCHAR(50)", "VARCHAR(100)", "VARCHAR(200)", "VARCHAR(255)",
+                ):
+                    parts.append("[DIRTY DATA - use LOWER(TRIM()) for comparison]")
             lines.append(" ".join(parts))
 
     # Relationships section

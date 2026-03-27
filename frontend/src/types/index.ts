@@ -102,6 +102,22 @@ export interface FileUpload {
   sizeBytes: number;
   uploadedAt: string;
   organizationId: string;
+  columnInfo?: {
+    row_count: number;
+    column_count: number;
+    columns: Array<{ name: string; dtype: string; null_count: number; unique_count: number }>;
+  };
+  excelMetadata?: {
+    quality_report?: {
+      severity: "clean" | "minor" | "major";
+      total_issues: number;
+      items: string[];
+    };
+    insight?: {
+      summary: string;
+      sheets: Array<{ name: string; rows: number; columns: number }>;
+    };
+  };
 }
 
 export interface ChatRequest {

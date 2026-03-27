@@ -1,4 +1,4 @@
-import { useState, useRef, useCallback, type KeyboardEvent } from "react";
+import { useState, useRef, useCallback, useEffect, type KeyboardEvent } from "react";
 import {
   ArrowUp, Paperclip, Link2, SlidersHorizontal, Bot, Atom,
   Loader2, X, ChevronDown, FileSpreadsheet, FileText, File,
@@ -18,15 +18,31 @@ interface ChatInputProps {
 
 export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
   const [value, setValue] = useState("");
-  const [attachedFile, setAttachedFile] = useState<{ id: string; name: string; size: number; type: string } | null>(null);
+  const [attachedFile, setAttachedFile] = useState<{
+    id: string; name: string; size: number; type: string;
+    qualityIssues?: string[]; qualitySeverity?: string;
+  } | null>(null);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStage, setUploadStage] = useState("");
   const [advancedReasoning, setAdvancedReasoning] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const connDropdownRef = useRef<HTMLDivElement>(null);
   const { connections, activeConnectionId, activeConnectionIds, setActiveConnection, setActiveConnectionIds, toggleConnectionId } = useConnectionsStore();
   const [connDropdownOpen, setConnDropdownOpen] = useState(false);
+
+  // Close dropdown when clicking outside
+  useEffect(() => {
+    if (!connDropdownOpen) return;
+    const handler = (e: MouseEvent) => {
+      if (connDropdownRef.current && !connDropdownRef.current.contains(e.target as Node)) {
+        setConnDropdownOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [connDropdownOpen]);
 
   const activeConnection = connections.find((c) => c.id === activeConnectionId);
 
@@ -62,46 +78,51 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
   const [pendingFileType, setPendingFileType] = useState("");
 
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
+    const files = e.target.files;
+    if (!files || files.length === 0) return;
     e.target.value = "";
 
-    const ext = file.name.split(".").pop()?.toLowerCase() || "file";
-    setPendingFileName(file.name);
-    setPendingFileSize(file.size);
+    // Upload files sequentially (supports multi-file select)
+    const fileList = Array.from(files);
+    const firstFile = fileList[0];
+    const ext = firstFile.name.split(".").pop()?.toLowerCase() || "file";
+    setPendingFileName(fileList.length > 1 ? `${fileList.length} files` : firstFile.name);
+    setPendingFileSize(fileList.reduce((s, f) => s + f.size, 0));
     setPendingFileType(ext);
     setIsUploadingFile(true);
     setUploadProgress(10);
     setUploadStage("Uploading");
 
     try {
-      // Stage 1: Upload (10→40%)
-      setUploadProgress(20);
-      setUploadStage("Uploading");
-      const uploaded = await api.uploadFile(file);
+      let lastUploaded: any = null;
+      const totalFiles = fileList.length;
 
-      // Stage 2: Parsing (40→60%)
-      setUploadProgress(50);
-      setUploadStage("Parsing sheets");
+      for (let i = 0; i < totalFiles; i++) {
+        const file = fileList[i];
+        const pctBase = Math.round((i / totalFiles) * 80) + 10;
 
-      // Stage 3: Analyzing (60→80%)
-      setUploadProgress(70);
-      setUploadStage("Analyzing relationships");
+        setUploadProgress(pctBase);
+        setUploadStage(totalFiles > 1 ? `Uploading ${file.name} (${i + 1}/${totalFiles})` : "Uploading");
 
-      // Stage 4: Ready (80→100%)
-      setUploadProgress(90);
-      setUploadStage("Preparing for chat");
+        lastUploaded = await api.uploadFile(file);
 
-      // Small delay to show final stage
+        setUploadProgress(pctBase + Math.round(40 / totalFiles));
+        setUploadStage(totalFiles > 1 ? `Processing ${file.name}` : "Analyzing");
+      }
+
+      setUploadProgress(95);
+      setUploadStage("Ready");
       await new Promise((r) => setTimeout(r, 300));
       setUploadProgress(100);
-      setUploadStage("Ready");
 
+      const qr = lastUploaded?.excelMetadata?.quality_report;
       setAttachedFile({
-        id: uploaded.id,
-        name: uploaded.filename || file.name,
-        size: file.size,
+        id: lastUploaded.id,
+        name: fileList.length > 1 ? `${fileList.length} files (${fileList.map(f => f.name).join(", ")})` : lastUploaded.filename || firstFile.name,
+        size: fileList.reduce((s, f) => s + f.size, 0),
         type: ext,
+        qualityIssues: qr?.items || [],
+        qualitySeverity: qr?.severity || "clean",
       });
     } catch {
       setUploadProgress(0);
@@ -160,13 +181,13 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
             </Button>
 
             {/* Connector selector — multi-select */}
-            <div className="relative">
+            <div className="relative" ref={connDropdownRef}>
               <button
                 onClick={() => setConnDropdownOpen((v) => !v)}
                 className="flex h-7 items-center gap-1 rounded-md px-2 text-xs text-muted-foreground hover:text-foreground"
               >
                 <Link2 className="h-3.5 w-3.5 shrink-0" />
-                <span>
+                <span className="max-w-[200px] truncate">
                   {activeConnectionIds.length > 1
                     ? `${activeConnectionIds.length} databases`
                     : activeConnection?.name || "Connectors"}
@@ -174,7 +195,7 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
                 <ChevronDown className="h-3 w-3" />
               </button>
               {connDropdownOpen && (
-                <div className="absolute bottom-full left-0 mb-1 w-56 rounded-lg border bg-popover p-1 shadow-lg z-50">
+                <div className="absolute bottom-full left-0 mb-1 min-w-[14rem] max-w-[22rem] w-max rounded-lg border bg-popover p-1 shadow-lg z-50">
                   {connections.length === 0 ? (
                     <p className="px-2 py-1.5 text-xs text-muted-foreground">No connections</p>
                   ) : (
@@ -190,7 +211,7 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
                           className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent"
                         >
                           <div className={cn(
-                            "h-3.5 w-3.5 rounded border flex items-center justify-center",
+                            "h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0",
                             activeConnectionIds.length === connections.length ? "bg-primary border-primary" : "border-muted-foreground"
                           )}>
                             {activeConnectionIds.length === connections.length && <span className="text-[8px] text-primary-foreground">&#10003;</span>}
@@ -205,13 +226,13 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
                           className="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-accent"
                         >
                           <div className={cn(
-                            "h-3.5 w-3.5 rounded border flex items-center justify-center",
+                            "h-3.5 w-3.5 rounded border flex items-center justify-center shrink-0",
                             activeConnectionIds.includes(conn.id) ? "bg-primary border-primary" : "border-muted-foreground"
                           )}>
                             {activeConnectionIds.includes(conn.id) && <span className="text-[8px] text-primary-foreground">&#10003;</span>}
                           </div>
-                          <span className={cn("h-1.5 w-1.5 rounded-full", conn.isConnected ? "bg-emerald-500" : "bg-red-500")} />
-                          {conn.name}
+                          <span className={cn("h-1.5 w-1.5 rounded-full shrink-0", conn.isConnected ? "bg-emerald-500" : "bg-red-500")} />
+                          <span className="truncate">{conn.name}</span>
                         </button>
                       ))}
                     </>
@@ -278,6 +299,7 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
         ref={fileInputRef}
         type="file"
         accept=".csv,.xlsx,.xls,.json,.parquet"
+        multiple
         className="hidden"
         onChange={handleFileChange}
       />
@@ -318,7 +340,7 @@ function FileCard({
   pendingType,
   onRemove,
 }: {
-  file: { id: string; name: string; size: number; type: string } | null;
+  file: { id: string; name: string; size: number; type: string; qualityIssues?: string[]; qualitySeverity?: string } | null;
   isUploading: boolean;
   progress: number;
   stage: string;
@@ -333,11 +355,14 @@ function FileCard({
   const meta = FILE_ICONS[ext] || { icon: File, color: "text-muted-foreground", label: ext };
   const Icon = meta.icon;
   const done = !isUploading && file;
+  const issues = file?.qualityIssues || [];
+  const severity = file?.qualitySeverity || "clean";
+  const hasIssues = done && issues.length > 0 && severity !== "clean";
 
   return (
     <div className="relative overflow-hidden rounded-lg border bg-card">
       <div className="flex items-center gap-3 px-3 py-2.5">
-        {/* File type icon — always shows the real icon, never a spinner */}
+        {/* File type icon */}
         <div className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-lg bg-muted/50", meta.color)}>
           <Icon className="h-5 w-5" />
         </div>
@@ -353,7 +378,7 @@ function FileCard({
           </p>
         </div>
 
-        {/* Remove button — always visible */}
+        {/* Remove button */}
         <button
           onClick={onRemove}
           className="shrink-0 rounded-md p-1 text-muted-foreground hover:bg-muted hover:text-foreground"
@@ -372,6 +397,26 @@ function FileCard({
             )}
             style={{ width: `${progress}%` }}
           />
+        </div>
+      )}
+
+      {/* Data quality warnings */}
+      {hasIssues && (
+        <div className="border-t border-amber-500/20 bg-amber-500/5 px-3 py-2">
+          <p className="mb-1 flex items-center gap-1.5 text-xs font-medium text-amber-400">
+            <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.999L13.732 4.001c-.77-1.333-2.694-1.333-3.464 0L3.34 16.001C2.57 17.334 3.532 19.001 5.072 19.001z" />
+            </svg>
+            {issues.length} data quality {issues.length === 1 ? "warning" : "warnings"}
+          </p>
+          <ul className="space-y-0.5">
+            {issues.slice(0, 3).map((item, i) => (
+              <li key={i} className="text-xs text-muted-foreground truncate">{item}</li>
+            ))}
+            {issues.length > 3 && (
+              <li className="text-xs text-muted-foreground/60">+{issues.length - 3} more</li>
+            )}
+          </ul>
         </div>
       )}
     </div>

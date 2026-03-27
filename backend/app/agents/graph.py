@@ -173,38 +173,44 @@ def _after_code_execute(state: AgentState) -> str:
 # Graph builder
 # ---------------------------------------------------------------------------
 
-def build_graph(llm: BaseChatModel, db: AsyncSession) -> StateGraph:
-    """Construct and return the compiled LangGraph agent."""
+def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel | None = None) -> StateGraph:
+    """Construct and return the compiled LangGraph agent.
+
+    Two model tiers:
+      llm       — heavy (gemini-3-flash): SQL, Python, analyst, respond, decomposer
+      llm_light — light (gemini-3.1-flash-lite): router, verifier, repair, suggestions
+    """
+    _light = llm_light or llm  # Fallback to heavy if no light model provided
 
     async def router_node(state: AgentState) -> AgentState:
-        return await route_query(state, llm)
+        return await route_query(state, _light)         # LIGHT — simple classification
 
     async def sql_agent_node(state: AgentState) -> AgentState:
-        return await generate_sql(state, llm)
+        return await generate_sql(state, llm)            # HEAVY — core SQL generation
 
     async def python_agent_node(state: AgentState) -> AgentState:
-        return await generate_python(state, llm)
+        return await generate_python(state, llm)         # HEAVY — core code generation
 
     async def validate_node(state: AgentState) -> AgentState:
-        return validate_sql(state)
+        return validate_sql(state)                       # NO LLM — rule-based
 
     async def sql_execute_node(state: AgentState) -> AgentState:
-        return await execute_sql(state, db)
+        return await execute_sql(state, db)              # NO LLM — DB execution
 
     async def verify_node(state: AgentState) -> AgentState:
-        return await verify_results(state, llm)
+        return await verify_results(state, _light)       # LIGHT — yes/no check
 
     async def code_execute_node(state: AgentState) -> AgentState:
-        return await execute_code(state)
+        return await execute_code(state)                 # NO LLM — sandbox execution
 
     async def respond_node(state: AgentState) -> AgentState:
-        return await _respond(state, llm)
+        return await _respond(state, llm)                # HEAVY — user-facing response
 
     async def repair_node(state: AgentState) -> AgentState:
-        return await repair_sql(state, llm)
+        return await repair_sql(state, _light)           # LIGHT — surgical SQL fix
 
     async def analyst_node(state: AgentState) -> AgentState:
-        return await run_analyst(state, llm, db)
+        return await run_analyst(state, llm, db)         # HEAVY — strategic analysis
 
     graph = StateGraph(AgentState)
 
@@ -473,6 +479,7 @@ async def run_agent(
     file_id: str | None,
     schema_context: str,
     llm: BaseChatModel,
+    llm_light: BaseChatModel | None = None,
     db: AsyncSession,
     history: list[dict[str, str]] | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
@@ -481,7 +488,8 @@ async def run_agent(
     If the user asks multiple independent questions in one message, the
     decomposer splits them and each sub-query is executed separately.
     """
-    graph = build_graph(llm, db)
+    _light = llm_light or llm
+    graph = build_graph(llm, db, llm_light=_light)
     compiled = graph.compile()
 
     # Build message history for conversation context
@@ -499,7 +507,7 @@ async def run_agent(
         yield {"type": "status", "content": "Multi-database query mode..."}
         async for chunk in _run_cross_db_query(query, connection_ids, schema_context, llm, db):
             yield chunk
-        # Generate suggestions
+        # Generate suggestions (LIGHT model)
         try:
             from app.agents.suggestions import generate_follow_up_suggestions
             follow_ups = await generate_follow_up_suggestions(
@@ -507,15 +515,15 @@ async def run_agent(
                 conversation_history=history or [],
                 last_question=query,
                 last_answer="",
-                llm=llm,
+                llm=_light,
             )
         except Exception:
             follow_ups = []
         yield {"type": "suggestions", "content": "", "data": follow_ups}
         return
 
-    # Step 1: Decompose the query
-    sub_queries = await decompose_query(query, llm)
+    # Step 1: Decompose the query (LIGHT model — simple split)
+    sub_queries = await decompose_query(query, _light)
 
     all_texts: list[str] = []
 
@@ -554,7 +562,7 @@ async def run_agent(
         if all_texts:
             yield {"type": "text", "content": "\n\n---\n\n".join(all_texts)}
 
-    # Generate follow-up suggestions
+    # Generate follow-up suggestions (LIGHT model)
     try:
         from app.agents.suggestions import generate_follow_up_suggestions
         follow_ups = await generate_follow_up_suggestions(
@@ -562,7 +570,7 @@ async def run_agent(
             conversation_history=history or [],
             last_question=query,
             last_answer=all_texts[-1] if all_texts else "",
-            llm=llm,
+            llm=_light,
         )
     except Exception:
         follow_ups = []

@@ -29,6 +29,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 def get_llm(
     model: str = "gemini",
+    tier: str = "heavy",
     settings: Settings | None = None,
 ) -> BaseChatModel:
     """Return a configured LangChain chat model.
@@ -36,9 +37,16 @@ def get_llm(
     Parameters
     ----------
     model:
-        ``"gemini"`` (default) or ``"claude"``.
+        ``"gemini"`` (default) or ``"claude"`` — selects the provider.
+    tier:
+        ``"heavy"`` (default) — best quality model for SQL, code, analysis.
+        ``"light"`` — fast/cheap model for routing, verification, extraction.
     settings:
         Optional override; falls back to the cached singleton.
+
+    Model mapping:
+        heavy  → gemini-3-flash (or claude if selected)
+        light  → gemini-3.1-flash-lite
     """
     settings = settings or get_settings()
 
@@ -50,9 +58,11 @@ def get_llm(
             max_tokens=4096,
         )
 
-    # Default: Gemini
+    # Gemini — select model based on tier
+    model_name = settings.gemini_model_light if tier == "light" else settings.gemini_model
+
     return ChatGoogleGenerativeAI(
-        model=settings.gemini_model,
+        model=model_name,
         google_api_key=settings.gemini_api_key,
         temperature=0,
         max_output_tokens=4096,

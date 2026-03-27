@@ -5,6 +5,10 @@ import {
   Trash2,
   Loader2,
   Upload,
+  AlertTriangle,
+  CheckCircle2,
+  XCircle,
+  ChevronRight,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -102,6 +106,7 @@ export default function FilesPage() {
     return "text-muted-foreground";
   };
 
+
   return (
     <div className="p-6">
       <div className="mb-6">
@@ -175,44 +180,102 @@ export default function FilesPage() {
       ) : (
         <div className="space-y-2">
           {files.map((file) => (
-            <Card key={file.id}>
-              <CardContent className="flex items-center justify-between p-4">
-                <div className="flex items-center gap-3">
-                  <File
-                    className={cn("h-5 w-5", getFileTypeColor(file.fileType))}
-                  />
-                  <div>
-                    <p className="text-sm font-medium">{file.filename}</p>
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>{formatBytes(file.sizeBytes)}</span>
-                      <span>-</span>
-                      <span>{formatRelativeTime(file.uploadedAt)}</span>
-                    </div>
-                  </div>
-                </div>
-                <div className="flex items-center gap-2">
-                  <Badge variant="outline" className="text-xs">
-                    {file.fileType.split("/").pop() || file.fileType}
-                  </Badge>
-                  <Button
-                    variant="ghost"
-                    size="icon"
-                    className="h-8 w-8 text-muted-foreground hover:text-destructive"
-                    onClick={() => handleDelete(file.id)}
-                    disabled={deletingIds.has(file.id)}
-                  >
-                    {deletingIds.has(file.id) ? (
-                      <Loader2 className="h-4 w-4 animate-spin" />
-                    ) : (
-                      <Trash2 className="h-4 w-4" />
-                    )}
-                  </Button>
-                </div>
-              </CardContent>
-            </Card>
+            <FileCard
+              key={file.id}
+              file={file}
+              getFileTypeColor={getFileTypeColor}
+              onDelete={handleDelete}
+              isDeleting={deletingIds.has(file.id)}
+            />
           ))}
         </div>
       )}
     </div>
+  );
+}
+
+function FileCard({ file, getFileTypeColor, onDelete, isDeleting }: {
+  file: FileUpload;
+  getFileTypeColor: (t: string) => string;
+  onDelete: (id: string) => void;
+  isDeleting: boolean;
+}) {
+  const [showQuality, setShowQuality] = useState(false);
+  const qr = file.excelMetadata?.quality_report;
+  const info = file.columnInfo;
+  const sheets = file.excelMetadata?.insight?.sheets;
+
+  const qualityColor = !qr ? "text-muted-foreground/40" :
+    qr.severity === "clean" ? "text-emerald-400" :
+    qr.severity === "minor" ? "text-amber-400" : "text-red-400";
+
+  const QualityIcon = !qr ? CheckCircle2 :
+    qr.severity === "clean" ? CheckCircle2 :
+    qr.severity === "minor" ? AlertTriangle : XCircle;
+
+  return (
+    <Card>
+      <CardContent className="p-4">
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <File className={cn("h-5 w-5", getFileTypeColor(file.fileType))} />
+            <div>
+              <p className="text-sm font-medium">{file.filename}</p>
+              <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                <span>{formatBytes(file.sizeBytes)}</span>
+                {info && <span>{info.row_count.toLocaleString()} rows, {info.column_count} cols</span>}
+                {sheets && sheets.length > 1 && <span>{sheets.length} sheets</span>}
+                <span>{formatRelativeTime(file.uploadedAt)}</span>
+              </div>
+            </div>
+          </div>
+          <div className="flex items-center gap-2">
+            {/* Quality badge */}
+            {qr && qr.total_issues > 0 ? (
+              <button
+                onClick={() => setShowQuality(!showQuality)}
+                className={cn("flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors hover:bg-muted/50", qualityColor)}
+              >
+                <QualityIcon className="h-3 w-3" />
+                {qr.total_issues} {qr.total_issues === 1 ? "issue" : "issues"}
+                <ChevronRight className={cn("h-3 w-3 transition-transform", showQuality && "rotate-90")} />
+              </button>
+            ) : qr ? (
+              <span className="flex items-center gap-1 text-xs text-emerald-400/70">
+                <CheckCircle2 className="h-3 w-3" /> Clean
+              </span>
+            ) : null}
+
+            <Badge variant="outline" className="text-xs">
+              {file.fileType}
+            </Badge>
+            <Button
+              variant="ghost"
+              size="icon"
+              className="h-8 w-8 text-muted-foreground hover:text-destructive"
+              onClick={() => onDelete(file.id)}
+              disabled={isDeleting}
+            >
+              {isDeleting ? <Loader2 className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
+            </Button>
+          </div>
+        </div>
+
+        {/* Expandable quality details */}
+        {showQuality && qr && qr.items.length > 0 && (
+          <div className="mt-3 rounded-lg border border-amber-500/20 bg-amber-500/5 px-3 py-2">
+            <p className="mb-1.5 text-xs font-medium text-amber-400">Data Quality Warnings</p>
+            <ul className="space-y-1">
+              {qr.items.map((item, i) => (
+                <li key={i} className="flex items-start gap-2 text-xs text-muted-foreground">
+                  <AlertTriangle className="mt-0.5 h-3 w-3 shrink-0 text-amber-400/60" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        )}
+      </CardContent>
+    </Card>
   );
 }

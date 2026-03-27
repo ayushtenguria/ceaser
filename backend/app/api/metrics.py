@@ -86,6 +86,7 @@ async def update_metric(
     if body.description is not None: metric.description = body.description
     if body.sql_expression is not None: metric.sql_expression = body.sql_expression
     if body.category is not None: metric.category = body.category
+    if body.is_locked is not None: metric.is_locked = body.is_locked
 
     await db.flush()
     await db.refresh(metric)

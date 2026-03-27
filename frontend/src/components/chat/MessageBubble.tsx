@@ -1,9 +1,10 @@
-import { AlertCircle, Bot, Bookmark, ChevronRight, Copy, Check, Download, Table2, User } from "lucide-react";
+import { AlertCircle, Bot, Bookmark, ChevronRight, Copy, Check, Download, Maximize2, Table2, User } from "lucide-react";
 import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
 import PlotlyChart from "@/components/visualizations/PlotlyChart";
-import DataTable from "@/components/visualizations/DataTable";
+import DataExplorer from "@/components/data/DataExplorer";
+import DataExplorerSheet from "@/components/data/DataExplorerSheet";
 import type { Message } from "@/types";
 import { cn, formatRelativeTime } from "@/lib/utils";
 import * as api from "@/lib/api";
@@ -174,53 +175,42 @@ function CodeBlock({ code }: { code: string }) {
 
 function CollapsibleTable({ data }: { data: import("@/types").TableData }) {
   const [expanded, setExpanded] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const rowCount = data.totalRows ?? (data as any).total_rows ?? data.rows?.length ?? 0;
 
-  const handleDownloadCsv = useCallback(() => {
-    const columns = data.columns || [];
-    const rows = data.rows || [];
-    if (!columns.length || !rows.length) return;
-
-    const csvContent = [
-      columns.join(","),
-      ...rows.map((row) => columns.map((col) => {
-        const val = row[col];
-        const str = val === null || val === undefined ? "" : String(val);
-        return str.includes(",") || str.includes('"') || str.includes("\n")
-          ? `"${str.replace(/"/g, '""')}"` : str;
-      }).join(",")),
-    ].join("\n");
-
-    const blob = new Blob([csvContent], { type: "text/csv" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "data.csv";
-    a.click();
-    URL.revokeObjectURL(url);
-  }, [data]);
-
   return (
-    <div className="w-full overflow-hidden rounded-lg border">
-      <button
-        onClick={() => setExpanded((e) => !e)}
-        className="flex w-full items-center justify-between px-4 py-2 text-left hover:bg-muted/30 transition-colors"
-      >
-        <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
-          <ChevronRight className={cn("h-3 w-3 transition-transform", expanded && "rotate-90")} />
-          <Table2 className="h-3.5 w-3.5" />
-          Data Table ({rowCount} {rowCount === 1 ? "row" : "rows"})
-        </span>
+    <>
+      <div className="w-full overflow-hidden rounded-lg border">
         <button
-          onClick={(e) => { e.stopPropagation(); handleDownloadCsv(); }}
-          className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+          onClick={() => setExpanded((e) => !e)}
+          className="flex w-full items-center justify-between px-4 py-2 text-left hover:bg-muted/30 transition-colors"
         >
-          <Download className="h-3 w-3" />
-          CSV
+          <span className="flex items-center gap-2 text-xs font-medium text-muted-foreground">
+            <ChevronRight className={cn("h-3 w-3 transition-transform", expanded && "rotate-90")} />
+            <Table2 className="h-3.5 w-3.5" />
+            Data Table ({rowCount} {rowCount === 1 ? "row" : "rows"}, {(data.columns || []).length} columns)
+          </span>
+          {expanded && (
+            <button
+              onClick={(e) => { e.stopPropagation(); setSheetOpen(true); }}
+              className="text-xs text-muted-foreground hover:text-foreground flex items-center gap-1"
+            >
+              <Maximize2 className="h-3 w-3" />
+              Explore
+            </button>
+          )}
         </button>
-      </button>
-      {expanded && <DataTable data={data} />}
-    </div>
+        {expanded && (
+          <DataExplorer data={data} compact />
+        )}
+      </div>
+
+      <DataExplorerSheet
+        data={data}
+        open={sheetOpen}
+        onClose={() => setSheetOpen(false)}
+      />
+    </>
   );
 }
 
