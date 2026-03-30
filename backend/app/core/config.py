@@ -96,6 +96,11 @@ class Settings(BaseSettings):
     bigquery_project_id: str = ""
     bigquery_credentials_json: str = ""  # base64-encoded service account JSON
 
+    # ── Neo4j (Graph RAG schema layer) ──────────────────────────────
+    neo4j_uri: str = ""
+    neo4j_username: str = "neo4j"
+    neo4j_password: str = ""
+
     # ── Storage ──────────────────────────────────────────────────────
     storage_backend: str = "local"  # "local" or "supabase"
     supabase_url: str = ""

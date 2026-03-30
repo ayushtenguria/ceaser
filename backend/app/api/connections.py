@@ -125,6 +125,17 @@ async def test_connection(
         connection.schema_cache = schema_dict
         await db.flush()
 
+        # Build Neo4j schema graph for Graph RAG
+        try:
+            from app.services.schema_graph import build_schema_graph
+            org_id = connection.organization_id or ""
+            graph_tables = await build_schema_graph(
+                str(connection_id), org_id, schema_dict, connection.db_type
+            )
+            logger.info("Schema graph built: %d tables", graph_tables)
+        except Exception as exc:
+            logger.warning("Schema graph build failed (non-blocking): %s", exc)
+
         return ConnectionTestResult(
             success=True,
             message="Connection successful.",

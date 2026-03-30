@@ -112,7 +112,22 @@ async def _build_schema_context(
     """Build the text context the LLM needs to know about the data source."""
     parts: list[str] = []
 
+    graph_rag_used = False
     if connection_id:
+        # Try Graph RAG first — selective schema based on question
+        try:
+            from app.services.schema_graph import select_relevant_schema
+            graph_context = await select_relevant_schema(
+                user_question, str(connection_id), org_id
+            )
+            if graph_context:
+                parts.append(graph_context)
+                graph_rag_used = True
+                logger.info("Graph RAG: selected relevant tables (%d chars)", len(graph_context))
+        except Exception as exc:
+            logger.warning("Graph RAG failed (falling back to full schema): %s", exc)
+
+    if connection_id and not graph_rag_used:
         stmt = select(DatabaseConnection).where(
             DatabaseConnection.id == connection_id,
             DatabaseConnection.organization_id == org_id,
@@ -540,7 +555,7 @@ async def chat(
 
     # ── Load agent memories (org + user) ──────────────────────────
     from app.services.memory import load_memories, format_memories_for_prompt
-    memories = await load_memories(db, org_id, user.id)
+    memories = await load_memories(db, org_id, user.id, question=body.message)
     memory_context = format_memories_for_prompt(memories)
     if memory_context:
         schema_context = schema_context + "\n" + memory_context

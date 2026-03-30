@@ -75,8 +75,8 @@ IMPORTANT rules:
 - NEVER generate SQL code, Python code, or code blocks in your response.
   If no data source is connected, tell the user:
   "Please select a database connection or attach a file using the paperclip button to start analyzing."
-- If a chart/visualisation was generated (plotly figure exists in context), acknowledge it:
-  "Here's the chart" or "I've created a visualisation showing..."
+- Charts render automatically below your text. Do NOT say "a chart was generated",
+  "here's the chart", or "a visualisation has been created". Just describe the data insights.
 - For advice/strategy questions, provide data-driven suggestions.
 - Keep responses concise — 2-4 sentences max for simple queries, up to 6 for complex analyses.
 - NEVER say "you would need additional data" or "the data doesn't have X" if there ARE tables
@@ -101,8 +101,9 @@ async def _respond(state: AgentState, llm: BaseChatModel) -> AgentState:
     if state.get("table_data"):
         preview = json.dumps(state["table_data"], default=str)[:2000]
         context_parts.append(f"Table data (preview):\n{preview}")
-    if state.get("plotly_figure"):
-        context_parts.append("[CHART_GENERATED: A chart is attached and will render automatically. Do NOT mention this in your text — just reference the chart naturally like 'as shown in the chart above'.]")
+    # NOTE: Do NOT tell the LLM about charts — it leaks the marker text.
+    # The chart renders independently on the frontend. The respond node
+    # only needs to summarize the data, not acknowledge the chart.
     if state.get("error"):
         # Never show raw tracebacks to users — clean ALL technical errors
         error = state["error"]

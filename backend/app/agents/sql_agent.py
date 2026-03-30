@@ -45,6 +45,13 @@ FUZZY MATCHING RULES (for dirty/inconsistent data):
     LOWER(TRIM(col)) to merge case variants: GROUP BY LOWER(TRIM(status))
 18. When the agent memory mentions aliases (e.g., "GGN = Gurgaon"), include all aliases.
 
+VISUALIZATION RULES:
+19. When the user asks for a HISTOGRAM or DISTRIBUTION, return RAW individual values — \
+    do NOT bucket or aggregate with CASE/WHEN. Return: SELECT col FROM table LIMIT 1000. \
+    The Python agent will handle binning with px.histogram(). Pre-aggregated data breaks histograms.
+20. When the user asks for a bar chart, pie chart, or comparison, aggregation is fine \
+    (GROUP BY, COUNT, SUM, AVG).
+
 SMART JOIN RULES (for multi-table analysis):
 19. When the question asks about "what are they selling" or "who are the customers", \
     ALWAYS JOIN across order_items → products → categories AND orders → customers to get \

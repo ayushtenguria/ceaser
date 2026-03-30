@@ -1,11 +1,11 @@
-"""Agentic Memory Service — load, inject, and manage agent memories.
+"""Agentic Memory Service — enterprise-grade with Graph RAG.
 
-Three tiers:
-  1. Working Memory: conversation history (handled by chat.py, not here)
-  2. Episodic Memory: per-user corrections, preferences (expires after 90 days)
-  3. Semantic Memory: per-org domain terms, business rules (permanent)
+Hybrid retrieval:
+  1. Neo4j graph (keyword + relationship traversal)
+  2. Neo4j vector index (semantic similarity)
+  3. PostgreSQL fallback (if Neo4j unavailable)
 
-Memories are loaded per query and injected into the LLM system prompt.
+Memories are scored with temporal decay, conflict resolution, and consolidation.
 """
 
 from __future__ import annotations
@@ -21,10 +21,6 @@ from app.db.models import AgentMemory
 
 logger = logging.getLogger(__name__)
 
-# Max memories to inject per query (keeps prompt size bounded)
-_MAX_MEMORIES_PER_QUERY = 20
-
-# Default TTL for user-level episodic memories
 _USER_MEMORY_TTL_DAYS = 90
 
 
@@ -32,20 +28,50 @@ async def load_memories(
     db: AsyncSession,
     org_id: str,
     user_id: uuid.UUID | None = None,
-) -> list[AgentMemory]:
-    """Load active, non-expired memories for injection into the LLM prompt.
+    question: str = "",
+) -> list[dict]:
+    """Load relevant memories using Graph RAG with PostgreSQL fallback.
 
-    Returns org-level memories + user-specific memories, scored by relevance.
+    Args:
+        db: database session
+        org_id: organization ID
+        user_id: optional user ID for user-specific memories
+        question: the user's question (for relevance filtering)
     """
+    # Try Graph RAG first (Neo4j hybrid retrieval)
+    try:
+        from app.services.memory_graph import retrieve_memories, update_memory_access
+        memories = await retrieve_memories(
+            question=question,
+            org_id=org_id,
+            user_id=str(user_id) if user_id else None,
+        )
+        if memories:
+            # Update access tracking in background
+            mem_ids = [m["id"] for m in memories if m.get("id")]
+            await update_memory_access(mem_ids)
+            logger.info("Graph RAG memories: %d loaded for org %s", len(memories), org_id)
+            return memories
+    except Exception as exc:
+        logger.debug("Graph memory retrieval failed, falling back to PostgreSQL: %s", exc)
+
+    # Fallback: load from PostgreSQL (flat, load-all)
+    return await _load_memories_flat(db, org_id, user_id)
+
+
+async def _load_memories_flat(
+    db: AsyncSession,
+    org_id: str,
+    user_id: uuid.UUID | None,
+) -> list[dict]:
+    """Flat PostgreSQL loading — fallback when Neo4j unavailable."""
     now = datetime.utcnow()
 
-    # Base filter: active, not expired, belongs to this org
     filters = [
         AgentMemory.organization_id == org_id,
         AgentMemory.is_active == True,  # noqa: E712
     ]
 
-    # Load org-level (user_id IS NULL) + this user's memories
     if user_id:
         filters.append(
             (AgentMemory.user_id == None) | (AgentMemory.user_id == user_id)  # noqa: E711
@@ -56,22 +82,17 @@ async def load_memories(
     stmt = (
         select(AgentMemory)
         .where(*filters)
-        .order_by(
-            # Corrections first, then by confidence desc, then newest
-            AgentMemory.memory_type == "correction",  # corrections are highest priority
-            AgentMemory.confidence.desc(),
-            AgentMemory.created_at.desc(),
-        )
-        .limit(_MAX_MEMORIES_PER_QUERY)
+        .order_by(AgentMemory.confidence.desc(), AgentMemory.created_at.desc())
+        .limit(20)
     )
 
     result = await db.execute(stmt)
     memories = list(result.scalars().all())
 
-    # Filter out expired memories
+    # Filter expired
     active = [m for m in memories if not m.expires_at or m.expires_at > now]
 
-    # Update access counts (fire-and-forget)
+    # Update access counts
     if active:
         mem_ids = [m.id for m in active]
         await db.execute(
@@ -80,38 +101,53 @@ async def load_memories(
             .values(access_count=AgentMemory.access_count + 1, last_accessed_at=now)
         )
 
-    return active
+    return [
+        {
+            "id": str(m.id),
+            "content": m.content,
+            "type": m.memory_type,
+            "confidence": m.confidence,
+            "user_id": str(m.user_id) if m.user_id else None,
+            "access_count": m.access_count,
+            "final_score": m.confidence,
+        }
+        for m in active
+    ]
 
 
-def format_memories_for_prompt(memories: list[AgentMemory]) -> str:
-    """Format memories as a text block for injection into the LLM system prompt.
-
-    Returns empty string if no memories.
-    """
+def format_memories_for_prompt(memories: list[dict]) -> str:
+    """Format memories for LLM prompt injection. Works with both graph and flat memories."""
     if not memories:
         return ""
 
+    # Use graph formatter if available
+    try:
+        from app.services.memory_graph import format_memories_for_prompt as graph_format
+        return graph_format(memories)
+    except ImportError:
+        pass
+
+    # Fallback flat formatting
     lines = [
         "",
         "AGENT MEMORY (use these facts silently — do NOT mention them to the user):",
         "=" * 60,
     ]
 
-    # Group by type for readability
-    org_memories = [m for m in memories if m.user_id is None]
-    user_memories = [m for m in memories if m.user_id is not None]
+    org_memories = [m for m in memories if not m.get("user_id")]
+    user_memories = [m for m in memories if m.get("user_id")]
 
     if org_memories:
         lines.append("\n[ORGANIZATION KNOWLEDGE]")
         for m in org_memories:
-            tag = m.memory_type.upper().replace("_", " ")
-            lines.append(f"  [{tag}] {m.content}")
+            tag = m.get("type", "fact").upper().replace("_", " ")
+            lines.append(f"  [{tag}] {m['content']}")
 
     if user_memories:
         lines.append("\n[USER PREFERENCES]")
         for m in user_memories:
-            tag = m.memory_type.upper().replace("_", " ")
-            lines.append(f"  [{tag}] {m.content}")
+            tag = m.get("type", "fact").upper().replace("_", " ")
+            lines.append(f"  [{tag}] {m['content']}")
 
     lines.append("")
     return "\n".join(lines)
@@ -127,9 +163,11 @@ async def save_memory(
     source: str = "auto_extracted",
     source_conversation_id: uuid.UUID | None = None,
     confidence: float = 0.7,
+    related_tables: list[str] | None = None,
+    related_columns: list[dict] | None = None,
 ) -> AgentMemory:
-    """Save a new memory, deduplicating against existing ones."""
-    # Check for duplicate (same org, same type, similar content)
+    """Save a memory to both PostgreSQL and Neo4j graph."""
+    # Check for duplicate
     existing_stmt = select(AgentMemory).where(
         AgentMemory.organization_id == org_id,
         AgentMemory.memory_type == memory_type,
@@ -149,6 +187,7 @@ async def save_memory(
     if user_id and memory_type in ("preference", "correction"):
         expires_at = datetime.utcnow() + timedelta(days=_USER_MEMORY_TTL_DAYS)
 
+    # Save to PostgreSQL
     memory = AgentMemory(
         organization_id=org_id,
         user_id=user_id,
@@ -161,5 +200,24 @@ async def save_memory(
     )
     db.add(memory)
     await db.flush()
-    logger.info("Memory saved: [%s] %s (org=%s, user=%s)", memory_type, content[:60], org_id, user_id)
+
+    # Save to Neo4j graph (non-blocking)
+    try:
+        from app.services.memory_graph import save_memory_to_graph
+        await save_memory_to_graph(
+            memory_id=str(memory.id),
+            org_id=org_id,
+            user_id=str(user_id) if user_id else None,
+            memory_type=memory_type,
+            content=content,
+            source=source,
+            confidence=confidence,
+            source_conversation_id=str(source_conversation_id) if source_conversation_id else None,
+            related_tables=related_tables,
+            related_columns=related_columns,
+        )
+    except Exception as exc:
+        logger.debug("Graph memory save failed (non-blocking): %s", exc)
+
+    logger.info("Memory saved: [%s] %s", memory_type, content[:60])
     return memory

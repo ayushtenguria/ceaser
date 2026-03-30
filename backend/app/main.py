@@ -34,8 +34,20 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables ensured.")
+    # Ensure Neo4j vector index for memory search
+    try:
+        from app.services.memory_graph import ensure_vector_index
+        await ensure_vector_index()
+    except Exception as exc:
+        logger.debug("Neo4j vector index setup skipped: %s", exc)
     yield
     await engine.dispose()
+    # Close Neo4j driver
+    try:
+        from app.services.schema_graph import close_graph_driver
+        await close_graph_driver()
+    except Exception:
+        pass
     logger.info("Ceaser backend shut down.")
 
 

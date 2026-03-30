@@ -125,11 +125,20 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
         sql_info = ""
         if state.get("sql_query"):
             sql_info = f"\nSQL query that produced this data:\n{state['sql_query']}\n"
+
+        # Build explicit column listing with types to prevent wrong column usage
+        col_details = []
+        for col in columns:
+            sample_vals = [str(row.get(col, "")) for row in rows[:3] if row.get(col) is not None]
+            col_details.append(f"  - '{col}' (sample values: {', '.join(sample_vals[:3])})")
+        col_listing = "\n".join(col_details)
+
         data_pieces.append(
-            f"SQL query returned a DataFrame `df` with {total_rows} rows and columns: {columns}\n"
-            f"The DataFrame is already loaded — use `df` directly. Use ONLY these exact column names.\n"
+            f"SQL query returned a DataFrame `df` with {total_rows} rows.\n"
+            f"EXACT COLUMNS (use ONLY these names — nothing else exists):\n{col_listing}\n"
             f"{sql_info}"
-            f"Sample (first 5 rows):\n{_json.dumps(sample_rows, default=str, indent=2)}"
+            f"The DataFrame is already loaded as `df`. Do NOT create a new DataFrame.\n"
+            f"Sample (first 3 rows):\n{_json.dumps(sample_rows[:3], default=str, indent=2)}"
         )
 
     if state.get("execution_result"):

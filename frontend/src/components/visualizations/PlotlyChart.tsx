@@ -41,7 +41,6 @@ export default function PlotlyChart({ figure }: { figure: PlotlyFigure }) {
 
     const Plotly = await getPlotly();
 
-    // Merge layout — remove any fixed width/height from the backend so autosize works
     const backendLayout = { ...(figure.layout || {}) };
     delete backendLayout.width;
     delete backendLayout.height;
@@ -55,29 +54,31 @@ export default function PlotlyChart({ figure }: { figure: PlotlyFigure }) {
       yaxis: { ...DARK_LAYOUT.yaxis, ...(backendLayout.yaxis || {}) },
     };
 
-    // If already plotted, relayout instead of full re-render
     if (plotRef.current) {
-      try {
-        Plotly.relayout(el, { autosize: true });
-      } catch {
-        // ignore
-      }
+      try { Plotly.Plots.resize(el); } catch {}
       return;
     }
 
     plotRef.current = true;
-    Plotly.newPlot(el, figure.data, mergedLayout, {
+    await Plotly.newPlot(el, figure.data, mergedLayout, {
       responsive: true,
       displayModeBar: true,
       displaylogo: false,
       modeBarButtonsToRemove: ["lasso2d", "select2d"],
     });
+
+    // Force resize after render to fill container width
+    // Delay ensures the DOM layout is complete before measuring
+    setTimeout(() => {
+      try { Plotly.Plots.resize(el); } catch {}
+    }, 100);
+    setTimeout(() => {
+      try { Plotly.Plots.resize(el); } catch {}
+    }, 500);
   }, [figure]);
 
-  // Initial render
   useEffect(() => {
     renderChart();
-
     return () => {
       if (containerRef.current && _Plotly) {
         try { _Plotly.purge(containerRef.current); } catch {}
@@ -86,7 +87,7 @@ export default function PlotlyChart({ figure }: { figure: PlotlyFigure }) {
     };
   }, [renderChart]);
 
-  // ResizeObserver — re-layout chart when container width changes
+  // ResizeObserver for container width changes
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;
