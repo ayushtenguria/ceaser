@@ -73,8 +73,24 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
             }
         return {**state, "next_action": "respond"}
 
-    # If only file data (no DB), always route to python
+    # If only file data (no DB), route to python for simple queries or analyze for complex ones
     if not has_connection and (has_file or has_file_context):
+        # Complex/strategic questions → analyze (DataFrame analyst mode)
+        strategic_keywords = (
+            "insight", "recommend", "strategy", "potential", "should we",
+            "how can we", "improve", "cross-sell", "upsell", "lapsed",
+            "retention", "churn", "demand driver", "buying behav",
+            "what are the top", "ceo should know", "full potential",
+        )
+        query_lower = query.lower()
+        is_complex = (
+            any(kw in query_lower for kw in strategic_keywords)
+            or query.count("?") >= 3
+            or len(query) > 300
+        )
+        if is_complex:
+            logger.info("Router: file-only complex query → analyze (DataFrame mode)")
+            return {**state, "next_action": "analyze"}
         logger.info("Router: file-only mode → python")
         return {**state, "next_action": "python"}
 

@@ -28,6 +28,8 @@ RULES:
 2. Available libraries: pandas, numpy, plotly, matplotlib, json, math, datetime, statistics, collections, itertools, re, csv.
 3. If you create a visualisation, store the Plotly figure object in a variable named exactly `fig`.
    Do NOT call `fig.show()` — the figure is captured automatically.
+   Do NOT serialize the figure yourself (no fig.to_json(), no fig.to_dict(), no json.dumps(fig)).
+   Just assign `fig = px.bar(...)` or `fig = px.scatter(...)` and stop. The system handles the rest.
 4. Print any textual results with `print()` so they appear in stdout.
 5. Return ONLY the Python code — no markdown fences, no explanations.
 6. Handle potential errors gracefully (e.g., missing columns).
@@ -59,15 +61,20 @@ CHART RULES:
 - Always add a clear title
 - For numbers: convert string columns to numeric with pd.to_numeric(col, errors='coerce')
 - For long labels → use horizontal bar (orientation='h') or truncate
-- For distributions → histogram, NOT bar chart
 - Format numbers: use ,.0f for thousands, .1% for percentages
 - ALWAYS ensure numeric columns are actually numeric types before plotting
+- CRITICAL: Use ONLY the exact column names from the DataFrame. Check the columns list provided.
+  If the SQL already grouped/aggregated data (e.g., columns are 'price_range', 'product_count'),
+  use px.bar(df, x='price_range', y='product_count') — do NOT try to use raw columns that don't exist.
+- If data is already aggregated (has count/sum/avg columns), use bar chart, NOT histogram.
+  Histogram (px.histogram) is ONLY for raw, un-aggregated numeric data.
 
 DATA SAFETY:
 - Always check if a column exists before using it: `if 'col' in df.columns`
-- Convert types safely: `pd.to_numeric(df['col'], errors='coerce')`
+- Convert types safely: `pd.to_numeric(df['col'], errors='coerce')` — NEVER use errors='ignore' (deprecated)
 - Handle nulls: `df['col'].fillna(0)` or `df.dropna(subset=['col'])`
 - For large DataFrames (>10K rows): aggregate first, then plot
+- NEVER use `pd.to_numeric(col, errors='ignore')` — it is removed in pandas 3.0. Use errors='coerce' instead.
 
 {file_context}
 """
@@ -106,19 +113,22 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
 
         if csv_path:
             preamble_lines.append(f'df = pd.read_csv("{csv_path}")')
-            preamble_lines.append("# Auto-convert numeric columns")
-            preamble_lines.append("for _col in df.columns:")
-            preamble_lines.append("    try:")
-            preamble_lines.append("        df[_col] = pd.to_numeric(df[_col], errors='coerce').fillna(df[_col])")
-            preamble_lines.append("    except (ValueError, TypeError):")
-            preamble_lines.append("        pass")
+            preamble_lines.append("# Auto-convert numeric-looking columns to numeric")
+            preamble_lines.append("for _col in df.select_dtypes(include=['object']).columns:")
+            preamble_lines.append("    _converted = pd.to_numeric(df[_col], errors='coerce')")
+            preamble_lines.append("    if _converted.notna().sum() > len(df) * 0.5:  # >50% are numeric")
+            preamble_lines.append("        df[_col] = _converted")
             preamble_lines.append("")
 
-        # Give LLM only column info + sample rows (NOT all data)
+        # Give LLM column info + sample rows + the SQL that produced the data
         sample_rows = rows[:5]
+        sql_info = ""
+        if state.get("sql_query"):
+            sql_info = f"\nSQL query that produced this data:\n{state['sql_query']}\n"
         data_pieces.append(
             f"SQL query returned a DataFrame `df` with {total_rows} rows and columns: {columns}\n"
-            f"The DataFrame is already loaded — use `df` directly.\n"
+            f"The DataFrame is already loaded — use `df` directly. Use ONLY these exact column names.\n"
+            f"{sql_info}"
             f"Sample (first 5 rows):\n{_json.dumps(sample_rows, default=str, indent=2)}"
         )
 
@@ -157,8 +167,18 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
         ctx = state.get("schema_context", "")
         if preamble_marker in ctx:
             file_preamble = ctx.split(preamble_marker, 1)[1].strip()
-            file_lines = [l for l in file_preamble.split("\n") if l.strip().startswith(("import ", "df_", "from "))]
-            preamble_lines.extend(file_lines)
+            for line in file_preamble.split("\n"):
+                stripped = line.strip()
+                if not stripped:
+                    if preamble_lines:
+                        break
+                    continue
+                if stripped.startswith(("import ", "from ")) or "= pd.read_parquet(" in stripped:
+                    preamble_lines.append(line)
+                elif "→" in stripped or "CROSS" in stripped or "RELATIONSHIP" in stripped:
+                    break
+                else:
+                    break
 
     # Remove duplicate imports from LLM-generated code
     code_lines = raw_code.split("\n")

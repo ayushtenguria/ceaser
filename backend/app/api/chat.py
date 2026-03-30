@@ -240,6 +240,7 @@ async def _build_multi_file_context(
     """
     parts: list[str] = []
     file_contexts: list[dict] = []
+    all_preamble_lines: list[str] = ["import pandas as pd", "import plotly.express as px", ""]
 
     for fid in file_ids:
         try:
@@ -262,9 +263,14 @@ async def _build_multi_file_context(
             "column_info": upload.column_info or {},
         })
 
-        # Build context per file using the same safe preamble logic
-        preamble = upload.code_preamble or ""
+        # Collect preamble read_parquet lines from each file
+        if upload.code_preamble:
+            for line in upload.code_preamble.split("\n"):
+                stripped = line.strip()
+                if "= pd.read_parquet(" in stripped and stripped not in all_preamble_lines:
+                    all_preamble_lines.append(stripped)
 
+        # Build context per file (schema description, NOT preamble — preamble is unified below)
         if upload.excel_context:
             from app.agents.excel.sheet_selector import (
                 parse_excel_context_to_sheets, select_relevant_sheets,
@@ -275,13 +281,14 @@ async def _build_multi_file_context(
             if all_sheet_metas and len(all_sheet_metas) > 3:
                 parts.append(build_compact_summary(all_sheet_metas))
                 selected = select_relevant_sheets(user_question, all_sheet_metas, max_sheets=3)
-                parts.append(build_selected_context(selected, preamble))
+                parts.append(build_selected_context(selected, ""))  # no preamble here
             else:
                 parts.append(upload.excel_context)
-                if preamble:
-                    parts.append(f"\nCODE PREAMBLE (prepend to all Python code):\n{preamble}")
-        elif preamble:
-            parts.append(f"FILE: {upload.filename}\n{preamble}")
+
+    # Add SINGLE unified preamble with ALL DataFrames
+    if len(all_preamble_lines) > 3:  # more than just imports
+        unified_preamble = "\n".join(all_preamble_lines)
+        parts.append(f"\nCODE PREAMBLE (prepend to all Python code):\n{unified_preamble}\n")
 
     # Cross-file relationship discovery
     cross_rels: list[dict] = []
@@ -473,14 +480,24 @@ async def chat(
     await db.refresh(conversation)
 
     # ── Accumulate files per conversation ────────────────────────────
-    if body.file_id:
+    logger.info("Chat request: file_id=%s file_ids=%s connection_id=%s",
+                body.file_id, body.file_ids, body.connection_id)
+    incoming_file_ids: list[str] = []
+    if body.file_ids:
+        incoming_file_ids = [str(fid) for fid in body.file_ids]
+    elif body.file_id:
+        incoming_file_ids = [str(body.file_id)]
+
+    if incoming_file_ids:
         existing_ids = conversation.file_ids or []
-        str_file_id = str(body.file_id)
-        if str_file_id not in existing_ids:
-            existing_ids.append(str_file_id)
+        changed = False
+        for fid in incoming_file_ids:
+            if fid not in existing_ids:
+                existing_ids.append(fid)
+                changed = True
+        if changed:
             conversation.file_ids = existing_ids
-            # Also set file_id for backward compat (latest file)
-            conversation.file_id = body.file_id
+            conversation.file_id = uuid.UUID(incoming_file_ids[-1])  # backward compat
             from sqlalchemy.orm.attributes import flag_modified
             flag_modified(conversation, "file_ids")
             await db.flush()
@@ -490,6 +507,20 @@ async def chat(
     all_file_ids = conversation.file_ids or []
     if not all_file_ids and conversation.file_id:
         all_file_ids = [str(conversation.file_id)]
+
+    # Auto-detect: if no connection AND no files, check if org has recent uploads
+    if not effective_connection_id and not all_file_ids:
+        recent_files_stmt = (
+            select(FileUpload.id)
+            .where(FileUpload.organization_id == org_id)
+            .order_by(FileUpload.created_at.desc())
+            .limit(5)
+        )
+        recent_result = await db.execute(recent_files_stmt)
+        recent_ids = [str(r[0]) for r in recent_result.all()]
+        if recent_ids:
+            all_file_ids = recent_ids
+            logger.info("Auto-linked %d org files to conversation", len(recent_ids))
 
     # Build schema context with ALL files
     schema_context = ""

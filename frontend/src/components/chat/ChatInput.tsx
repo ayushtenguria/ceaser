@@ -12,7 +12,7 @@ import { useConnectionsStore } from "@/store/connections";
 import { cn } from "@/lib/utils";
 
 interface ChatInputProps {
-  onSend: (message: string, fileId?: string) => void;
+  onSend: (message: string, fileId?: string, fileIds?: string[]) => void;
   isStreaming: boolean;
 }
 
@@ -20,6 +20,7 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [attachedFile, setAttachedFile] = useState<{
     id: string; name: string; size: number; type: string;
+    allFileIds?: string[];  // all uploaded file IDs (for multi-file)
     qualityIssues?: string[]; qualitySeverity?: string;
   } | null>(null);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
@@ -49,7 +50,7 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
   const handleSubmit = useCallback(() => {
     const trimmed = value.trim();
     if (!trimmed || isStreaming) return;
-    onSend(trimmed, attachedFile?.id);
+    onSend(trimmed, attachedFile?.id, attachedFile?.allFileIds);
     setValue("");
     setAttachedFile(null);
     if (textareaRef.current) textareaRef.current.style.height = "auto";
@@ -80,10 +81,12 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
   const handleFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const files = e.target.files;
     if (!files || files.length === 0) return;
+
+    // Copy file list BEFORE clearing input (clearing input empties FileList in some browsers)
+    const fileList = Array.from(files);
     e.target.value = "";
 
-    // Upload files sequentially (supports multi-file select)
-    const fileList = Array.from(files);
+    if (fileList.length === 0 || !fileList[0]) return;
     const firstFile = fileList[0];
     const ext = firstFile.name.split(".").pop()?.toLowerCase() || "file";
     setPendingFileName(fileList.length > 1 ? `${fileList.length} files` : firstFile.name);
@@ -95,6 +98,7 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
 
     try {
       let lastUploaded: any = null;
+      const allUploadedIds: string[] = [];
       const totalFiles = fileList.length;
 
       for (let i = 0; i < totalFiles; i++) {
@@ -105,6 +109,7 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
         setUploadStage(totalFiles > 1 ? `Uploading ${file.name} (${i + 1}/${totalFiles})` : "Uploading");
 
         lastUploaded = await api.uploadFile(file);
+        allUploadedIds.push(lastUploaded.id);
 
         setUploadProgress(pctBase + Math.round(40 / totalFiles));
         setUploadStage(totalFiles > 1 ? `Processing ${file.name}` : "Analyzing");
@@ -118,6 +123,7 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
       const qr = lastUploaded?.excelMetadata?.quality_report;
       setAttachedFile({
         id: lastUploaded.id,
+        allFileIds: allUploadedIds.length > 1 ? allUploadedIds : undefined,
         name: fileList.length > 1 ? `${fileList.length} files (${fileList.map(f => f.name).join(", ")})` : lastUploaded.filename || firstFile.name,
         size: fileList.reduce((s, f) => s + f.size, 0),
         type: ext,

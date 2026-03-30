@@ -69,6 +69,16 @@ async def decompose_query(
     Returns a list of 1-3 sub-query strings. If the question is simple,
     returns a single-element list with the original query.
     """
+    # Long consulting-style queries (multiple related analytical questions) should NOT be
+    # decomposed — they work better as a single analyst query that plans holistically.
+    # Only decompose truly independent requests ("show X AND plot Y")
+    bullet_count = query.count("\n-") + query.count("\n•") + query.count("\n*")
+    question_marks = query.count("?")
+    if bullet_count >= 3 or question_marks >= 3 or len(query) > 500:
+        logger.info("Long/complex query detected (%d bullets, %d questions, %d chars) — skipping decomposition",
+                    bullet_count, question_marks, len(query))
+        return [query]
+
     messages = [
         SystemMessage(content=_DECOMPOSE_PROMPT),
         HumanMessage(content=query),

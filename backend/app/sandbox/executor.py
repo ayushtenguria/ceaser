@@ -85,9 +85,30 @@ def _build_runner_script(user_code: str, figure_path: str) -> str:
         # Capture any plotly figure written to a variable named `fig`.
         try:
             fig  # noqa: F821
-            fig_json = fig.to_json()
+            import json as _json
+            import base64 as _b64
+            import numpy as _np
+
+            def _decode_bdata(obj):
+                \"\"\"Convert plotly binary arrays to plain lists for frontend.\"\"\"
+                if isinstance(obj, dict):
+                    if 'bdata' in obj and 'dtype' in obj:
+                        dt = _np.dtype(obj['dtype'])
+                        raw = _b64.b64decode(obj['bdata'])
+                        return _np.frombuffer(raw, dtype=dt).tolist()
+                    return {{k: _decode_bdata(v) for k, v in obj.items()}}
+                if isinstance(obj, (list, tuple)):
+                    return [_decode_bdata(v) for v in obj]
+                if isinstance(obj, _np.ndarray):
+                    return obj.tolist()
+                if isinstance(obj, (_np.integer, _np.floating)):
+                    return obj.item()
+                return obj
+
+            _fig_dict = _json.loads(fig.to_json())
+            _fig_clean = _decode_bdata(_fig_dict)
             with open({figure_path!r}, "w") as _f:
-                _f.write(fig_json)
+                _json.dump(_fig_clean, _f, default=str)
         except NameError:
             pass
     """)

@@ -65,6 +65,7 @@ class ChatRequest(_CamelModel):
     connection_id: uuid.UUID | None = None
     connection_ids: list[uuid.UUID] | None = None  # For cross-DB queries
     file_id: uuid.UUID | None = None
+    file_ids: list[uuid.UUID] | None = None  # Multiple files in one message
     model: str = Field(default="gemini", pattern="^(gemini|claude)$")
 
     @field_validator("message")

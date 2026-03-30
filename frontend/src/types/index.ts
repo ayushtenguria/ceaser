@@ -126,6 +126,7 @@ export interface ChatRequest {
   connectionId?: string;
   connectionIds?: string[];
   fileId?: string;
+  fileIds?: string[];
   model?: "gemini" | "claude";
 }
 

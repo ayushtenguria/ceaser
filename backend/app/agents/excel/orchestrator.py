@@ -1,16 +1,10 @@
-# NOTE: Requires DB columns on file_uploads table:
-# ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS excel_context TEXT;
-# ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS code_preamble TEXT;
-# ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS parquet_paths JSONB;
-# ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS excel_metadata JSONB;
+"""Excel Orchestrator — STATEFUL LangGraph pipeline.
 
-"""Excel Orchestrator — wires all 7 agents into a DEFENSIVE pipeline.
+Every node reads from and writes to shared ExcelPipelineState.
+Failed steps are tracked, downstream nodes adapt, and the Quality Gate
+can auto-fix issues (normalize typos, re-extract with different encoding).
 
-NEVER fails completely. If any agent crashes, the pipeline continues
-with whatever data it has. Edge cases are logged for future review.
-
-Flow: Inspect → Extract sheets → Extract formulas → Map relationships →
-      Profile data → Build context → Generate insight
+Flow: Inspect → Extract → Formulas → Relationships → Profile → Quality Gate → Context → Insight
 """
 
 from __future__ import annotations
@@ -18,256 +12,510 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from pathlib import Path
 from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 
 from app.agents.excel.edge_case_logger import log_edge_case
+from app.agents.excel.state import ExcelPipelineState
 
 logger = logging.getLogger(__name__)
 
+
+# ---------------------------------------------------------------------------
+# Pipeline nodes — each reads/writes ExcelPipelineState
+# ---------------------------------------------------------------------------
+
+def _node_inspect(state: ExcelPipelineState) -> ExcelPipelineState:
+    """Node 1: Inspect the file — detect type, encoding, sheet count."""
+    try:
+        from app.agents.excel.inspector import inspect_workbook
+        inspection = inspect_workbook(state["file_path"])
+        return {
+            **state,
+            "file_name": inspection.file_name,
+            "file_type": inspection.file_type,
+            "sheet_count": inspection.sheet_count,
+            "encoding": getattr(inspection, "encoding", None),
+        }
+    except Exception as exc:
+        log_edge_case(file_name=state["file_path"], category="parse",
+                     description=f"Inspector failed: {exc}", raw_error=str(exc))
+        return {
+            **state,
+            "file_name": Path(state["file_path"]).name,
+            "warnings": state.get("warnings", []) + [f"File inspection failed: {exc}"],
+            "failed_steps": state.get("failed_steps", []) + ["inspect"],
+        }
+
+
+def _node_extract_sheets(state: ExcelPipelineState) -> ExcelPipelineState:
+    """Node 2: Extract each sheet into a DataFrame."""
+    try:
+        from app.agents.excel.sheet_extractor import extract_all_sheets
+
+        # Pass None for inspection — let the extractor handle everything from scratch.
+        # The extractor's own fallback logic is more robust than a partial compat object.
+        inspection = None
+
+        sheets = extract_all_sheets(state["file_path"], inspection)
+
+        sheet_dicts = []
+        warnings = list(state.get("warnings", []))
+        for s in sheets:
+            sheet_dicts.append({
+                "name": s.name,
+                "df": s.df,
+                "row_count": s.row_count,
+                "column_count": s.column_count,
+                "column_types": s.column_types,
+                "sample_values": s.sample_values,
+                "warnings": s.warnings,
+            })
+            for w in s.warnings:
+                warnings.append(f"{s.name}: {w}")
+
+        logger.info("Extract: %d sheets, %d total rows",
+                    len(sheets), sum(s.row_count for s in sheets))
+
+        return {**state, "sheets": sheet_dicts, "warnings": warnings}
+
+    except Exception as exc:
+        log_edge_case(file_name=state["file_path"], category="parse",
+                     description=f"Sheet extraction failed: {exc}", raw_error=str(exc))
+        return {
+            **state,
+            "sheets": [],
+            "warnings": state.get("warnings", []) + [f"Sheet extraction failed: {exc}"],
+            "failed_steps": state.get("failed_steps", []) + ["extract"],
+        }
+
+
+def _node_extract_formulas(state: ExcelPipelineState) -> ExcelPipelineState:
+    """Node 3: Parse Excel formulas (skip for CSV)."""
+    file_type = state.get("file_type", "csv")
+    if file_type == "csv":
+        return {**state, "formulas": None}
+
+    try:
+        from app.agents.excel.formula_extractor import extract_formulas
+        formulas = extract_formulas(state["file_path"])
+        return {
+            **state,
+            "formulas": {
+                "total_formulas": formulas.total_formulas,
+                "cross_sheet_references": formulas.cross_sheet_references,
+            },
+        }
+    except Exception as exc:
+        logger.warning("Formulas FAILED (non-blocking): %s", exc)
+        return {
+            **state,
+            "formulas": None,
+            "failed_steps": state.get("failed_steps", []) + ["formulas"],
+        }
+
+
+def _node_map_relationships(state: ExcelPipelineState) -> ExcelPipelineState:
+    """Node 4: Find relationships between sheets using shared state."""
+    sheets = state.get("sheets", [])
+    if len(sheets) < 2:
+        return {**state, "relationships": []}
+
+    try:
+        from app.agents.excel.relationship_mapper import map_relationships
+        from app.agents.excel.sheet_extractor import ExtractedSheet
+
+        # Rebuild ExtractedSheet objects from state dicts
+        extracted = []
+        for sd in sheets:
+            es = ExtractedSheet(
+                name=sd["name"], df=sd["df"], row_count=sd["row_count"],
+                column_count=sd["column_count"], column_types=sd["column_types"],
+                sample_values=sd["sample_values"], warnings=sd.get("warnings", []),
+            )
+            extracted.append(es)
+
+        # Build formulas compat
+        formula_obj = None
+        if state.get("formulas"):
+            formula_obj = type("F", (), {
+                "total_formulas": state["formulas"].get("total_formulas", 0),
+                "cross_sheet_references": state["formulas"].get("cross_sheet_references", []),
+            })()
+
+        relationships = map_relationships(extracted, formula_obj)
+
+        rel_dicts = [
+            {"source_sheet": r.source_sheet, "source_column": r.source_column,
+             "target_sheet": r.target_sheet, "target_column": r.target_column,
+             "confidence": r.confidence, "rel_type": r.rel_type, "method": r.method}
+            for r in relationships
+        ]
+        logger.info("Relationships: %d found", len(rel_dicts))
+        return {**state, "relationships": rel_dicts}
+
+    except Exception as exc:
+        logger.warning("Relationships FAILED (non-blocking): %s", exc)
+        return {
+            **state,
+            "relationships": [],
+            "failed_steps": state.get("failed_steps", []) + ["relationships"],
+        }
+
+
+def _node_profile(state: ExcelPipelineState) -> ExcelPipelineState:
+    """Node 5: Profile data quality for each sheet."""
+    sheets = state.get("sheets", [])
+    if not sheets:
+        return {**state, "profiles": []}
+
+    try:
+        from app.agents.excel.data_profiler import profile_all_sheets
+        from app.agents.excel.sheet_extractor import ExtractedSheet
+
+        extracted = [
+            ExtractedSheet(
+                name=sd["name"], df=sd["df"], row_count=sd["row_count"],
+                column_count=sd["column_count"], column_types=sd["column_types"],
+                sample_values=sd["sample_values"], warnings=sd.get("warnings", []),
+            )
+            for sd in sheets
+        ]
+
+        profiles = profile_all_sheets(extracted)
+        warnings = list(state.get("warnings", []))
+
+        profile_dicts = []
+        for p in profiles:
+            profile_dicts.append({
+                "sheet_name": p.sheet_name,
+                "row_count": p.row_count,
+                "column_count": p.column_count,
+                "duplicate_rows": p.duplicate_rows,
+                "warnings": p.warnings,
+                "columns": [
+                    {"name": c.name, "dtype": c.dtype, "null_pct": c.null_pct,
+                     "unique_count": c.unique_count, "suspected_typos": c.suspected_typos}
+                    for c in p.columns
+                ],
+            })
+            for w in p.warnings:
+                warnings.append(w)
+
+        return {**state, "profiles": profile_dicts, "warnings": warnings}
+
+    except Exception as exc:
+        logger.warning("Profiling FAILED (non-blocking): %s", exc)
+        return {
+            **state,
+            "profiles": [],
+            "failed_steps": state.get("failed_steps", []) + ["profile"],
+        }
+
+
+def _node_quality_gate(state: ExcelPipelineState) -> ExcelPipelineState:
+    """Node 6: Quality Gate — auto-fix issues and classify severity.
+
+    - Normalizes detected typos in DataFrames
+    - Flags critical quality issues
+    - Classifies overall severity
+    """
+    sheets = state.get("sheets", [])
+    profiles = state.get("profiles", [])
+    auto_fixes: list[str] = []
+    quality_issues: list[str] = list(state.get("quality_issues", []))
+
+    # Auto-normalize typos detected by the profiler
+    for prof in profiles:
+        sheet_name = prof.get("sheet_name", "")
+        matching_sheet = next((s for s in sheets if s["name"] == sheet_name), None)
+        if not matching_sheet:
+            continue
+
+        df = matching_sheet["df"]
+        for col_prof in prof.get("columns", []):
+            typos = col_prof.get("suspected_typos", [])
+            for typo, correct in typos:
+                if typo and correct:
+                    mask = df[col_prof["name"]] == typo
+                    count = mask.sum()
+                    if count > 0:
+                        df.loc[mask, col_prof["name"]] = correct
+                        fix_msg = f"Auto-fixed '{typo}'→'{correct}' in {sheet_name}.{col_prof['name']} ({count} rows)"
+                        auto_fixes.append(fix_msg)
+                        logger.info("Quality Gate: %s", fix_msg)
+
+        # Flag high null columns
+        for col_prof in prof.get("columns", []):
+            if col_prof.get("null_pct", 0) > 50:
+                quality_issues.append(
+                    f"{sheet_name}.{col_prof['name']}: {col_prof['null_pct']:.0f}% null values"
+                )
+
+    # Classify severity
+    total_warnings = len(state.get("warnings", []))
+    if not quality_issues and total_warnings == 0:
+        severity = "clean"
+    elif len(quality_issues) < 5 and total_warnings < 10:
+        severity = "minor"
+    else:
+        severity = "major"
+
+    if auto_fixes:
+        logger.info("Quality Gate: applied %d auto-fixes", len(auto_fixes))
+
+    return {
+        **state,
+        "quality_issues": quality_issues,
+        "quality_severity": severity,
+        "auto_fixes_applied": auto_fixes,
+    }
+
+
+def _node_build_context(state: ExcelPipelineState) -> ExcelPipelineState:
+    """Node 7: Build LLM context + save DataFrames as parquet."""
+    sheets = state.get("sheets", [])
+    if not sheets:
+        return {**state, "parquet_paths": {}, "excel_context": "", "code_preamble": ""}
+
+    try:
+        from app.agents.excel.context import (
+            save_dataframes_to_parquet, build_excel_context, generate_code_preamble,
+        )
+
+        # Build compat objects for the context builder
+        wb_compat = _make_wb_compat(state)
+        rel_compat = _make_rel_compat(state.get("relationships", []))
+
+        org_id = state.get("org_id", "default")
+        parquet_paths = save_dataframes_to_parquet([wb_compat], org_id)
+        excel_context = build_excel_context([wb_compat], rel_compat, parquet_paths)
+        code_preamble = generate_code_preamble(parquet_paths)
+
+        logger.info("Context: %d parquet files, %d char context", len(parquet_paths), len(excel_context))
+
+        return {
+            **state,
+            "parquet_paths": parquet_paths,
+            "excel_context": excel_context,
+            "code_preamble": code_preamble,
+        }
+
+    except Exception as exc:
+        log_edge_case(file_name=state.get("file_path", ""), category="parse",
+                     description=f"Context building failed: {exc}", raw_error=str(exc))
+        return {
+            **state,
+            "parquet_paths": {},
+            "excel_context": "",
+            "code_preamble": "",
+            "warnings": state.get("warnings", []) + [f"Context building failed: {exc}"],
+            "failed_steps": state.get("failed_steps", []) + ["context"],
+        }
+
+
+async def _node_generate_insight(state: ExcelPipelineState, llm: BaseChatModel | None) -> ExcelPipelineState:
+    """Node 8: Generate LLM-powered insights from the processed data."""
+    if not llm:
+        summary = _auto_summary(state)
+        return {**state, "insight_summary": summary, "insight_suggestions": []}
+
+    try:
+        from app.agents.excel.insight import generate_upload_insight
+        wb_compat = _make_wb_compat(state)
+        rel_compat = _make_rel_compat(state.get("relationships", []))
+        qual_compat = _make_quality_compat(state)
+
+        insight = await generate_upload_insight([wb_compat], rel_compat, qual_compat, llm)
+        return {
+            **state,
+            "insight_summary": insight.summary_text if insight else _auto_summary(state),
+            "insight_suggestions": insight.initial_suggestions if insight else [],
+        }
+
+    except Exception as exc:
+        logger.warning("Insight FAILED (non-blocking): %s", exc)
+        return {
+            **state,
+            "insight_summary": _auto_summary(state),
+            "insight_suggestions": [],
+            "failed_steps": state.get("failed_steps", []) + ["insight"],
+        }
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 
 async def process_excel_upload(
     file_path: str,
     llm: BaseChatModel | None = None,
     org_id: str = "default",
 ) -> dict[str, Any]:
-    """Run the full 7-agent Excel pipeline. NEVER raises — always returns a result."""
+    """Run the full stateful Excel pipeline. NEVER raises — always returns a result."""
     start_time = time.monotonic()
     logger.info("Excel pipeline: starting for %s", file_path)
 
-    pipeline_warnings: list[str] = []
+    # Initialize state
+    state: ExcelPipelineState = {
+        "file_path": file_path,
+        "org_id": org_id,
+        "sheets": [],
+        "relationships": [],
+        "profiles": [],
+        "quality_issues": [],
+        "quality_severity": "clean",
+        "auto_fixes_applied": [],
+        "warnings": [],
+        "failed_steps": [],
+        "retry_count": 0,
+    }
 
-    # ── Agent 1: Inspector ──────────────────────────────────────────
-    inspection = None
-    try:
-        from app.agents.excel.inspector import inspect_workbook
-        inspection = await asyncio.to_thread(inspect_workbook, file_path)
-        logger.info("Agent 1 (Inspector): %d sheets, type=%s", inspection.sheet_count, inspection.file_type)
-    except Exception as exc:
-        log_edge_case(file_name=file_path, category="parse",
-                     description=f"Inspector failed: {exc}", raw_error=str(exc))
-        pipeline_warnings.append(f"File inspection failed: {exc}")
-        logger.warning("Agent 1 (Inspector) FAILED: %s", exc)
+    # Run pipeline nodes sequentially — each reads/writes shared state
+    # Node 1: Inspect
+    state = await asyncio.to_thread(_node_inspect, state)
+    logger.info("Node 1 (Inspector): file=%s type=%s sheets=%s",
+                state.get("file_name"), state.get("file_type"), state.get("sheet_count"))
 
-    # ── Agent 2: Extract sheets ─────────────────────────────────────
-    sheets = []
-    try:
-        from app.agents.excel.sheet_extractor import extract_all_sheets
-        sheets = await asyncio.to_thread(extract_all_sheets, file_path, inspection)
-        logger.info("Agent 2 (Extractor): %d sheets extracted, %d total rows",
-                    len(sheets), sum(s.row_count for s in sheets))
-        # Collect per-sheet warnings
-        for s in sheets:
-            for w in s.warnings:
-                pipeline_warnings.append(f"{s.name}: {w}")
-    except Exception as exc:
-        log_edge_case(file_name=file_path, category="parse",
-                     description=f"Sheet extraction failed: {exc}", raw_error=str(exc))
-        pipeline_warnings.append(f"Sheet extraction failed: {exc}")
-        logger.warning("Agent 2 (Extractor) FAILED: %s", exc)
+    # Node 2: Extract sheets
+    state = await asyncio.to_thread(_node_extract_sheets, state)
+    sheets = state.get("sheets", [])
+    logger.info("Node 2 (Extractor): %d sheets, %d total rows",
+                len(sheets), sum(s.get("row_count", 0) for s in sheets))
 
     if not sheets:
         logger.warning("No sheets extracted — returning minimal result")
-        return _empty_result(file_path, pipeline_warnings)
+        elapsed = time.monotonic() - start_time
+        return _build_result(state, elapsed)
 
-    # ── Agent 3: Extract formulas ───────────────────────────────────
-    formulas = None
-    try:
-        from app.agents.excel.formula_extractor import extract_formulas
-        formulas = await asyncio.to_thread(extract_formulas, file_path)
-        logger.info("Agent 3 (Formulas): %d formulas, %d cross-sheet refs",
-                    formulas.total_formulas, len(formulas.cross_sheet_references))
-    except Exception as exc:
-        log_edge_case(file_name=file_path, category="parse",
-                     description=f"Formula extraction failed: {exc}", raw_error=str(exc))
-        logger.warning("Agent 3 (Formulas) FAILED (non-blocking): %s", exc)
+    # Node 3: Extract formulas
+    state = await asyncio.to_thread(_node_extract_formulas, state)
 
-    # ── Agent 4: Map relationships ──────────────────────────────────
-    relationships = []
-    try:
-        from app.agents.excel.relationship_mapper import map_relationships
-        relationships = await asyncio.to_thread(map_relationships, sheets, formulas)
-        logger.info("Agent 4 (Relationships): %d relationships", len(relationships))
-    except Exception as exc:
-        log_edge_case(file_name=file_path, category="parse",
-                     description=f"Relationship mapping failed: {exc}", raw_error=str(exc))
-        logger.warning("Agent 4 (Relationships) FAILED (non-blocking): %s", exc)
+    # Node 4: Map relationships
+    state = await asyncio.to_thread(_node_map_relationships, state)
+    logger.info("Node 4 (Relationships): %d found", len(state.get("relationships", [])))
 
-    # ── Agent 5: Profile data quality ───────────────────────────────
-    profiles = []
-    try:
-        from app.agents.excel.data_profiler import profile_all_sheets
-        profiles = await asyncio.to_thread(profile_all_sheets, sheets)
-        total_warnings = sum(len(p.warnings) for p in profiles)
-        logger.info("Agent 5 (Profiler): %d warnings", total_warnings)
-        for p in profiles:
-            pipeline_warnings.extend(p.warnings)
-    except Exception as exc:
-        log_edge_case(file_name=file_path, category="parse",
-                     description=f"Data profiling failed: {exc}", raw_error=str(exc))
-        logger.warning("Agent 5 (Profiler) FAILED (non-blocking): %s", exc)
+    # Node 5: Profile data quality
+    state = await asyncio.to_thread(_node_profile, state)
 
-    # ── Agent 6: Build context + save parquet ───────────────────────
-    parquet_paths: dict[str, str] = {}
-    excel_context = ""
-    code_preamble = ""
-    try:
-        wb_compat = _make_wb_compat(inspection, sheets, file_path)
-        rel_compat = _make_rel_compat(relationships)
+    # Node 6: Quality Gate — auto-fix and classify
+    state = await asyncio.to_thread(_node_quality_gate, state)
+    logger.info("Node 6 (Quality Gate): severity=%s, auto-fixes=%d",
+                state.get("quality_severity"), len(state.get("auto_fixes_applied", [])))
 
-        from app.agents.excel.context import save_dataframes_to_parquet, build_excel_context, generate_code_preamble
-        parquet_paths = await asyncio.to_thread(save_dataframes_to_parquet, [wb_compat], org_id)
-        excel_context = await asyncio.to_thread(build_excel_context, [wb_compat], rel_compat, parquet_paths)
-        code_preamble = generate_code_preamble(parquet_paths)
-        logger.info("Agent 6 (Context): %d parquet files, %d char context", len(parquet_paths), len(excel_context))
-    except Exception as exc:
-        log_edge_case(file_name=file_path, category="parse",
-                     description=f"Context building failed: {exc}", raw_error=str(exc))
-        pipeline_warnings.append(f"Context building failed: {exc}")
-        logger.warning("Agent 6 (Context) FAILED: %s", exc)
+    # Node 7: Build context + save parquet
+    state = await asyncio.to_thread(_node_build_context, state)
 
-    # ── Agent 7: Generate insight (LLM) ─────────────────────────────
-    insight = None
-    if llm:
-        try:
-            wb_compat = _make_wb_compat(inspection, sheets, file_path)
-            rel_compat = _make_rel_compat(relationships)
-            qual_compat = _make_quality_compat(profiles, pipeline_warnings)
-
-            from app.agents.excel.insight import generate_upload_insight
-            insight = await generate_upload_insight([wb_compat], rel_compat, qual_compat, llm)
-            logger.info("Agent 7 (Insight): generated")
-        except Exception as exc:
-            log_edge_case(file_name=file_path, category="parse",
-                         description=f"Insight generation failed: {exc}", raw_error=str(exc))
-            logger.warning("Agent 7 (Insight) FAILED (non-blocking): %s", exc)
-
-            # Log novel edge case with LLM for future analysis
-            try:
-                from app.agents.excel.edge_case_logger import describe_edge_case_with_llm
-                await describe_edge_case_with_llm(str(exc), file_path, "", {}, llm)
-            except Exception:
-                pass
+    # Node 8: Generate insight (async — uses LLM)
+    state = await _node_generate_insight(state, llm)
 
     elapsed = time.monotonic() - start_time
-    logger.info("Excel pipeline complete: %.1fs, %d sheets, %d rows, %d warnings",
-                elapsed, len(sheets), sum(s.row_count for s in sheets), len(pipeline_warnings))
+    state["pipeline_time_seconds"] = elapsed
+    logger.info("Excel pipeline complete: %.1fs, %d sheets, %d warnings, %d failed steps",
+                elapsed, len(sheets), len(state.get("warnings", [])), len(state.get("failed_steps", [])))
 
-    return {
-        "workbook": _make_wb_compat(inspection, sheets, file_path),
-        "relationships": [
-            {
-                "source_sheet": r.source_sheet, "source_column": r.source_column,
-                "target_sheet": r.target_sheet, "target_column": r.target_column,
-                "confidence": r.confidence, "type": r.rel_type, "method": r.method,
-            }
-            for r in relationships
-        ],
-        "profiles": [
-            {
-                "sheet": p.sheet_name, "rows": p.row_count, "columns": p.column_count,
-                "duplicates": p.duplicate_rows, "warnings": p.warnings,
-            }
-            for p in profiles
-        ],
-        "parquet_paths": parquet_paths,
-        "excel_context": excel_context,
-        "code_preamble": code_preamble,
-        "quality_report": {
-            "severity": "clean" if not pipeline_warnings else "minor" if len(pipeline_warnings) < 10 else "major",
-            "total_issues": len(pipeline_warnings),
-            "items": pipeline_warnings[:10],
-        },
-        "insight": {
-            "summary": insight.summary_text if insight else _auto_summary(sheets, relationships, pipeline_warnings),
-            "suggestions": insight.initial_suggestions if insight else [],
-            "sheets": [{"name": s.name, "rows": s.row_count, "columns": s.column_count} for s in sheets],
-            "relationships": [f"{r.source_sheet}.{r.source_column} → {r.target_sheet}.{r.target_column}" for r in relationships],
-            "quality_warnings": pipeline_warnings[:5],
-        },
-        "pipeline_time_seconds": round(elapsed, 1),
-    }
+    return _build_result(state, elapsed)
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _empty_result(file_path: str, warnings: list[str]) -> dict[str, Any]:
-    """Return a minimal result when no data could be extracted."""
-    from pathlib import Path
+def _build_result(state: ExcelPipelineState, elapsed: float) -> dict[str, Any]:
+    """Convert pipeline state into the result dict expected by the file upload API."""
+    sheets = state.get("sheets", [])
+    warnings = state.get("warnings", [])
+    auto_fixes = state.get("auto_fixes_applied", [])
+
     return {
-        "workbook": type("W", (), {"file_name": Path(file_path).name, "sheets": [], "total_rows": 0})(),
-        "relationships": [],
-        "profiles": [],
-        "parquet_paths": {},
-        "excel_context": "",
-        "code_preamble": "",
-        "quality_report": {"severity": "major", "total_issues": len(warnings), "items": warnings},
+        "workbook": _make_wb_compat(state),
+        "relationships": state.get("relationships", []),
+        "profiles": state.get("profiles", []),
+        "parquet_paths": state.get("parquet_paths", {}),
+        "excel_context": state.get("excel_context", ""),
+        "code_preamble": state.get("code_preamble", ""),
+        "quality_report": {
+            "severity": state.get("quality_severity", "clean"),
+            "total_issues": len(state.get("quality_issues", [])) + len(warnings),
+            "items": (state.get("quality_issues", []) + warnings)[:10],
+            "auto_fixes": auto_fixes,
+        },
         "insight": {
-            "summary": f"Could not extract data from file. Issues: {'; '.join(warnings[:3])}",
-            "suggestions": [],
-            "sheets": [],
-            "relationships": [],
+            "summary": state.get("insight_summary", _auto_summary(state)),
+            "suggestions": state.get("insight_suggestions", []),
+            "sheets": [{"name": s["name"], "rows": s["row_count"], "columns": s["column_count"]} for s in sheets],
+            "relationships": [
+                f"{r['source_sheet']}.{r['source_column']} → {r['target_sheet']}.{r['target_column']}"
+                for r in state.get("relationships", [])
+            ],
             "quality_warnings": warnings[:5],
         },
-        "pipeline_time_seconds": 0,
+        "pipeline_time_seconds": round(elapsed, 1),
+        "failed_steps": state.get("failed_steps", []),
     }
 
 
-def _auto_summary(sheets, relationships, warnings) -> str:
+def _auto_summary(state: ExcelPipelineState) -> str:
     """Generate a basic summary without LLM."""
-    total_rows = sum(s.row_count for s in sheets)
-    total_cols = sum(s.column_count for s in sheets)
+    sheets = state.get("sheets", [])
+    total_rows = sum(s.get("row_count", 0) for s in sheets)
+    total_cols = sum(s.get("column_count", 0) for s in sheets)
     parts = [f"Uploaded {len(sheets)} sheet(s) with {total_rows:,} total rows and {total_cols} columns."]
-    if relationships:
-        parts.append(f"Found {len(relationships)} relationship(s) between sheets.")
+    rels = state.get("relationships", [])
+    if rels:
+        parts.append(f"Found {len(rels)} relationship(s) between sheets.")
+    warnings = state.get("warnings", [])
     if warnings:
         parts.append(f"{len(warnings)} data quality warning(s).")
+    auto_fixes = state.get("auto_fixes_applied", [])
+    if auto_fixes:
+        parts.append(f"Auto-fixed {len(auto_fixes)} issue(s).")
     return " ".join(parts)
 
 
-def _make_wb_compat(inspection, sheets, file_path):
-    """Create a compatible workbook object for context builder."""
-    from pathlib import Path
+def _make_wb_compat(state: ExcelPipelineState):
+    """Create a workbook-compatible object from state for context builder."""
+    sheets = state.get("sheets", [])
 
     class _SheetCompat:
-        def __init__(self, es):
-            self.name = es.name
-            self.df = es.df
-            self.row_count = es.row_count
-            self.column_count = es.column_count
-            self.column_types = es.column_types
-            self.sample_values = es.sample_values
+        def __init__(self, sd):
+            self.name = sd["name"]
+            self.df = sd["df"]
+            self.row_count = sd["row_count"]
+            self.column_count = sd["column_count"]
+            self.column_types = sd["column_types"]
+            self.sample_values = sd["sample_values"]
 
     class _WbCompat:
-        def __init__(self, insp, extracted, fpath):
-            self.file_name = insp.file_name if insp else Path(fpath).name
-            self.sheets = [_SheetCompat(s) for s in extracted]
-            self.total_rows = sum(s.row_count for s in extracted)
+        def __init__(self, st, sheet_list):
+            self.file_name = st.get("file_name", Path(st.get("file_path", "unknown")).name)
+            self.sheets = [_SheetCompat(s) for s in sheet_list]
+            self.total_rows = sum(s.get("row_count", 0) for s in sheet_list)
 
-    return _WbCompat(inspection, sheets, file_path)
+    return _WbCompat(state, sheets)
 
 
-def _make_rel_compat(relationships):
-    """Create compatible relationship objects."""
+def _make_rel_compat(relationships: list[dict]):
+    """Create relationship-compatible objects from state dicts."""
     return [
         type("R", (), {
-            "source_sheet": r.source_sheet, "source_column": r.source_column,
-            "target_sheet": r.target_sheet, "target_column": r.target_column,
-            "confidence": r.confidence,
-            "relationship_type": r.rel_type,
-            "rel_type": r.rel_type,
+            "source_sheet": r["source_sheet"], "source_column": r["source_column"],
+            "target_sheet": r["target_sheet"], "target_column": r["target_column"],
+            "confidence": r["confidence"],
+            "relationship_type": r.get("rel_type", "unknown"),
+            "rel_type": r.get("rel_type", "unknown"),
         })()
         for r in relationships
     ]
 
 
-def _make_quality_compat(profiles, warnings):
-    """Create compatible quality report object."""
+def _make_quality_compat(state: ExcelPipelineState):
+    """Create quality report compat from state."""
+    warnings = state.get("warnings", [])
     class _QualCompat:
-        severity = "clean" if not warnings else "minor" if len(warnings) < 10 else "major"
+        severity = state.get("quality_severity", "clean")
         total_issues = len(warnings)
         summary_items = warnings[:10]
     return _QualCompat()

@@ -212,7 +212,22 @@ async def _execute_prompt_cell(
     # Build schema context from notebook context
     schema_context = ctx.build_prompt_context()
 
-    llm = get_llm(tier="heavy")  # Notebook prompt cells generate SQL/code
+    # If notebook has file DataFrames, include the code preamble in schema context
+    # so the agent knows about the uploaded files' data
+    has_files = ctx.dataframe_count > 0
+    if has_files:
+        code_preamble = ctx.build_code_preamble()
+        schema_context += f"\n\nCODE PREAMBLE (prepend to all Python code):\n{code_preamble}"
+        schema_context += "\nIMPORTANT: The DataFrames listed above are from UPLOADED FILES in this notebook."
+        schema_context += " Use Python/pandas to query these DataFrames — NOT SQL."
+        schema_context += " If the user's question is about this uploaded data, use Python mode."
+
+    # If only files (no DB connection), force Python mode
+    # If both files AND a connection exist, still pass connection — the router + schema
+    # context will help the agent decide (SQL for DB questions, Python for file questions)
+    effective_connection = None if (has_files and not connection_id) else connection_id
+
+    llm = get_llm(tier="heavy")
 
     # Collect results from the agent run
     collected_text = ""
@@ -224,7 +239,7 @@ async def _execute_prompt_cell(
     try:
         async for chunk in run_agent(
             query=prompt,
-            connection_id=connection_id,
+            connection_id=effective_connection,
             file_id=None,
             schema_context=schema_context,
             llm=llm,

@@ -44,7 +44,7 @@ export function useChat() {
   }, [activeConversationId, activeConnectionId, messages]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const sendMessage = useCallback(
-    async (content: string, fileId?: string) => {
+    async (content: string, fileId?: string, fileIds?: string[]) => {
       setError(null);
       let conversationId = activeConversationId;
 
@@ -86,6 +86,7 @@ export function useChat() {
           connectionId: activeConnectionId || undefined,
           connectionIds: activeConnectionIds.length > 1 ? activeConnectionIds : undefined,
           fileId,
+          fileIds,
           model: selectedModel,
         });
 
@@ -144,7 +145,11 @@ export function useChat() {
               break;
             }
             case "error":
-              accumulatedContent += chunk.content;
+              // Don't append to accumulatedContent — keeps error separate from text
+              // so it's not duplicated in both the text bubble and error box
+              if (!accumulatedContent) {
+                accumulatedContent = chunk.content;
+              }
               messageType = "error";
               break;
             case "suggestions": {

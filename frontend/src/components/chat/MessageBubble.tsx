@@ -79,8 +79,8 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           : message.plotlyFigure && <PlotlyChart figure={message.plotlyFigure} />
         }
 
-        {/* Error */}
-        {message.error && message.messageType === "error" && (
+        {/* Error — only show if there's no text content (avoid duplication) */}
+        {message.error && message.messageType === "error" && !message.content && (
           <div className="flex items-start gap-2 rounded-lg border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive">
             <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
             <p>{message.error}</p>

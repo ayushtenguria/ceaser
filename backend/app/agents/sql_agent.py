@@ -45,6 +45,16 @@ FUZZY MATCHING RULES (for dirty/inconsistent data):
     LOWER(TRIM(col)) to merge case variants: GROUP BY LOWER(TRIM(status))
 18. When the agent memory mentions aliases (e.g., "GGN = Gurgaon"), include all aliases.
 
+SMART JOIN RULES (for multi-table analysis):
+19. When the question asks about "what are they selling" or "who are the customers", \
+    ALWAYS JOIN across order_items → products → categories AND orders → customers to get \
+    human-readable names. Never return just IDs when names/descriptions are available.
+20. For consulting-style questions (buying potential, cross-sell, lapsed accounts, retention), \
+    build comprehensive queries that JOIN customers + orders + order_items + products. \
+    Include: customer name/company, total spend, order count, recency, product categories purchased.
+21. When the question implies analysis of customer behavior, always include: \
+    total_orders, total_spend, avg_order_value, last_order_date, categories_purchased.
+
 {schema_context}
 """
 

@@ -54,26 +54,38 @@ You are Ceaser, a friendly and expert AI data analyst.
 Summarise the analysis result for the user in clear, concise language.
 Reference specific numbers / columns when available.
 
-IMPORTANT rules for your response:
+RESPONSE STRUCTURE (follow this order):
+1. **Methodology** — If you computed a score, metric, or derived value, FIRST explain how it
+   was calculated: "I calculated the buying behavior score by normalizing total spending and
+   purchase frequency on a 0-1 scale, then averaging them with 50/50 weight."
+2. **Key findings** — Present the top insights with EXACT numbers and percentages.
+3. **Interpretation** — Explain what the numbers mean in business terms.
+
+CRITICAL: EVERY claim must include a specific number. NEVER use vague words like "significant",
+"substantial", "notable", "considerable", "a large portion", "many", "most".
+Instead: "$248,000 (32% of total revenue)" or "1,247 of 5,000 customers (24.9%)".
+
+IMPORTANT rules:
 - If the query returned NULL values, empty results, or zero rows, tell the user clearly:
-  "No data found for this query." Then explain WHY — e.g., "The database has no revenue
-  records for 2026. The latest data is from March 2025. Try asking for 2024 or 2025 instead."
-- If there was an error, explain what went wrong in plain language and suggest a fix.
-- Never say "null" or "None" without explanation — always translate technical results
-  into a clear business message.
+  "No data found for this query." Then explain WHY.
+- If there was an error, explain in plain language and suggest a fix.
+  Do NOT repeat the same error message twice. One clear sentence is enough.
+- Never say "null" or "None" without explanation.
 - If results look correct, present them with key insights and highlight notable patterns.
-- NEVER generate SQL code, Python code, or code blocks in your response. You are summarizing
-  results, not writing code. If no data source is connected, tell the user:
-  "Please select a database connection from the top bar to query your data."
+- NEVER generate SQL code, Python code, or code blocks in your response.
+  If no data source is connected, tell the user:
+  "Please select a database connection or attach a file using the paperclip button to start analyzing."
 - If a chart/visualisation was generated (plotly figure exists in context), acknowledge it:
-  "Here's the chart" or "I've created a visualisation showing..." — do NOT say you cannot
-  create charts, because you already did.
-- For advice/strategy questions ("what should we do", "how to improve"), provide data-driven
-  suggestions based on the database schema. Suggest specific queries the user can ask to
-  find insights. Example: "To understand revenue growth opportunities, try asking:
-  1) Which customers have the lowest health scores? 2) What's our revenue trend by month?
-  3) Which industries have the highest deal values?"
-- Keep responses concise — 2-4 sentences max for simple queries.
+  "Here's the chart" or "I've created a visualisation showing..."
+- For advice/strategy questions, provide data-driven suggestions.
+- Keep responses concise — 2-4 sentences max for simple queries, up to 6 for complex analyses.
+- NEVER say "you would need additional data" or "the data doesn't have X" if there ARE tables
+  or DataFrames that contain the information. Always JOIN/merge across available data first.
+- NEVER tell the user to look elsewhere for data. You ARE the analyst. Work with what's available.
+- NEVER ask the user to "provide a list of industries" or "specify columns" when the data is
+  already loaded. Look at the columns and values yourself and analyze them.
+- If the user asks about industries, categories, regions — CHECK THE DATA FIRST.
+  The columns and sample values are in the context. Use them.
 
 {context}
 """
@@ -90,7 +102,7 @@ async def _respond(state: AgentState, llm: BaseChatModel) -> AgentState:
         preview = json.dumps(state["table_data"], default=str)[:2000]
         context_parts.append(f"Table data (preview):\n{preview}")
     if state.get("plotly_figure"):
-        context_parts.append("A chart/visualisation HAS BEEN successfully generated and will be displayed to the user.")
+        context_parts.append("[CHART_GENERATED: A chart is attached and will render automatically. Do NOT mention this in your text — just reference the chart naturally like 'as shown in the chart above'.]")
     if state.get("error"):
         # Never show raw tracebacks to users — clean ALL technical errors
         error = state["error"]
@@ -437,6 +449,10 @@ async def _run_single_query(
 
             elif node_name == "analyst":
                 yield {"type": "status", "content": "Running deep analysis..."}
+                if node_state.get("code_block"):
+                    yield {"type": "code", "content": node_state["code_block"]}
+                if node_state.get("plotly_figure"):
+                    yield {"type": "plotly", "content": node_state["plotly_figure"]}
                 if node_state.get("table_data"):
                     yield {"type": "table", "content": node_state["table_data"]}
 
@@ -464,8 +480,9 @@ async def _run_single_query(
 
     if final_state and final_state.get("error"):
         error = final_state["error"]
-        # Never send raw tracebacks to frontend
-        if "Traceback" in error or "File \"" in error or "Error:" in error:
+        # Only hide raw tracebacks/internal errors — keep user-friendly messages
+        raw_traceback_markers = ("Traceback", "File \"", "  File ", "SyntaxError", "IndentationError", "ModuleNotFoundError")
+        if any(marker in error for marker in raw_traceback_markers):
             yield {"type": "error", "content": "The analysis encountered a technical issue. Try rephrasing your question or asking for a simpler analysis."}
         else:
             yield {"type": "error", "content": error}
