@@ -1,16 +1,21 @@
 """Graph RAG Schema Layer — Neo4j-backed schema intelligence.
 
-Builds a knowledge graph from database schemas. At query time, traverses the graph
-to find only relevant tables + exact JOIN paths. Replaces full-schema dumping.
+Builds a knowledge graph from database schemas AND uploaded files.
+At query time, traverses the graph to find only relevant tables/DataFrames + exact JOIN paths.
+
+Supports:
+  - Database tables (:Table nodes)
+  - Uploaded file DataFrames (:FileNode nodes)
+  - Cross-source links (file columns matching DB columns)
+  - Conversation-scoped file relationships
+  - Version superseding (newer file replaces older with same name)
+  - Tiered retrieval (conversation files > recent org files > old files)
 
 Usage:
-    from app.services.schema_graph import get_graph_driver, build_schema_graph, select_relevant_schema
-
-    # On connection create/refresh:
-    await build_schema_graph(connection_id, schema, org_id)
-
-    # On each query:
-    context = await select_relevant_schema(question, connection_id, org_id)
+    from app.services.schema_graph import (
+        get_graph_driver, build_schema_graph, build_file_graph,
+        select_relevant_schema, select_relevant_files,
+    )
 """
 
 from __future__ import annotations
@@ -495,5 +500,404 @@ def _format_graph_context(tables: list[dict], entities: dict) -> str:
         lines.append("=" * 55)
         for h in hints:
             lines.append(f"  {h}")
+
+    return "\n".join(lines)
+
+
+# ═══════════════════════════════════════════════════════════════════
+# FILE GRAPH — uploaded Excel/CSV files as graph nodes
+# ═══════════════════════════════════════════════════════════════════
+
+async def build_file_graph(
+    file_id: str,
+    org_id: str,
+    filename: str,
+    conversation_id: str | None,
+    uploaded_by: str | None,
+    column_info: dict | None,
+    parquet_paths: dict | None,
+    row_count: int = 0,
+    project_tag: str = "",
+) -> int:
+    """Build file nodes in Neo4j from uploaded file metadata.
+
+    Each file gets its own :FileNode with file-scoped :FileColumn nodes.
+    Cross-file relationships are scoped to the same conversation.
+    """
+    driver = get_graph_driver()
+    if not driver:
+        return 0
+
+    columns = (column_info or {}).get("columns", [])
+    if not columns:
+        return 0
+
+    try:
+        async with driver.session() as session:
+            # Check if this supersedes an older file with same name
+            await session.run("""
+                MATCH (old:FileNode {org_id: $org_id, filename: $filename, is_active: true})
+                WHERE old.file_id <> $file_id
+                SET old.is_active = false
+                WITH old
+                MATCH (new:FileNode {file_id: $file_id})
+                WHERE new IS NOT NULL
+                CREATE (new)-[:SUPERSEDES {reason: 'newer_upload'}]->(old)
+            """, org_id=org_id, filename=filename, file_id=file_id)
+
+            # Create file node
+            await session.run("""
+                MERGE (f:FileNode {file_id: $file_id})
+                SET f.org_id = $org_id,
+                    f.filename = $filename,
+                    f.conversation_id = $conv_id,
+                    f.uploaded_by = $user_id,
+                    f.uploaded_at = datetime(),
+                    f.row_count = $rows,
+                    f.is_active = true,
+                    f.project_tag = $tag
+            """, file_id=file_id, org_id=org_id, filename=filename,
+                conv_id=conversation_id or "", user_id=uploaded_by or "",
+                rows=row_count, tag=project_tag)
+
+            # Create column nodes (scoped to this file)
+            for col in columns:
+                col_name = col.get("name", "")
+                col_dtype = col.get("dtype", "object")
+                samples = col.get("sample_values", [])
+                unique = col.get("unique_count", 0)
+
+                domain = _classify_domain(col_name, col_dtype)
+
+                await session.run("""
+                    MATCH (f:FileNode {file_id: $file_id})
+                    CREATE (f)-[:HAS_COLUMN]->(c:FileColumn {
+                        name: $name, file_id: $file_id,
+                        data_type: $dtype, domain: $domain,
+                        is_numeric: $numeric, is_temporal: $temporal,
+                        is_categorical: $categorical,
+                        sample_values: $samples
+                    })
+                """, file_id=file_id, name=col_name, dtype=col_dtype,
+                    domain=domain,
+                    numeric=_is_numeric(col_dtype) or col_dtype in ("int64", "float64"),
+                    temporal="date" in col_name.lower() or "time" in col_name.lower(),
+                    categorical=_is_categorical(unique, row_count) if row_count > 0 else False,
+                    samples=[str(s) for s in (samples or [])[:10]])
+
+            # Discover cross-file relationships WITHIN same conversation
+            if conversation_id:
+                await _build_cross_file_links(session, file_id, org_id, conversation_id)
+
+            # Discover cross-source links (file ↔ database tables)
+            await _build_cross_source_links(session, file_id, org_id)
+
+        logger.info("File graph built: %s (%d columns) for file %s",
+                    filename, len(columns), file_id)
+        return len(columns)
+
+    except Exception as exc:
+        logger.warning("File graph build failed: %s", exc)
+        return 0
+
+
+async def _build_cross_file_links(session, file_id: str, org_id: str, conversation_id: str):
+    """Find shared columns between files in the same conversation."""
+    try:
+        await session.run("""
+            MATCH (f1:FileNode {file_id: $file_id})-[:HAS_COLUMN]->(c1:FileColumn)
+            MATCH (f2:FileNode {org_id: $org_id, conversation_id: $conv_id, is_active: true})
+                  -[:HAS_COLUMN]->(c2:FileColumn)
+            WHERE f1 <> f2 AND c1.name = c2.name AND c1.domain = 'identifier'
+            AND NOT EXISTS { (f1)-[:SHARED_KEY]-(f2) }
+            MERGE (f1)-[:SHARED_KEY {
+                shared_column: c1.name, confidence: 0.9
+            }]->(f2)
+        """, file_id=file_id, org_id=org_id, conv_id=conversation_id)
+    except Exception as exc:
+        logger.debug("Cross-file link failed: %s", exc)
+
+
+async def _build_cross_source_links(session, file_id: str, org_id: str):
+    """Find file columns that match database table columns (same org)."""
+    try:
+        await session.run("""
+            MATCH (f:FileNode {file_id: $file_id})-[:HAS_COLUMN]->(fc:FileColumn)
+            MATCH (t:Table {org_id: $org_id})-[:HAS_COLUMN]->(tc:Column)
+            WHERE fc.name = tc.name AND fc.domain = tc.domain
+              AND fc.domain IN ['identifier', 'monetary', 'location']
+            MERGE (fc)-[:CROSS_SOURCE_LINK {
+                confidence: 0.8,
+                file_column: fc.name,
+                table_name: t.name,
+                table_column: tc.name
+            }]->(tc)
+        """, file_id=file_id, org_id=org_id)
+    except Exception as exc:
+        logger.debug("Cross-source link failed: %s", exc)
+
+
+# ---------------------------------------------------------------------------
+# File retrieval — query-time file selection
+# ---------------------------------------------------------------------------
+
+_FILE_TRAVERSAL_CYPHER = """
+// Tier 1: Files in THIS conversation (highest priority)
+MATCH (f:FileNode {conversation_id: $conv_id, org_id: $org_id, is_active: true})
+      -[:HAS_COLUMN]->(c:FileColumn)
+WHERE ANY(kw IN $keywords WHERE
+    toLower(c.name) CONTAINS kw OR
+    toLower(f.filename) CONTAINS kw OR
+    ANY(sv IN c.sample_values WHERE toLower(sv) CONTAINS kw)
+)
+WITH f, COLLECT({
+    name: c.name, type: c.data_type, domain: c.domain,
+    numeric: c.is_numeric, temporal: c.is_temporal,
+    samples: c.sample_values
+}) AS columns, 1.0 AS tier_score
+
+// Get cross-file relationships
+OPTIONAL MATCH (f)-[sk:SHARED_KEY]-(other:FileNode {conversation_id: $conv_id, is_active: true})
+WITH f, columns, tier_score,
+     COLLECT(CASE WHEN sk IS NOT NULL
+         THEN {to_file: other.filename, to_file_id: other.file_id,
+               shared_column: sk.shared_column, confidence: sk.confidence}
+         ELSE NULL END) AS raw_links
+WITH f, columns, tier_score, [l IN raw_links WHERE l IS NOT NULL] AS file_links
+
+// Get cross-source links (file ↔ database)
+OPTIONAL MATCH (f)-[:HAS_COLUMN]->(fc:FileColumn)-[csl:CROSS_SOURCE_LINK]->(tc:Column)
+WITH f, columns, tier_score, file_links,
+     COLLECT(CASE WHEN csl IS NOT NULL
+         THEN {table_name: csl.table_name, table_column: csl.table_column,
+               file_column: csl.file_column}
+         ELSE NULL END) AS raw_db_links
+WITH f, columns, tier_score, file_links, [l IN raw_db_links WHERE l IS NOT NULL] AS db_links
+
+RETURN f.file_id AS file_id,
+       f.filename AS filename,
+       f.row_count AS row_count,
+       f.conversation_id AS conversation_id,
+       f.project_tag AS project_tag,
+       columns,
+       file_links,
+       db_links,
+       tier_score
+ORDER BY tier_score DESC
+"""
+
+_FILE_ORG_CYPHER = """
+// Tier 2: Recent org files matching keywords (fallback)
+MATCH (f:FileNode {org_id: $org_id, is_active: true})
+      -[:HAS_COLUMN]->(c:FileColumn)
+WHERE f.conversation_id <> $conv_id
+  AND ANY(kw IN $keywords WHERE
+      toLower(c.name) CONTAINS kw OR toLower(f.filename) CONTAINS kw)
+  AND f.uploaded_at > datetime() - duration('P30D')
+WITH f, COLLECT({
+    name: c.name, type: c.data_type, domain: c.domain,
+    numeric: c.is_numeric, temporal: c.is_temporal,
+    samples: c.sample_values
+}) AS columns, 0.5 AS tier_score
+RETURN f.file_id AS file_id,
+       f.filename AS filename,
+       f.row_count AS row_count,
+       f.conversation_id AS conversation_id,
+       f.project_tag AS project_tag,
+       columns,
+       [] AS file_links,
+       [] AS db_links,
+       tier_score
+ORDER BY f.uploaded_at DESC
+LIMIT 5
+"""
+
+
+async def select_relevant_files(
+    question: str,
+    org_id: str,
+    conversation_id: str | None = None,
+    connection_id: str | None = None,
+    token_budget: int = 3000,
+) -> str:
+    """Graph-based file selection. Returns prompt-ready context for DataFrames.
+
+    Tiered retrieval:
+      Tier 1: Files in this conversation (score 1.0)
+      Tier 2: Recent org files (score 0.5, last 30 days)
+    """
+    driver = get_graph_driver()
+    if not driver:
+        return ""
+
+    entities = extract_entities(question)
+    if not entities["keywords"]:
+        return ""
+
+    try:
+        all_records = []
+        async with driver.session() as session:
+            # Tier 1: conversation files
+            if conversation_id:
+                result = await session.run(
+                    _FILE_TRAVERSAL_CYPHER,
+                    conv_id=conversation_id, org_id=org_id,
+                    keywords=entities["keywords"],
+                )
+                tier1 = [r.data() async for r in result]
+                all_records.extend(tier1)
+
+            # Tier 2: org files (only if Tier 1 has < 3 files)
+            if len(all_records) < 3:
+                result = await session.run(
+                    _FILE_ORG_CYPHER,
+                    conv_id=conversation_id or "", org_id=org_id,
+                    keywords=entities["keywords"],
+                )
+                tier2 = [r.data() async for r in result]
+                all_records.extend(tier2)
+
+        if not all_records:
+            return ""
+
+        # Deduplicate by file_id
+        seen = set()
+        unique = []
+        for r in all_records:
+            fid = r.get("file_id")
+            if fid not in seen:
+                seen.add(fid)
+                unique.append(r)
+
+        # Score and select within budget
+        scored = _score_files(unique, entities)
+        selected = _apply_file_token_budget(scored, token_budget)
+
+        if not selected:
+            return ""
+
+        return _format_file_context(selected, entities)
+
+    except Exception as exc:
+        logger.warning("File graph traversal failed: %s", exc)
+        return ""
+
+
+def _score_files(records: list[dict], entities: dict) -> list[tuple[dict, float]]:
+    """Score files by relevance."""
+    scored = []
+    for record in records:
+        score = record.get("tier_score", 0.3)
+        filename = (record.get("filename") or "").lower()
+        columns = record.get("columns", [])
+
+        # Filename keyword match
+        for kw in entities["keywords"]:
+            if kw in filename:
+                score += 0.3
+
+        # Column name match
+        for col in columns:
+            for kw in entities["keywords"]:
+                if kw in (col.get("name") or "").lower():
+                    score += 0.2
+
+        # Has cross-source links (file connects to DB)
+        if record.get("db_links"):
+            score += 0.2
+
+        # Has cross-file links
+        if record.get("file_links"):
+            score += 0.1
+
+        scored.append((record, min(score, 2.5)))
+
+    scored.sort(key=lambda x: x[1], reverse=True)
+    return scored
+
+
+def _apply_file_token_budget(scored: list[tuple[dict, float]], budget: int) -> list[dict]:
+    """Select files within token budget."""
+    selected = []
+    total_tokens = 0
+
+    for record, score in scored:
+        col_count = len(record.get("columns", []))
+        estimated = 40 + (col_count * 15) + 30
+        if total_tokens + estimated > budget and selected:
+            break
+        if score < 0.1:
+            break
+        selected.append(record)
+        total_tokens += estimated
+
+    return selected
+
+
+def _format_file_context(files: list[dict], entities: dict) -> str:
+    """Format selected files into prompt context for Python/DataFrame agent."""
+    lines = ["UPLOADED FILE DATA (use Python/pandas to analyze)", "=" * 55]
+
+    all_file_links = []
+    all_db_links = []
+
+    for record in files:
+        filename = record.get("filename", "unknown")
+        row_count = record.get("row_count", 0)
+        columns = record.get("columns", [])
+        file_links = record.get("file_links", [])
+        db_links = record.get("db_links", [])
+
+        # Derive DataFrame variable name
+        import re
+        stem = filename.rsplit(".", 1)[0].lower()
+        stem = re.sub(r'[^a-z0-9_]', '_', stem)
+        stem = re.sub(r'_+', '_', stem).strip('_')[:30]
+        var_name = f"df_{stem}"
+
+        lines.append(f"\n{var_name}  (from: {filename}, ~{row_count:,} rows)")
+        lines.append("-" * 40)
+
+        for col in columns:
+            if not col.get("name"):
+                continue
+            parts = [f"  {col['name']}: {col.get('type', 'object')}"]
+            if col.get("numeric"):
+                parts.append("[NUMERIC]")
+            if col.get("temporal"):
+                parts.append("[TEMPORAL]")
+            samples = col.get("samples", [])
+            if samples:
+                vals = ", ".join(f"'{v}'" for v in samples[:5])
+                parts.append(f"  values: [{vals}]")
+            lines.append(" ".join(parts))
+
+        all_file_links.extend(file_links)
+        all_db_links.extend(db_links)
+
+    # Cross-file merge paths
+    if all_file_links:
+        lines.append("\n\nCROSS-FILE MERGE PATHS (use pd.merge)")
+        lines.append("=" * 55)
+        seen = set()
+        for link in all_file_links:
+            if not link:
+                continue
+            key = f"{link.get('shared_column', '')}_{link.get('to_file', '')}"
+            if key in seen:
+                continue
+            seen.add(key)
+            lines.append(f"  pd.merge(on='{link['shared_column']}')  → {link.get('to_file', '?')}")
+
+    # Cross-source links (file ↔ database)
+    if all_db_links:
+        lines.append("\n\nCROSS-SOURCE LINKS (file data ↔ database)")
+        lines.append("=" * 55)
+        for link in all_db_links:
+            if not link:
+                continue
+            lines.append(
+                f"  file.{link.get('file_column', '?')} ↔ {link.get('table_name', '?')}.{link.get('table_column', '?')}"
+            )
 
     return "\n".join(lines)

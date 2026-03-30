@@ -160,6 +160,23 @@ async def upload_file(
     db.add(upload)
     await db.flush()
     await db.refresh(upload)
+
+    # Build file graph in Neo4j for Graph RAG
+    try:
+        from app.services.schema_graph import build_file_graph
+        await build_file_graph(
+            file_id=str(upload.id),
+            org_id=upload.organization_id,
+            filename=file.filename,
+            conversation_id=None,  # linked to conversation when used in chat
+            uploaded_by=str(user.id),
+            column_info=column_info,
+            parquet_paths=parquet_paths_data,
+            row_count=column_info.get("row_count", 0) if column_info else 0,
+        )
+    except Exception as exc:
+        logger.warning("File graph build failed (non-blocking): %s", exc)
+
     return upload
 
 

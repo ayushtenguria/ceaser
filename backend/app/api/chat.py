@@ -515,6 +515,20 @@ async def chat(
             conversation.file_id = uuid.UUID(incoming_file_ids[-1])  # backward compat
             from sqlalchemy.orm.attributes import flag_modified
             flag_modified(conversation, "file_ids")
+
+            # Update file graph with conversation_id for cross-file discovery
+            try:
+                from app.services.schema_graph import get_graph_driver
+                driver = get_graph_driver()
+                if driver:
+                    async with driver.session() as neo_session:
+                        for fid in incoming_file_ids:
+                            await neo_session.run("""
+                                MATCH (f:FileNode {file_id: $file_id})
+                                SET f.conversation_id = $conv_id
+                            """, file_id=fid, conv_id=str(conversation.id))
+            except Exception:
+                pass
             await db.flush()
 
     # ── Build context (all files in conversation) ─────────────────
@@ -544,11 +558,29 @@ async def chat(
         schema_context = await _build_schema_context(
             db, effective_connection_id, None, org_id=org_id, user_question=body.message
         )
-        # Multi-file context
+        # Multi-file context — try Graph RAG first, fallback to flat loading
         if all_file_ids:
-            file_context, cross_rels = await _build_multi_file_context(db, all_file_ids, org_id, body.message)
-            if file_context:
-                schema_context = (schema_context + "\n\n" + file_context) if schema_context else file_context
+            file_graph_context = ""
+            try:
+                from app.services.schema_graph import select_relevant_files
+                file_graph_context = await select_relevant_files(
+                    question=body.message,
+                    org_id=org_id,
+                    conversation_id=str(conversation.id) if conversation else None,
+                    connection_id=str(effective_connection_id) if effective_connection_id else None,
+                )
+                if file_graph_context:
+                    logger.info("File Graph RAG: selected relevant files (%d chars)", len(file_graph_context))
+            except Exception as exc:
+                logger.debug("File graph selection failed: %s", exc)
+
+            if file_graph_context:
+                schema_context = (schema_context + "\n\n" + file_graph_context) if schema_context else file_graph_context
+            else:
+                # Fallback to flat multi-file context
+                file_context, cross_rels = await _build_multi_file_context(db, all_file_ids, org_id, body.message)
+                if file_context:
+                    schema_context = (schema_context + "\n\n" + file_context) if schema_context else file_context
 
     logger.info("Chat context: connection=%s files=%d",
                 effective_connection_id, len(all_file_ids))
