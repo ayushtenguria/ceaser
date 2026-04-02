@@ -274,16 +274,19 @@ async def _build_multi_file_context(
         if upload.excel_context:
             from app.agents.excel.sheet_selector import (
                 parse_excel_context_to_sheets, select_relevant_sheets,
-                build_compact_summary, build_selected_context,
+                select_relevant_columns, build_compact_summary,
+                build_selected_context,
             )
             all_sheet_metas = parse_excel_context_to_sheets(upload.excel_context)
 
             if all_sheet_metas and len(all_sheet_metas) > 3:
                 parts.append(build_compact_summary(all_sheet_metas))
                 selected = select_relevant_sheets(user_question, all_sheet_metas, max_sheets=3)
-                parts.append(build_selected_context(selected, ""))
+                parts.append(build_selected_context(selected, "", question=user_question))
             else:
-                parts.append(upload.excel_context)
+                # ≤3 sheets — still apply column filtering for large sheets
+                filtered = [select_relevant_columns(user_question, s) for s in all_sheet_metas]
+                parts.append(build_selected_context(filtered, "", question=""))
 
     if len(all_preamble_lines) > 3:
         unified_preamble = "\n".join(all_preamble_lines)

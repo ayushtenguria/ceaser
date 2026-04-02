@@ -2,12 +2,13 @@
 
 Graph topology:
 
-    Entry -> Router -> (SQL Agent -> Execute SQL)   \
-                    -> (Python Agent -> Execute Py)   > -> Respond
-                    -> Respond directly               /
-                         ^           ^
-                         |           |
-                         +-- retry --+
+    Entry -> Router -> (SQL Agent -> Validate SQL -> Execute SQL -> Repair SQL)  \
+                    -> (Python Agent -> Validate Py -> Execute Py -> Repair Py)   > -> Respond
+                    -> Analyst                                                   /
+                    -> Respond directly
+                         ^              ^
+                         |              |
+                         +--- retry ----+
 """
 
 from __future__ import annotations
@@ -26,6 +27,8 @@ from app.agents.analyst import run_analyst
 from app.agents.decomposer import decompose_query
 from app.agents.executor import execute_code, execute_sql
 from app.agents.python_agent import generate_python
+from app.agents.python_repair import repair_python
+from app.agents.python_validator import validate_python
 from app.agents.repair import repair_sql
 from app.agents.router import route_query
 from app.agents.sql_agent import generate_sql
@@ -163,8 +166,18 @@ def _after_verify(state: AgentState) -> str:
     return "respond"
 
 
+def _after_validate_python(state: AgentState) -> str:
+    """After Python validation: retry generation on error, otherwise execute."""
+    if state.get("error") and state.get("retry_count", 0) < _MAX_RETRIES:
+        return "python_agent"
+    return "code_execute"
+
+
 def _after_code_execute(state: AgentState) -> str:
     if state.get("error") and state.get("retry_count", 0) < _MAX_RETRIES:
+        retry = state.get("retry_count", 0)
+        if retry == 1:
+            return "repair_python"
         return "python_agent"
     return "respond"
 
@@ -196,8 +209,14 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
     async def verify_node(state: AgentState) -> AgentState:
         return await verify_results(state, _light)
 
+    async def validate_python_node(state: AgentState) -> AgentState:
+        return validate_python(state)
+
     async def code_execute_node(state: AgentState) -> AgentState:
         return await execute_code(state)
+
+    async def repair_python_node(state: AgentState) -> AgentState:
+        return await repair_python(state, _light)
 
     async def respond_node(state: AgentState) -> AgentState:
         return await _respond(state, llm)
@@ -214,9 +233,11 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
     graph.add_node("sql_agent", sql_agent_node)
     graph.add_node("validate_sql", validate_node)
     graph.add_node("python_agent", python_agent_node)
+    graph.add_node("validate_python", validate_python_node)
     graph.add_node("sql_execute", sql_execute_node)
     graph.add_node("verify_results", verify_node)
     graph.add_node("code_execute", code_execute_node)
+    graph.add_node("repair_python", repair_python_node)
     graph.add_node("respond", respond_node)
     graph.add_node("repair_sql", repair_node)
     graph.add_node("analyst", analyst_node)
@@ -256,15 +277,22 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
         {"sql_agent": "sql_agent", "python_agent": "python_agent", "respond": "respond"},
     )
 
-    graph.add_edge("python_agent", "code_execute")
+    graph.add_edge("python_agent", "validate_python")
+    graph.add_conditional_edges(
+        "validate_python",
+        _after_validate_python,
+        {"python_agent": "python_agent", "code_execute": "code_execute"},
+    )
     graph.add_conditional_edges(
         "code_execute",
         _after_code_execute,
         {
+            "repair_python": "repair_python",
             "python_agent": "python_agent",
             "respond": "respond",
         },
     )
+    graph.add_edge("repair_python", "code_execute")
 
     graph.add_edge("respond", END)
 
@@ -428,6 +456,13 @@ async def _run_single_query(
                 code = node_state.get("code_block")
                 if code:
                     yield {"type": "code", "content": code}
+
+            elif node_name == "validate_python":
+                if node_state.get("error"):
+                    yield {"type": "status", "content": f"Code validation issue, regenerating... ({node_state.get('retry_count', 0)}/{_MAX_RETRIES})"}
+
+            elif node_name == "repair_python":
+                yield {"type": "status", "content": "Fixing code..."}
 
             elif node_name == "code_execute":
                 if node_state.get("error"):

@@ -1,8 +1,12 @@
-"""Sheet Selector — picks the most relevant sheets for a given question.
+"""Sheet & Column Selector — picks the most relevant sheets and columns for a question.
 
 Pure deterministic keyword matching — NO LLM calls.
 Scores each sheet by matching the question against sheet names, column names,
 and sample values. Returns top 1-3 most relevant sheets.
+
+For large sheets (50+ columns), also filters columns by relevance so the
+LLM prompt stays within token budget. Always preserves ID/key columns and
+columns that match the question keywords.
 
 Fast: ~1ms for 50 sheets. Consistent: same question → same selection.
 """
@@ -144,14 +148,23 @@ def build_compact_summary(sheets: list[SheetMeta]) -> str:
 def build_selected_context(
     selected_sheets: list[SheetMeta],
     code_preamble: str = "",
+    question: str = "",
 ) -> str:
-    """Build full context for only the selected sheets."""
+    """Build full context for only the selected sheets.
+
+    If *question* is provided and a sheet has many columns, applies column
+    filtering to keep the context within token budget.
+    """
     parts: list[str] = []
 
     parts.append("SELECTED SHEET DETAILS (most relevant to your question):")
     parts.append("=" * 50)
 
     for sheet in selected_sheets:
+        # Apply column filtering for large sheets
+        if question and sheet.column_count > _COLUMN_THRESHOLD:
+            sheet = select_relevant_columns(question, sheet)
+
         if sheet.full_context_text:
             parts.append(sheet.full_context_text)
         else:
@@ -219,6 +232,169 @@ def parse_excel_context_to_sheets(excel_context: str) -> list[SheetMeta]:
         sheets.append(current_sheet)
 
     return sheets
+
+
+_COLUMN_THRESHOLD = 40
+"""Sheets with more columns than this get column filtering applied."""
+
+_MAX_SELECTED_COLUMNS = 35
+"""Maximum columns to keep after filtering."""
+
+_ALWAYS_KEEP_PATTERNS = frozenset({
+    "id", "name", "email", "date", "created", "updated", "status", "type",
+    "key", "code", "sku", "account", "phone", "title",
+})
+"""Column name fragments that are always kept (IDs, keys, dates, etc.)."""
+
+_NUMERIC_BONUS = 3
+"""Extra score for numeric columns — often needed for aggregation."""
+
+_TEMPORAL_BONUS = 4
+"""Extra score for date/time columns — often needed for trends."""
+
+
+@dataclass
+class ColumnScore:
+    """Relevance score for one column."""
+    name: str
+    score: float = 0.0
+    reasons: list[str] = field(default_factory=list)
+    is_structural: bool = False  # ID/key/date — always kept
+
+
+def select_relevant_columns(
+    question: str,
+    sheet: SheetMeta,
+    max_columns: int = _MAX_SELECTED_COLUMNS,
+    threshold: int = _COLUMN_THRESHOLD,
+) -> SheetMeta:
+    """Filter a sheet's columns to only the most relevant ones.
+
+    Returns a NEW SheetMeta with filtered column_names, column_types,
+    sample_values, and regenerated full_context_text.
+
+    Skips filtering if the sheet has fewer columns than *threshold*.
+
+    Selection strategy (no LLM):
+    1. Structural columns (IDs, keys, dates, names) — always kept
+    2. Keyword-matched columns — scored against question keywords
+    3. Numeric columns — bonus for aggregation potential
+    4. Top-N by score to fill remaining budget
+    """
+    if sheet.column_count <= threshold:
+        return sheet
+
+    keywords = _extract_keywords(question)
+
+    scores: list[ColumnScore] = []
+    for col in sheet.column_names:
+        sc = _score_column(col, sheet.column_types.get(col, ""), sheet.sample_values.get(col, []), keywords)
+        scores.append(sc)
+
+    # Sort: structural first, then by score descending
+    scores.sort(key=lambda s: (s.is_structural, s.score), reverse=True)
+
+    # Select top columns within budget
+    selected_names: list[str] = []
+    for sc in scores:
+        if len(selected_names) >= max_columns:
+            break
+        selected_names.append(sc.name)
+
+    selected_set = set(selected_names)
+    omitted = sheet.column_count - len(selected_names)
+
+    # Build filtered SheetMeta
+    filtered = SheetMeta(
+        name=sheet.name,
+        row_count=sheet.row_count,
+        column_count=sheet.column_count,  # keep original count for awareness
+        column_names=[c for c in sheet.column_names if c in selected_set],
+        column_types={c: t for c, t in sheet.column_types.items() if c in selected_set},
+        sample_values={c: v for c, v in sheet.sample_values.items() if c in selected_set},
+    )
+
+    # Rebuild context text with selected columns + note about omitted
+    filtered.full_context_text = _rebuild_context_text(filtered, omitted)
+
+    logger.info(
+        "Column selector: %d/%d columns kept for '%s' on sheet %s",
+        len(selected_names), sheet.column_count, question[:50], sheet.name,
+    )
+
+    return filtered
+
+
+def _score_column(
+    col_name: str,
+    col_type: str,
+    sample_values: list,
+    keywords: list[str],
+) -> ColumnScore:
+    """Score a single column for relevance."""
+    sc = ColumnScore(name=col_name)
+    col_lower = col_name.lower()
+
+    # 1. Structural columns (always keep)
+    for pattern in _ALWAYS_KEEP_PATTERNS:
+        if pattern in col_lower:
+            sc.is_structural = True
+            sc.score += 20
+            sc.reasons.append(f"structural ({pattern})")
+            break
+
+    # 2. Keyword matching on column name
+    for kw in keywords:
+        if kw in col_lower:
+            sc.score += 10
+            sc.reasons.append(f"name matches '{kw}'")
+        # Partial match (keyword is substring of column or vice versa)
+        elif col_lower in kw or kw in col_lower.replace("_", ""):
+            sc.score += 5
+            sc.reasons.append(f"partial name match '{kw}'")
+
+    # 3. Keyword matching on sample values
+    sample_strs = [str(v).lower() for v in sample_values[:5]]
+    for kw in keywords:
+        if any(kw in sv for sv in sample_strs):
+            sc.score += 3
+            sc.reasons.append(f"sample value matches '{kw}'")
+            break  # one match is enough
+
+    # 4. Type bonuses
+    type_lower = col_type.lower()
+    if any(t in type_lower for t in ("int", "float", "numeric", "decimal", "money")):
+        sc.score += _NUMERIC_BONUS
+        sc.reasons.append("numeric type")
+    if any(t in type_lower for t in ("date", "time", "timestamp")):
+        sc.score += _TEMPORAL_BONUS
+        sc.reasons.append("temporal type")
+    # Also check column name for date hints
+    if any(t in col_lower for t in ("date", "time", "year", "month", "day", "quarter", "week")):
+        sc.score += _TEMPORAL_BONUS
+        if not sc.is_structural:
+            sc.is_structural = True
+
+    return sc
+
+
+def _rebuild_context_text(sheet: SheetMeta, omitted: int) -> str:
+    """Rebuild the full_context_text for a filtered sheet."""
+    lines = [
+        f"\nDataFrame: {sheet.name} ({sheet.row_count:,} rows, {sheet.column_count} columns total"
+        f" — showing {len(sheet.column_names)} most relevant)",
+    ]
+
+    for col in sheet.column_names:
+        col_type = sheet.column_types.get(col, "unknown")
+        samples = sheet.sample_values.get(col, [])
+        sample_str = f"  values: {samples[:5]}" if samples else ""
+        lines.append(f"  {col}: {col_type}{sample_str}")
+
+    if omitted > 0:
+        lines.append(f"  ... ({omitted} other columns available — ask about them if needed)")
+
+    return "\n".join(lines)
 
 
 def _extract_keywords(question: str) -> list[str]:

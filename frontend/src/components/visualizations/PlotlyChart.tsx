@@ -64,7 +64,13 @@ export default function PlotlyChart({ figure }: { figure: PlotlyFigure }) {
       responsive: true,
       displayModeBar: true,
       displaylogo: false,
-      modeBarButtonsToRemove: ["lasso2d", "select2d"],
+      modeBarButtonsToRemove: [
+        "lasso2d", "select2d", "sendDataToCloud",
+        "editInChartStudio", "toImage",
+      ],
+      editable: false,
+      linkText: "",
+      showLink: false,
     });
 
     setTimeout(() => {

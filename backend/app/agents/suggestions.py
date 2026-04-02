@@ -18,7 +18,7 @@ _SUGGEST_PROMPT = """\
 You are a data analysis assistant. Generate exactly 3 smart follow-up questions
 the user might want to ask next.
 
-Database schema:
+Database schema / file columns:
 {schema_context}
 
 Conversation so far:
@@ -30,7 +30,9 @@ Last answer summary: {last_answer}
 Rules:
 1. Questions must be DIRECTLY related to what was just discussed
 2. Progress the analysis deeper — drill down, compare, visualize, find causes
-3. Reference actual tables/columns from the schema
+3. CRITICAL: Use ONLY column names that appear in the schema above. NEVER invent
+   or guess column names. If the last answer had an error about a missing column,
+   do NOT suggest questions using that same column — use columns that actually exist.
 4. Keep each question under 50 characters
 5. Include at least 1 visualization suggestion (chart/plot/trend)
 6. Don't repeat questions already asked in the conversation
