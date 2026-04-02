@@ -37,14 +37,12 @@ api.interceptors.request.use(async (config) => {
   return config;
 });
 
-// Retry on network errors (max 2 retries)
 api.interceptors.response.use(
   (response) => response,
   async (error) => {
     const config = error.config;
     if (!config || config._retryCount >= 2) return Promise.reject(error);
 
-    // Only retry on network errors or 5xx
     if (!error.response || error.response.status >= 500) {
       config._retryCount = (config._retryCount || 0) + 1;
       await new Promise((r) => setTimeout(r, 1000 * config._retryCount));
@@ -55,7 +53,6 @@ api.interceptors.response.use(
   }
 );
 
-// --- Auth ---
 
 export async function syncUser(payload: {
   clerkId: string;
@@ -87,7 +84,6 @@ export async function getSuggestions(connectionId?: string, conversationId?: str
   return data.suggestions;
 }
 
-// --- Conversations ---
 
 export async function getConversations(): Promise<Conversation[]> {
   const { data } = await api.get<Conversation[]>("/conversations");
@@ -103,7 +99,6 @@ export async function deleteConversation(id: string): Promise<void> {
   await api.delete(`/conversations/${id}`);
 }
 
-// --- Messages ---
 
 export async function getMessages(conversationId: string): Promise<Message[]> {
   const { data } = await api.get<Message[]>(
@@ -121,7 +116,6 @@ export async function* sendMessage(
 ): AsyncGenerator<StreamChunk> {
   const token = _getToken ? await _getToken() : null;
 
-  // Use AbortController with 3-minute timeout for long-running analyses
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), 180_000);
 
@@ -168,7 +162,6 @@ export async function* sendMessage(
           const chunk = JSON.parse(jsonStr) as StreamChunk;
           yield chunk;
         } catch {
-          // Skip malformed chunks
         }
       }
     }
@@ -178,7 +171,6 @@ export async function* sendMessage(
   }
 }
 
-// --- Connections ---
 
 export async function getConnections(): Promise<DatabaseConnection[]> {
   const { data } = await api.get<DatabaseConnection[]>("/connections");
@@ -205,7 +197,6 @@ export async function deleteConnection(id: string): Promise<void> {
   await api.delete(`/connections/${id}`);
 }
 
-// --- Files ---
 
 export async function getFiles(): Promise<FileUpload[]> {
   const { data } = await api.get<FileUpload[]>("/files");
@@ -226,7 +217,6 @@ export async function deleteFile(id: string): Promise<void> {
   await api.delete(`/files/${id}`);
 }
 
-// --- Reports ---
 
 export async function getReports(): Promise<any[]> {
   const { data } = await api.get("/reports");
@@ -270,7 +260,6 @@ export async function deleteReport(id: string): Promise<void> {
   await api.delete(`/reports/${id}`);
 }
 
-// --- Metrics (Semantic Layer) ---
 
 export async function getMetrics(): Promise<any[]> {
   const { data } = await api.get("/metrics");
@@ -302,7 +291,6 @@ export async function deleteMetric(id: string): Promise<void> {
   await api.delete(`/metrics/${id}`);
 }
 
-// --- Billing ---
 
 export async function createCheckout(planName: string): Promise<{ checkoutUrl: string; sessionId: string }> {
   const { data } = await api.post("/billing/checkout", {
@@ -343,7 +331,6 @@ export async function getInvoices(): Promise<Array<{
   return data;
 }
 
-// --- Audit ---
 
 export async function getAuditLogs(params?: {
   action?: string;
@@ -360,7 +347,6 @@ export async function getAuditStats(): Promise<any> {
   return data;
 }
 
-// --- Admin ---
 
 export async function getAdminStats(): Promise<any> {
   const { data } = await api.get("/admin/stats");
@@ -387,7 +373,6 @@ export async function getAdminUsers(): Promise<any[]> {
   return data;
 }
 
-// --- Notebooks ---
 
 export async function getNotebooks(): Promise<any[]> {
   const { data } = await api.get("/notebooks");
@@ -445,7 +430,7 @@ export async function* runNotebook(
 ): AsyncGenerator<any> {
   const token = _getToken ? await _getToken() : null;
   const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), 300_000); // 5 min
+  const timeoutId = setTimeout(() => controller.abort(), 300_000);
 
   const response = await fetch(`${API_URL}/api/v1/notebooks/${notebookId}/run`, {
     method: "POST",
@@ -502,7 +487,6 @@ export async function generateNotebookCells(description: string): Promise<any> {
   return data;
 }
 
-// --- Report Generation ---
 
 export async function getNotebookDraft(conversationId: string): Promise<any> {
   const { data } = await api.post(`/conversations/${conversationId}/notebook/draft`);
@@ -522,7 +506,7 @@ export async function getSavedReport(conversationId: string): Promise<any | null
     const { data } = await api.get(`/conversations/${conversationId}/report`);
     return data;
   } catch {
-    return null; // 404 = no report
+    return null;
   }
 }
 

@@ -21,15 +21,10 @@ from app.services.schema_graph import get_graph_driver
 
 logger = logging.getLogger(__name__)
 
-# Embedding dimension: all-MiniLM-L6-v2 = 384 (local, free, fast)
 _EMBEDDING_DIM = 384
 _MAX_MEMORIES_PER_QUERY = 10
-_DECAY_RATE = 0.003  # ~50% weight after 230 days
+_DECAY_RATE = 0.003
 
-
-# ---------------------------------------------------------------------------
-# Embedding
-# ---------------------------------------------------------------------------
 
 _embedder = None
 
@@ -45,7 +40,6 @@ async def _get_embedding(text: str) -> list[float]:
 
     try:
         import asyncio
-        # sentence-transformers is sync — run in thread
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, _embedder.encode, text)
         return result.tolist()
@@ -53,10 +47,6 @@ async def _get_embedding(text: str) -> list[float]:
         logger.warning("Embedding failed: %s", exc)
         return [0.0] * _EMBEDDING_DIM
 
-
-# ---------------------------------------------------------------------------
-# Memory CRUD in Neo4j
-# ---------------------------------------------------------------------------
 
 async def save_memory_to_graph(
     *,
@@ -80,7 +70,6 @@ async def save_memory_to_graph(
         embedding = await _get_embedding(content)
 
         async with driver.session() as session:
-            # Create memory node
             await session.run("""
                 CREATE (m:Memory {
                     id: $id, org_id: $org_id, user_id: $user_id,
@@ -129,7 +118,6 @@ async def save_memory_to_graph(
 async def _detect_conflicts(session, new_memory_id: str, org_id: str, memory_type: str, content: str):
     """Find existing memories that might conflict with the new one."""
     try:
-        # Find memories of same type with overlapping keywords
         keywords = [w.lower() for w in content.split() if len(w) > 3][:5]
         if not keywords:
             return
@@ -201,7 +189,6 @@ async def _retrieve_by_graph(driver, question: str, org_id: str, user_id: str | 
         return []
 
     async with driver.session() as session:
-        # Find memories matching keywords OR linked to relevant tables
         result = await session.run("""
             MATCH (m:Memory {org_id: $org_id, is_active: true})
             WHERE (m.user_id = '' OR m.user_id = $user_id)
@@ -223,7 +210,6 @@ async def _retrieve_by_vector(driver, question: str, org_id: str, user_id: str |
     embedding = await _get_embedding(question)
 
     async with driver.session() as session:
-        # Try vector index search (Neo4j 5.11+)
         try:
             result = await session.run("""
                 CALL db.index.vector.queryNodes('memory_embedding_index', 10, $embedding)
@@ -258,12 +244,10 @@ def _merge_and_score(graph_results: list[dict], vector_results: list[dict]) -> l
             continue
         seen_ids.add(mem_id)
 
-        # Compute final score with temporal decay
         confidence = mem.get("confidence", 0.5)
         vector_score = mem.get("vector_score", 0.0)
         access_count = mem.get("access_count", 0)
 
-        # Temporal decay: newer memories score higher
         created = mem.get("created_at")
         days_old = 0
         if created:
@@ -275,14 +259,12 @@ def _merge_and_score(graph_results: list[dict], vector_results: list[dict]) -> l
             except Exception:
                 days_old = 0
 
-        recency_weight = math.exp(-_DECAY_RATE * days_old)  # e^(-0.003 * days)
-        frequency_boost = min(1.0 + (access_count * 0.05), 1.5)  # max 1.5x boost
+        recency_weight = math.exp(-_DECAY_RATE * days_old)
+        frequency_boost = min(1.0 + (access_count * 0.05), 1.5)
 
-        # Combined score
         base_score = max(confidence, vector_score * 0.8)
         final_score = base_score * recency_weight * frequency_boost
 
-        # Consolidated memories get a boost (they're more complete)
         if mem.get("consolidated"):
             final_score *= 1.2
 
@@ -369,10 +351,6 @@ def format_memories_for_prompt(memories: list[dict]) -> str:
     return "\n".join(lines)
 
 
-# ---------------------------------------------------------------------------
-# Update access tracking
-# ---------------------------------------------------------------------------
-
 async def update_memory_access(memory_ids: list[str]):
     """Update access_count and last_accessed for used memories."""
     driver = get_graph_driver()
@@ -429,7 +407,6 @@ async def consolidate_memories(org_id: str, llm=None) -> int:
 
     try:
         async with driver.session() as session:
-            # Find groups of memories about the same concept
             result = await session.run("""
                 MATCH (m1:Memory {org_id: $org_id, is_active: true, is_consolidated: false})
                 MATCH (m2:Memory {org_id: $org_id, is_active: true, is_consolidated: false})

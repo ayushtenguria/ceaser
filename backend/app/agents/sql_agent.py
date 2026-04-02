@@ -75,7 +75,6 @@ async def generate_sql(state: AgentState, llm: BaseChatModel) -> AgentState:
         *state["messages"],
     ]
 
-    # If retrying after an error, include the failed SQL and error for self-correction.
     if state.get("error") and state.get("sql_query"):
         from langchain_core.messages import HumanMessage
         messages.append(HumanMessage(
@@ -88,10 +87,8 @@ async def generate_sql(state: AgentState, llm: BaseChatModel) -> AgentState:
     response = await llm.ainvoke(messages)
     raw_sql: str = response.content.strip()  # type: ignore[union-attr]
 
-    # Strip common markdown fencing the LLM might include despite instructions.
     if raw_sql.startswith("```"):
         lines = raw_sql.split("\n")
-        # Remove first and last fence lines.
         lines = [ln for ln in lines if not ln.strip().startswith("```")]
         raw_sql = "\n".join(lines).strip()
 

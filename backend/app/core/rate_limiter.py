@@ -13,9 +13,8 @@ from fastapi import HTTPException, status
 
 logger = logging.getLogger(__name__)
 
-# In-memory store: {key: [(timestamp, ...)]]}
 _requests: dict[str, list[float]] = defaultdict(list)
-_CLEANUP_INTERVAL = 300  # Clean old entries every 5 min
+_CLEANUP_INTERVAL = 300
 _last_cleanup = time.time()
 
 
@@ -36,12 +35,10 @@ def check_rate_limit(
     now = time.time()
     cutoff = now - window_seconds
 
-    # Periodic cleanup of old entries
     if now - _last_cleanup > _CLEANUP_INTERVAL:
         _cleanup(cutoff)
         _last_cleanup = now
 
-    # Remove old requests for this key
     _requests[key] = [t for t in _requests[key] if t > cutoff]
 
     if len(_requests[key]) >= max_requests:

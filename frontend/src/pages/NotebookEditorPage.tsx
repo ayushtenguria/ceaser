@@ -76,7 +76,6 @@ export default function NotebookEditorPage() {
       const uploaded = await api.uploadFile(file);
       setFileUploads((prev) => ({ ...prev, [cellId]: { id: uploaded.id, name: uploaded.filename } }));
     } catch {
-      // Silent
     }
   }, []);
 
@@ -85,7 +84,6 @@ export default function NotebookEditorPage() {
     setIsRunning(true);
     setCellResults({});
 
-    // Build file mapping for run
     const files: Record<string, string> = {};
     for (const [cellId, upload] of Object.entries(fileUploads)) {
       files[cellId] = upload.id;
@@ -100,7 +98,6 @@ export default function NotebookEditorPage() {
           setRunningCellId(null);
         }
       }
-      // Refresh run history
       api.getNotebookRuns(notebookId).then(setRunHistory).catch(() => {});
     } catch {} finally {
       setIsRunning(false);
@@ -284,7 +281,6 @@ export default function NotebookEditorPage() {
 }
 
 
-// ─── Cell Editor Component ──────────────────────────────────────────
 
 function CellEditor({ cell, notebookId, result, isRunning, userInput, fileUpload, onDelete, onInputChange, onFileUpload, onReload }: {
   cell: any;
@@ -302,18 +298,15 @@ function CellEditor({ cell, notebookId, result, isRunning, userInput, fileUpload
   const Icon = meta.icon;
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // Local content state for debounced saving (prevents API call on every keystroke)
   const [localContent, setLocalContent] = useState(cell.content || "");
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
 
-  // Sync local content when cell changes from server
   useEffect(() => {
     setLocalContent(cell.content || "");
   }, [cell.id, cell.content]);
 
   const handleContentChange = useCallback((value: string) => {
     setLocalContent(value);
-    // Debounce: save after 500ms of no typing
     if (saveTimer.current) clearTimeout(saveTimer.current);
     saveTimer.current = setTimeout(async () => {
       try {
@@ -324,7 +317,6 @@ function CellEditor({ cell, notebookId, result, isRunning, userInput, fileUpload
           outputVariable: cell.outputVariable,
         });
       } catch {
-        // Silent
       }
     }, 500);
   }, [notebookId, cell.id, cell.cellType, cell.config, cell.outputVariable]);

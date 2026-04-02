@@ -51,8 +51,6 @@ export default function OrgSettingsPage() {
     if (!inviteEmail.trim()) return;
     setInviting(true);
     try {
-      // For now, create user directly in our DB
-      // In production, this would go through Clerk invite
       await api.syncUser({
         clerkId: `invited-${Date.now()}`,
         email: inviteEmail,
@@ -63,7 +61,6 @@ export default function OrgSettingsPage() {
       });
       setInviteSuccess(true);
       setInviteEmail("");
-      // Refresh user list
       const u = await api.getAdminUsers();
       setUsers(Array.isArray(u) ? u : []);
       setTimeout(() => setInviteSuccess(false), 3000);

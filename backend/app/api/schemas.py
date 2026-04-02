@@ -15,10 +15,6 @@ def to_camel(s: str) -> str:
     return parts[0] + "".join(p.capitalize() for p in parts[1:])
 
 
-# ---------------------------------------------------------------------------
-# Auth
-# ---------------------------------------------------------------------------
-
 class _CamelModel(BaseModel):
     """Base model that accepts both camelCase and snake_case input."""
 
@@ -53,19 +49,15 @@ class UserResponse(BaseModel):
     created_at: datetime
 
 
-# ---------------------------------------------------------------------------
-# Chat
-# ---------------------------------------------------------------------------
-
 class ChatRequest(_CamelModel):
     """Incoming chat message from the frontend."""
 
     message: str = Field(..., min_length=1, max_length=10_000)
     conversation_id: uuid.UUID | None = None
     connection_id: uuid.UUID | None = None
-    connection_ids: list[uuid.UUID] | None = None  # For cross-DB queries
+    connection_ids: list[uuid.UUID] | None = None
     file_id: uuid.UUID | None = None
-    file_ids: list[uuid.UUID] | None = None  # Multiple files in one message
+    file_ids: list[uuid.UUID] | None = None
     model: str = Field(default="gemini", pattern="^(gemini|claude)$")
 
     @field_validator("message")
@@ -78,7 +70,7 @@ class ChatRequest(_CamelModel):
 class StreamChunk(BaseModel):
     """A single server-sent event chunk."""
 
-    type: str  # status, sql, code, text, table, plotly, error
+    type: str
     content: Any
 
 
@@ -95,10 +87,6 @@ class ChatResponse(BaseModel):
     plotly_figure: dict[str, Any] | None = None
     error: str | None = None
 
-
-# ---------------------------------------------------------------------------
-# Conversations
-# ---------------------------------------------------------------------------
 
 class ConversationResponse(BaseModel):
     """Conversation list / detail representation."""
@@ -131,10 +119,6 @@ class MessageResponse(BaseModel):
     created_at: datetime
 
 
-# ---------------------------------------------------------------------------
-# Database connections
-# ---------------------------------------------------------------------------
-
 class ConnectionCreate(_CamelModel):
     """Payload to register a new external database connection."""
 
@@ -144,7 +128,7 @@ class ConnectionCreate(_CamelModel):
     port: int = 5432
     database: str = Field(..., min_length=1)
     username: str = ""
-    password: str = ""  # plaintext; encrypted before storage
+    password: str = ""
 
 
 class ConnectionResponse(BaseModel):
@@ -174,10 +158,6 @@ class ConnectionTestResult(BaseModel):
     schema_info: dict[str, Any] | None = None
 
 
-# ---------------------------------------------------------------------------
-# File uploads
-# ---------------------------------------------------------------------------
-
 class FileUploadResponse(BaseModel):
     """Public representation of an uploaded file."""
 
@@ -191,10 +171,6 @@ class FileUploadResponse(BaseModel):
     excel_metadata: dict[str, Any] | None = None
     created_at: datetime
 
-
-# ---------------------------------------------------------------------------
-# Reports
-# ---------------------------------------------------------------------------
 
 class ReportCreate(_CamelModel):
     """Create a saved report from a chat result."""
@@ -243,10 +219,6 @@ class ReportResponse(BaseModel):
     updated_at: datetime
 
 
-# ---------------------------------------------------------------------------
-# Metrics (Semantic Layer)
-# ---------------------------------------------------------------------------
-
 class MetricCreate(_CamelModel):
     """Define a new business metric."""
     name: str = Field(..., min_length=1, max_length=200)
@@ -279,10 +251,6 @@ class MetricResponse(BaseModel):
     updated_at: datetime
 
 
-# ---------------------------------------------------------------------------
-# Audit Log
-# ---------------------------------------------------------------------------
-
 class AuditLogResponse(BaseModel):
     """Public representation of an audit log entry."""
     model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
@@ -296,10 +264,6 @@ class AuditLogResponse(BaseModel):
     ip_address: str
     created_at: datetime
 
-
-# ---------------------------------------------------------------------------
-# Notebooks
-# ---------------------------------------------------------------------------
 
 class NotebookCellCreate(_CamelModel):
     """Create/update a notebook cell."""
@@ -380,9 +344,9 @@ class NotebookRunResponse(BaseModel):
 
 class NotebookRunRequest(_CamelModel):
     """Request to run a notebook."""
-    inputs: dict[str, Any] = {}      # {cell_id: value}
-    files: dict[str, str] = {}       # {cell_id: file_id}
+    inputs: dict[str, Any] = {}
+    files: dict[str, str] = {}
 
 class CellReorderRequest(_CamelModel):
     """Reorder cells."""
-    cell_ids: list[uuid.UUID]  # ordered list of cell IDs
+    cell_ids: list[uuid.UUID]

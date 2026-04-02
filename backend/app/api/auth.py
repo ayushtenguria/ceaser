@@ -23,7 +23,6 @@ async def sync_user(payload: UserSyncRequest, current_user: CurrentUser, db: DbS
 
     Called by the frontend after Clerk sign-in/sign-up, or by a Clerk webhook.
     """
-    # Verify the sync request matches the authenticated user
     if payload.clerk_id != current_user.user_id and current_user.user_id != "dev_user":
         raise HTTPException(status_code=403, detail="Cannot sync a different user's data.")
 
@@ -51,11 +50,9 @@ async def sync_user(payload: UserSyncRequest, current_user: CurrentUser, db: DbS
         user.email = payload.email
         user.first_name = payload.first_name
         user.last_name = payload.last_name
-        # Only update org_id if provided (don't overwrite with null)
         if payload.organization_id:
             user.organization_id = payload.organization_id
         user.image_url = payload.image_url
-        # Update admin status in case config changed
         user.is_super_admin = is_admin
         if is_admin:
             user.role = "super_admin"
@@ -64,7 +61,6 @@ async def sync_user(payload: UserSyncRequest, current_user: CurrentUser, db: DbS
     await db.flush()
     await db.refresh(user)
 
-    # Auto-create Free plan for org if none exists
     if user.organization_id:
         from app.db.models import OrganizationPlan
         plan_stmt = select(OrganizationPlan).where(
@@ -112,17 +108,15 @@ async def get_my_plan(current_user: CurrentUser, db: DbSession) -> dict:
     user = await get_user_with_role(db, current_user.user_id)
     org_id = user.organization_id or ""
 
-    # Super admin = unlimited everything
     is_admin = user.is_super_admin
 
-    # Get plan
     plan_stmt = select(OrganizationPlan).where(OrganizationPlan.organization_id == org_id)
     plan_result = await db.execute(plan_stmt)
     plan = plan_result.scalar_one_or_none()
 
     if is_admin:
         plan_name = "enterprise"
-        max_queries = -1  # unlimited
+        max_queries = -1
         max_connections = -1
         max_reports = -1
         max_seats = -1
@@ -133,7 +127,6 @@ async def get_my_plan(current_user: CurrentUser, db: DbSession) -> dict:
         max_reports = plan.max_reports if plan else 5
         max_seats = plan.max_seats if plan else 5
 
-    # Get today's query count
     today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     query_count_stmt = (
         select(func.count()).select_from(AuditLog)
@@ -141,14 +134,12 @@ async def get_my_plan(current_user: CurrentUser, db: DbSession) -> dict:
     )
     queries_today = (await db.execute(query_count_stmt)).scalar() or 0
 
-    # Get connection count
     conn_count_stmt = (
         select(func.count()).select_from(DatabaseConnection)
         .where(DatabaseConnection.organization_id == org_id)
     )
     connections_used = (await db.execute(conn_count_stmt)).scalar() or 0
 
-    # Get monthly report count
     month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     report_count_stmt = (
         select(func.count()).select_from(Report)
@@ -156,7 +147,6 @@ async def get_my_plan(current_user: CurrentUser, db: DbSession) -> dict:
     )
     reports_this_month = (await db.execute(report_count_stmt)).scalar() or 0
 
-    # Get seat count
     from app.db.models import User as UserModel
     seat_count_stmt = (
         select(func.count()).select_from(UserModel)
@@ -164,7 +154,6 @@ async def get_my_plan(current_user: CurrentUser, db: DbSession) -> dict:
     )
     seats_used = (await db.execute(seat_count_stmt)).scalar() or 0
 
-    # Get feature flags
     from app.core.features import get_all_features
     features = await get_all_features(db, org_id)
 

@@ -62,7 +62,6 @@ def extract_sheet(
         elif suffix in (".xlsx", ".xls", ".xlsm"):
             return _extract_excel_sheet(path, sheet_name or "", max_rows)
         else:
-            # Try CSV as fallback
             log_edge_case(file_name=path.name, category="parse",
                          description=f"Unknown extension '{suffix}', trying CSV fallback")
             return _extract_csv(path, inspection, max_rows)
@@ -88,7 +87,6 @@ def extract_all_sheets(
         return [result] if result.row_count > 0 else []
 
     elif suffix in (".xlsx", ".xls", ".xlsm"):
-        # Get sheet names safely
         try:
             xl = pd.ExcelFile(path)
             sheet_names = xl.sheet_names
@@ -96,7 +94,6 @@ def extract_all_sheets(
         except Exception as exc:
             log_edge_case(file_name=path.name, category="parse",
                          description=f"Cannot read sheet names: {exc}", raw_error=str(exc))
-            # Try openpyxl directly
             try:
                 import openpyxl
                 wb = openpyxl.load_workbook(path, read_only=True)
@@ -119,7 +116,6 @@ def extract_all_sheets(
         return sheets
 
     else:
-        # Unknown type — try CSV
         result = _safe_extract(path.name, "", lambda: _extract_csv(path, inspection, max_rows))
         return [result] if result.row_count > 0 else []
 
@@ -141,17 +137,12 @@ def _safe_extract(file_name: str, sheet_name: str, fn) -> ExtractedSheet:
                             warnings=[f"Failed: {exc}"])
 
 
-# ---------------------------------------------------------------------------
-# CSV extraction
-# ---------------------------------------------------------------------------
-
 def _extract_csv(path: Path, inspection: WorkbookInspection | None, max_rows: int) -> ExtractedSheet:
     """Extract a CSV file with encoding/delimiter fallback chain."""
     encoding = inspection.encoding if inspection else "utf-8"
     delimiter = inspection.delimiter if inspection else ","
     warnings: list[str] = []
 
-    # Header detection with encoding fallback
     header_row = 0
     for enc in [encoding, "utf-8", "latin-1", "cp1252", "iso-8859-1"]:
         try:
@@ -163,7 +154,6 @@ def _extract_csv(path: Path, inspection: WorkbookInspection | None, max_rows: in
         except Exception:
             continue
 
-    # Read full CSV with encoding fallback
     df = None
     for enc in [encoding, "utf-8", "latin-1", "cp1252"]:
         try:
@@ -174,7 +164,6 @@ def _extract_csv(path: Path, inspection: WorkbookInspection | None, max_rows: in
             continue
 
     if df is None:
-        # Last resort — read as binary, decode with errors='replace'
         try:
             df = pd.read_csv(path, encoding="utf-8", errors="replace",
                               on_bad_lines="skip", nrows=max_rows)
@@ -199,15 +188,10 @@ def _extract_csv(path: Path, inspection: WorkbookInspection | None, max_rows: in
     )
 
 
-# ---------------------------------------------------------------------------
-# Excel sheet extraction
-# ---------------------------------------------------------------------------
-
 def _extract_excel_sheet(path: Path, sheet_name: str, max_rows: int) -> ExtractedSheet:
     """Extract a single Excel sheet with full edge case handling."""
     warnings: list[str] = []
 
-    # Header detection
     try:
         raw_df = pd.read_excel(path, sheet_name=sheet_name, header=None, nrows=_HEADER_SCAN_ROWS)
     except Exception as exc:
@@ -220,11 +204,9 @@ def _extract_excel_sheet(path: Path, sheet_name: str, max_rows: int) -> Extracte
 
     header_row = _detect_header_row(raw_df)
 
-    # Read full sheet
     try:
         df = pd.read_excel(path, sheet_name=sheet_name, header=header_row, nrows=max_rows)
     except Exception as exc:
-        # Fallback: try with header=0
         log_edge_case(file_name=path.name, sheet_name=sheet_name,
                      category="header", description=f"Read with header={header_row} failed, trying header=0",
                      raw_error=str(exc))
@@ -254,10 +236,6 @@ def _extract_excel_sheet(path: Path, sheet_name: str, max_rows: int) -> Extracte
     )
 
 
-# ---------------------------------------------------------------------------
-# Header detection (defensive)
-# ---------------------------------------------------------------------------
-
 def _detect_header_row(raw_df: pd.DataFrame) -> int:
     """Detect which row is the header. Returns 0 on any failure."""
     try:
@@ -272,7 +250,6 @@ def _detect_header_row(raw_df: pd.DataFrame) -> int:
 
             total = len(row)
 
-            # Safe string extraction
             str_vals = []
             for v in row:
                 try:
@@ -291,7 +268,6 @@ def _detect_header_row(raw_df: pd.DataFrame) -> int:
             unique_ratio = len(set(str_vals)) / max(str_count, 1)
             non_null_ratio = non_null / total
 
-            # Numeric penalty
             numeric_count = 0
             for v in row:
                 try:
@@ -301,13 +277,11 @@ def _detect_header_row(raw_df: pd.DataFrame) -> int:
                     pass
             numeric_penalty = numeric_count / total
 
-            # Header-like bonus (short descriptive strings, not numbers/dates)
             header_like = sum(1 for s in str_vals
                               if 2 <= len(s) <= 50
                               and not s.replace('.', '').replace('-', '').replace('/', '').replace(',', '').isdigit())
             header_bonus = header_like / max(str_count, 1)
 
-            # Sparse penalty
             sparse_penalty = max(0, 0.5 - non_null_ratio) * 2
 
             score = (str_ratio * 3) + (unique_ratio * 2) + (non_null_ratio * 2) + (header_bonus * 3) - (numeric_penalty * 2) - (sparse_penalty * 2)
@@ -323,17 +297,12 @@ def _detect_header_row(raw_df: pd.DataFrame) -> int:
         return 0
 
 
-# ---------------------------------------------------------------------------
-# Data cleaning (defensive — never fails)
-# ---------------------------------------------------------------------------
-
 def _clean_dataframe(df: pd.DataFrame, file_name: str = "", sheet_name: str = "") -> pd.DataFrame:
     """Clean DataFrame. Never raises — always returns something usable."""
     if df.empty:
         return df
 
     try:
-        # Clean column names
         df.columns = _clean_column_names(df.columns)
     except Exception as exc:
         log_edge_case(file_name=file_name, sheet_name=sheet_name,
@@ -341,14 +310,12 @@ def _clean_dataframe(df: pd.DataFrame, file_name: str = "", sheet_name: str = ""
         df.columns = [f"col_{i}" for i in range(len(df.columns))]
 
     try:
-        # Drop completely empty rows and columns
         df = df.dropna(how="all")
         df = df.dropna(axis=1, how="all")
     except Exception:
         pass
 
     try:
-        # Deduplicate column names (prevents Series→DataFrame issues)
         seen: dict[str, int] = {}
         new_cols = []
         for col in df.columns:
@@ -363,7 +330,6 @@ def _clean_dataframe(df: pd.DataFrame, file_name: str = "", sheet_name: str = ""
         pass
 
     try:
-        # Drop unnamed columns that are >90% null (junk spacers)
         cols_to_drop = []
         for col in df.columns:
             if col.startswith("unnamed"):
@@ -379,12 +345,11 @@ def _clean_dataframe(df: pd.DataFrame, file_name: str = "", sheet_name: str = ""
         pass
 
     try:
-        # Strip whitespace from string columns
         for col in df.select_dtypes(include=["object"]).columns:
             try:
                 series = df[col]
                 if isinstance(series, pd.DataFrame):
-                    continue  # Duplicate column made it a DataFrame
+                    continue
                 df[col] = series.astype(str).str.strip()
                 df[col] = df[col].replace({"nan": None, "None": None, "": None, "NaT": None})
             except Exception:
@@ -393,7 +358,6 @@ def _clean_dataframe(df: pd.DataFrame, file_name: str = "", sheet_name: str = ""
         pass
 
     try:
-        # Clean formula error values (#REF!, #N/A, #DIV/0!, #VALUE!, #NAME?)
         formula_errors = {"#REF!", "#N/A", "#DIV/0!", "#VALUE!", "#NAME?", "#NULL!", "#NUM!"}
         for col in df.columns:
             try:
@@ -425,13 +389,10 @@ def _clean_column_names(columns: pd.Index) -> list[str]:
     for col in columns:
         try:
             name = str(col).strip().lower()
-            # Remove line breaks
             name = name.replace("\n", " ").replace("\r", " ")
-            # Replace special characters
             name = re.sub(r"[^\w\s]", "_", name)
             name = re.sub(r"\s+", "_", name)
             name = re.sub(r"_+", "_", name).strip("_")
-            # Truncate
             name = name[:_MAX_COL_NAME_LEN]
             if not name or name == "nan":
                 name = "unnamed"
@@ -447,10 +408,6 @@ def _clean_column_names(columns: pd.Index) -> list[str]:
 
     return clean
 
-
-# ---------------------------------------------------------------------------
-# Type detection (defensive)
-# ---------------------------------------------------------------------------
 
 def _detect_column_types(df: pd.DataFrame, file_name: str = "", sheet_name: str = "") -> dict[str, str]:
     """Detect column types. Never raises — defaults to 'string' on any failure."""
@@ -475,7 +432,6 @@ def _detect_column_types(df: pd.DataFrame, file_name: str = "", sheet_name: str 
 
             str_vals = series.astype(str)
 
-            # Try numeric
             try:
                 numeric = pd.to_numeric(str_vals.str.replace(",", "", regex=False), errors="coerce")
                 if numeric.notna().sum() / max(len(str_vals), 1) > 0.8:
@@ -484,7 +440,6 @@ def _detect_column_types(df: pd.DataFrame, file_name: str = "", sheet_name: str 
             except Exception:
                 pass
 
-            # Try date
             try:
                 dates = pd.to_datetime(str_vals, errors="coerce", infer_datetime_format=True)
                 if dates.notna().sum() / max(len(str_vals), 1) > 0.6:
@@ -502,10 +457,6 @@ def _detect_column_types(df: pd.DataFrame, file_name: str = "", sheet_name: str 
 
     return types
 
-
-# ---------------------------------------------------------------------------
-# Sample values (defensive)
-# ---------------------------------------------------------------------------
 
 def _extract_sample_values(df: pd.DataFrame, n: int = 5) -> dict[str, list]:
     """Extract sample values. Never raises."""

@@ -32,11 +32,11 @@ class WorkbookInspection:
     file_name: str
     file_path: str
     file_size_bytes: int
-    file_type: str  # "xlsx", "xls", "csv"
+    file_type: str
     sheet_count: int = 0
     sheets: list[SheetInfo] = field(default_factory=list)
     encoding: str = "utf-8"
-    delimiter: str = ","  # CSV only
+    delimiter: str = ","
     warnings: list[str] = field(default_factory=list)
 
 
@@ -69,23 +69,19 @@ def inspect_workbook(file_path: str) -> WorkbookInspection:
 
 def _inspect_csv(path: Path, result: WorkbookInspection) -> WorkbookInspection:
     """Inspect a CSV file."""
-    # Detect encoding
     result.encoding = _detect_encoding(path)
 
-    # Detect delimiter
     result.delimiter = _detect_delimiter(path, result.encoding)
 
-    # Count rows efficiently (don't load data)
     try:
         row_count = 0
         with open(path, "r", encoding=result.encoding, errors="replace") as f:
             for _ in f:
                 row_count += 1
-        row_count = max(0, row_count - 1)  # Subtract header
+        row_count = max(0, row_count - 1)
     except Exception:
         row_count = 0
 
-    # Get column count from first row
     try:
         df_head = pd.read_csv(path, encoding=result.encoding, sep=result.delimiter,
                                nrows=0, on_bad_lines="skip")
@@ -121,7 +117,6 @@ def _inspect_excel(path: Path, result: WorkbookInspection) -> WorkbookInspection
         result.sheet_count = len(sheets)
         result.sheets = sheets
 
-        # Check for formulas (quick scan)
         try:
             wb2 = openpyxl.load_workbook(path, read_only=True, data_only=False)
             for name in wb2.sheetnames:
@@ -129,7 +124,6 @@ def _inspect_excel(path: Path, result: WorkbookInspection) -> WorkbookInspection
                 for row in ws2.iter_rows(max_row=min(ws2.max_row or 0, 20), values_only=True):
                     for cell in row:
                         if isinstance(cell, str) and cell.startswith("="):
-                            # Find the sheet in our list and mark it
                             for s in sheets:
                                 if s.name == name:
                                     s.has_formulas = True
@@ -155,12 +149,10 @@ def _detect_encoding(path: Path) -> str:
             raw = f.read(10240)
         detected = chardet.detect(raw)
         enc = detected.get("encoding", "utf-8") or "utf-8"
-        # Validate by trying to read
         with open(path, "r", encoding=enc) as f:
             f.read(1024)
         return enc
     except Exception:
-        # Try common encodings
         for enc in ["utf-8", "latin-1", "cp1252"]:
             try:
                 with open(path, "r", encoding=enc) as f:

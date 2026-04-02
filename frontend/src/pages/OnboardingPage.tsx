@@ -13,7 +13,6 @@ export default function OnboardingPage() {
   const [dbType, setDbType] = useState<"postgresql" | "mysql">("postgresql");
 
   useEffect(() => {
-    // Fetch from API or use static
     setGuide({
       steps: [
         {

@@ -8,7 +8,6 @@ interface DataTableProps {
 export default function DataTable({ data }: DataTableProps) {
   const columns = data.columns || [];
   const rows = data.rows || [];
-  // Handle both camelCase and snake_case from SSE
   const totalRows = data.totalRows ?? (data as any).total_rows ?? rows.length;
 
   return (

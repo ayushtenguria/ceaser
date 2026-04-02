@@ -21,8 +21,8 @@ logger = logging.getLogger(__name__)
 class SectionPlan:
     """Plan for one report section."""
     title: str
-    description: str                  # What this section covers
-    source_message_indices: list[int] # Which messages to pull data from
+    description: str
+    source_message_indices: list[int]
     has_table: bool = False
     has_chart: bool = False
     key_data_points: list[str] = field(default_factory=list)
@@ -82,7 +82,6 @@ async def plan_report(
     llm: BaseChatModel,
 ) -> ReportPlan:
     """Analyze conversation messages and produce a report plan."""
-    # Build conversation summary with indices
     conv_lines: list[str] = []
     for i, msg in enumerate(messages):
         role = "USER" if msg.get("role") == "user" else "ASSISTANT"
@@ -131,7 +130,6 @@ async def plan_report(
             ))
 
         if not plan.sections:
-            # Fallback: one section per assistant message with data
             for i, msg in enumerate(messages):
                 if msg.get("role") == "assistant" and (msg.get("table_data") or msg.get("plotly_figure")):
                     plan.sections.append(SectionPlan(
@@ -147,7 +145,6 @@ async def plan_report(
 
     except Exception as exc:
         logger.warning("Report planning failed: %s", exc)
-        # Fallback plan
         return _fallback_plan(messages)
 
 

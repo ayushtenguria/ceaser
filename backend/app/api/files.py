@@ -20,7 +20,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/files", tags=["files"])
 
 _UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
-_MAX_FILE_SIZE = 100 * 1024 * 1024  # 100 MB
+_MAX_FILE_SIZE = 100 * 1024 * 1024
 
 _ALLOWED_EXTENSIONS: dict[str, str] = {
     ".csv": "csv",
@@ -65,7 +65,6 @@ async def upload_file(
     """
     user = await require_permission(Permission.UPLOAD_FILES, current_user, db)
 
-    # ── Validate ────────────────────────────────────────────────────
     if not file.filename:
         raise HTTPException(status_code=400, detail="Filename is required.")
 
@@ -78,10 +77,9 @@ async def upload_file(
             detail=f"Unsupported file type '{ext}'. Allowed: {allowed}",
         )
 
-    # ── Save file via storage backend ────────────────────────────────
     from app.services.storage import get_storage
 
-    clean_filename = Path(file.filename).name  # Strip path components
+    clean_filename = Path(file.filename).name
     safe_name = f"{uuid.uuid4().hex}_{clean_filename}"
     org_id = user.organization_id or "default"
     remote_path = f"uploads/{org_id}/{user.id}/{safe_name}"
@@ -94,13 +92,9 @@ async def upload_file(
     stored_path = await storage.upload(contents, remote_path)
     logger.info("Saved uploaded file: %s (%d bytes)", stored_path, len(contents))
 
-    # Get a local-readable path for parsing (local: same path, supabase: signed URL or temp)
     local_path = await storage.download_url(remote_path)
     dest_path = Path(local_path) if not local_path.startswith("http") else None
 
-    # ── Parse & extract metadata ────────────────────────────────────
-    # For Supabase, we need a local file for the Excel pipeline to read.
-    # Write a temp copy if we don't have a local path.
     import tempfile
     _temp_dir = None
     parse_path = str(dest_path) if dest_path else ""
@@ -115,7 +109,6 @@ async def upload_file(
     except Exception as exc:
         logger.warning("Could not parse uploaded file: %s", exc)
 
-    # ── Run Excel Intelligence Engine for xlsx/xls/csv files ───────
     excel_context = None
     code_preamble = None
     parquet_paths_data = None
@@ -138,16 +131,14 @@ async def upload_file(
     except Exception as exc:
         logger.warning("Excel processing failed (file still saved): %s", exc)
     finally:
-        # Clean up temp file (Supabase case)
         if _temp_dir:
             import shutil
             shutil.rmtree(_temp_dir, ignore_errors=True)
 
-    # ── Persist record ──────────────────────────────────────────────
     upload = FileUpload(
         filename=file.filename,
         file_type=file_type,
-        file_path=remote_path,  # Store the remote/relative path, not absolute
+        file_path=remote_path,
         size_bytes=len(contents),
         organization_id=user.organization_id or current_user.org_id or "",
         user_id=user.id,
@@ -161,14 +152,13 @@ async def upload_file(
     await db.flush()
     await db.refresh(upload)
 
-    # Build file graph in Neo4j for Graph RAG
     try:
         from app.services.schema_graph import build_file_graph
         await build_file_graph(
             file_id=str(upload.id),
             org_id=upload.organization_id,
             filename=file.filename,
-            conversation_id=None,  # linked to conversation when used in chat
+            conversation_id=None,
             uploaded_by=str(user.id),
             column_info=column_info,
             parquet_paths=parquet_paths_data,
@@ -207,12 +197,10 @@ async def delete_file(
     if upload is None:
         raise HTTPException(status_code=404, detail="File not found.")
 
-    # Remove from storage
     from app.services.storage import get_storage
     try:
         storage = get_storage()
         await storage.delete(upload.file_path)
-        # Also delete parquet files
         if upload.parquet_paths:
             for path in upload.parquet_paths.values():
                 try:

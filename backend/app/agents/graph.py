@@ -44,9 +44,6 @@ def _max_retries() -> int:
 
 _MAX_RETRIES = _max_retries()
 
-# ---------------------------------------------------------------------------
-# Response generator
-# ---------------------------------------------------------------------------
 
 _RESPONSE_SYSTEM_PROMPT = """\
 You are Ceaser, a friendly and expert AI data analyst.
@@ -101,11 +98,7 @@ async def _respond(state: AgentState, llm: BaseChatModel) -> AgentState:
     if state.get("table_data"):
         preview = json.dumps(state["table_data"], default=str)[:2000]
         context_parts.append(f"Table data (preview):\n{preview}")
-    # NOTE: Do NOT tell the LLM about charts — it leaks the marker text.
-    # The chart renders independently on the frontend. The respond node
-    # only needs to summarize the data, not acknowledge the chart.
     if state.get("error"):
-        # Never show raw tracebacks to users — clean ALL technical errors
         error = state["error"]
         technical_keywords = (
             "UNION", "SYNTAX", "COLUMN", "RELATION", "CAST", "TYPE",
@@ -140,10 +133,6 @@ async def _respond(state: AgentState, llm: BaseChatModel) -> AgentState:
     }
 
 
-# ---------------------------------------------------------------------------
-# Conditional edges
-# ---------------------------------------------------------------------------
-
 def _after_router(state: AgentState) -> str:
     return state["next_action"]
 
@@ -159,8 +148,6 @@ def _after_sql_execute(state: AgentState) -> str:
     """After SQL execution: try repair first, then retry sql_agent if repair fails."""
     if state.get("error") and state.get("retry_count", 0) < _MAX_RETRIES:
         retry = state.get("retry_count", 0)
-        # First failure → try repair agent (surgical fix)
-        # Second+ failure → fall back to sql_agent (regenerate)
         if retry == 0:
             return "repair_sql"
         return "sql_agent"
@@ -182,10 +169,6 @@ def _after_code_execute(state: AgentState) -> str:
     return "respond"
 
 
-# ---------------------------------------------------------------------------
-# Graph builder
-# ---------------------------------------------------------------------------
-
 def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel | None = None) -> StateGraph:
     """Construct and return the compiled LangGraph agent.
 
@@ -193,41 +176,40 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
       llm       — heavy (gemini-3-flash): SQL, Python, analyst, respond, decomposer
       llm_light — light (gemini-3.1-flash-lite): router, verifier, repair, suggestions
     """
-    _light = llm_light or llm  # Fallback to heavy if no light model provided
+    _light = llm_light or llm
 
     async def router_node(state: AgentState) -> AgentState:
-        return await route_query(state, _light)         # LIGHT — simple classification
+        return await route_query(state, _light)
 
     async def sql_agent_node(state: AgentState) -> AgentState:
-        return await generate_sql(state, llm)            # HEAVY — core SQL generation
+        return await generate_sql(state, llm)
 
     async def python_agent_node(state: AgentState) -> AgentState:
-        return await generate_python(state, llm)         # HEAVY — core code generation
+        return await generate_python(state, llm)
 
     async def validate_node(state: AgentState) -> AgentState:
-        return validate_sql(state)                       # NO LLM — rule-based
+        return validate_sql(state)
 
     async def sql_execute_node(state: AgentState) -> AgentState:
-        return await execute_sql(state, db)              # NO LLM — DB execution
+        return await execute_sql(state, db)
 
     async def verify_node(state: AgentState) -> AgentState:
-        return await verify_results(state, _light)       # LIGHT — yes/no check
+        return await verify_results(state, _light)
 
     async def code_execute_node(state: AgentState) -> AgentState:
-        return await execute_code(state)                 # NO LLM — sandbox execution
+        return await execute_code(state)
 
     async def respond_node(state: AgentState) -> AgentState:
-        return await _respond(state, llm)                # HEAVY — user-facing response
+        return await _respond(state, llm)
 
     async def repair_node(state: AgentState) -> AgentState:
-        return await repair_sql(state, _light)           # LIGHT — surgical SQL fix
+        return await repair_sql(state, _light)
 
     async def analyst_node(state: AgentState) -> AgentState:
-        return await run_analyst(state, llm, db)         # HEAVY — strategic analysis
+        return await run_analyst(state, llm, db)
 
     graph = StateGraph(AgentState)
 
-    # Nodes
     graph.add_node("router", router_node)
     graph.add_node("sql_agent", sql_agent_node)
     graph.add_node("validate_sql", validate_node)
@@ -239,7 +221,6 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
     graph.add_node("repair_sql", repair_node)
     graph.add_node("analyst", analyst_node)
 
-    # Edges
     graph.set_entry_point("router")
 
     graph.add_conditional_edges(
@@ -255,7 +236,6 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
         },
     )
 
-    # Analyst goes straight to respond (it does its own execution internally)
     graph.add_edge("analyst", "respond")
 
     graph.add_edge("sql_agent", "validate_sql")
@@ -291,10 +271,6 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
     return graph
 
 
-# ---------------------------------------------------------------------------
-# Public entry-point
-# ---------------------------------------------------------------------------
-
 async def _run_cross_db_query(
     query: str,
     connection_ids: list[str],
@@ -320,45 +296,37 @@ async def _run_cross_db_query(
 
     yield {"type": "status", "content": f"Connected to {len(available)} databases. Planning query..."}
 
-    # Plan
     plan = await plan_cross_db_query(query, multi_schema, llm)
 
     if not plan.queries:
         yield {"type": "error", "content": "Could not plan a query across your databases. Try rephrasing."}
         return
 
-    # If single DB, route through normal flow
     if plan.is_single_db and len(plan.queries) == 1:
         yield {"type": "status", "content": f"Query targets {plan.queries[0].connection_name} only."}
         yield {"type": "sql", "content": plan.queries[0].sql}
 
     yield {"type": "status", "content": f"Executing {len(plan.queries)} queries in parallel..."}
 
-    # Execute
     results = await execute_parallel_queries(plan, db)
 
-    # Show individual results
     for alias, result in results.items():
         if result.success:
             yield {"type": "status", "content": f"✓ {result.connection_name}: {result.row_count} rows ({result.execution_ms}ms)"}
         else:
             yield {"type": "status", "content": f"✗ {result.connection_name}: {result.error}"}
 
-    # Join
     if len(plan.joins) > 0:
         yield {"type": "status", "content": "Joining results across databases..."}
 
     joined = join_results(results, plan)
 
-    # Yield table data
     if joined.get("table_data"):
         yield {"type": "table", "content": joined["table_data"]}
 
-    # Yield warnings
     for warning in joined.get("warnings", []):
         yield {"type": "status", "content": f"⚠ {warning}"}
 
-    # Generate natural language response
     table_preview = ""
     td = joined.get("table_data", {})
     if td.get("rows"):
@@ -415,7 +383,6 @@ async def _run_single_query(
     start_time = _time.monotonic()
 
     async for event in compiled.astream(initial_state, stream_mode="updates"):
-        # Hard timeout guard — prevent infinite loops from killing the stream
         if _time.monotonic() - start_time > timeout_seconds:
             yield {"type": "error", "content": "Analysis timed out. Try a simpler query."}
             return
@@ -481,7 +448,6 @@ async def _run_single_query(
 
     if final_state and final_state.get("error"):
         error = final_state["error"]
-        # Only hide raw tracebacks/internal errors — keep user-friendly messages
         raw_traceback_markers = ("Traceback", "File \"", "  File ", "SyntaxError", "IndentationError", "ModuleNotFoundError")
         if any(marker in error for marker in raw_traceback_markers):
             yield {"type": "error", "content": "The analysis encountered a technical issue. Try rephrasing your question or asking for a simpler analysis."}
@@ -510,7 +476,6 @@ async def run_agent(
     graph = build_graph(llm, db, llm_light=_light)
     compiled = graph.compile()
 
-    # Build message history for conversation context
     history_messages: list = []
     for msg in (history or []):
         if msg["role"] == "user":
@@ -520,12 +485,10 @@ async def run_agent(
 
     yield {"type": "status", "content": "Analysing your question..."}
 
-    # Cross-DB mode: multiple connections selected
     if connection_ids and len(connection_ids) > 1:
         yield {"type": "status", "content": "Multi-database query mode..."}
         async for chunk in _run_cross_db_query(query, connection_ids, schema_context, llm, db):
             yield chunk
-        # Generate suggestions (LIGHT model)
         try:
             from app.agents.suggestions import generate_follow_up_suggestions
             follow_ups = await generate_follow_up_suggestions(
@@ -540,13 +503,11 @@ async def run_agent(
         yield {"type": "suggestions", "content": "", "data": follow_ups}
         return
 
-    # Step 1: Decompose the query (LIGHT model — simple split)
     sub_queries = await decompose_query(query, _light)
 
     all_texts: list[str] = []
 
     if len(sub_queries) == 1:
-        # Single query — run directly
         async for chunk in _run_single_query(
             compiled, query, connection_id, file_id, schema_context, history_messages,
         ):
@@ -554,7 +515,6 @@ async def run_agent(
                 all_texts.append(chunk.get("content", ""))
             yield chunk
     else:
-        # Multiple sub-queries — run each sequentially
         yield {"type": "status", "content": f"Breaking into {len(sub_queries)} parts..."}
 
         for i, sub_q in enumerate(sub_queries, 1):
@@ -564,23 +524,19 @@ async def run_agent(
             async for chunk in _run_single_query(
                 compiled, sub_q, connection_id, file_id, schema_context, history_messages,
             ):
-                # Yield all artifacts (tables, charts, sql, code)
                 if chunk["type"] in ("table", "plotly", "sql", "code", "chart"):
                     yield chunk
                 elif chunk["type"] == "text":
                     sub_text = chunk["content"]
                 elif chunk["type"] == "error":
                     sub_text = f"Error: {chunk['content']}"
-                # Skip status/done for sub-queries to avoid noise
 
             if sub_text:
                 all_texts.append(f"**{sub_q}**\n{sub_text}")
 
-        # Combine all text responses
         if all_texts:
             yield {"type": "text", "content": "\n\n---\n\n".join(all_texts)}
 
-    # Generate follow-up suggestions (LIGHT model)
     try:
         from app.agents.suggestions import generate_follow_up_suggestions
         follow_ups = await generate_follow_up_suggestions(

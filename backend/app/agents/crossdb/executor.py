@@ -23,7 +23,7 @@ from app.db.models import DatabaseConnection
 
 logger = logging.getLogger(__name__)
 
-_PER_QUERY_TIMEOUT = 30  # seconds per individual query
+_PER_QUERY_TIMEOUT = 30
 
 
 @dataclass
@@ -59,11 +59,9 @@ async def execute_parallel_queries(
         start = time.monotonic()
 
         try:
-            # File source — load from parquet, no SQL needed
             if sub.source_type == "file":
                 return await _execute_file_query(sub, result, start)
 
-            # Database source — execute SQL
             stmt = select(DatabaseConnection).where(
                 DatabaseConnection.id == uuid.UUID(sub.connection_id)
             )
@@ -85,14 +83,11 @@ async def execute_parallel_queries(
                 )
                 await connector.disconnect()
 
-                # Convert to DataFrame
                 df = pd.DataFrame(rows, columns=columns)
 
-                # Convert non-serializable types
                 for col in df.columns:
                     try:
                         if df[col].dtype == object:
-                            # Try numeric conversion for string numbers
                             numeric = pd.to_numeric(df[col], errors="coerce")
                             if numeric.notna().sum() > df[col].notna().sum() * 0.8:
                                 df[col] = numeric
@@ -122,7 +117,6 @@ async def execute_parallel_queries(
         result.execution_ms = int((time.monotonic() - start) * 1000)
         return result
 
-    # Execute ALL queries in parallel
     raw_results = await asyncio.gather(
         *[_execute_one(sub) for sub in plan.queries],
         return_exceptions=False,
@@ -154,7 +148,6 @@ async def _execute_file_query(
             result.error = "No parquet files found for this file source"
             return result
 
-        # Load parquet files (via storage backend for signed URLs / local paths)
         from app.services.storage import get_storage
         storage = get_storage()
         dfs = []
@@ -171,10 +164,8 @@ async def _execute_file_query(
             result.error = "Failed to load any data from file"
             return result
 
-        # If multiple sheets, concat them (user can filter later)
         df = pd.concat(dfs, ignore_index=True) if len(dfs) > 1 else dfs[0]
 
-        # If there's pandas code to execute, run it
         if sub.python_code:
             local_vars = {"df": df, "pd": pd}
             exec(sub.python_code, {"__builtins__": {}}, local_vars)

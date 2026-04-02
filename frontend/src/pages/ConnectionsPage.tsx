@@ -27,7 +27,6 @@ export default function ConnectionsPage() {
         const data = await api.getConnections();
         if (!cancelled) setConnections(data);
       } catch {
-        // Silent fail
       } finally {
         if (!cancelled) setIsLoading(false);
       }

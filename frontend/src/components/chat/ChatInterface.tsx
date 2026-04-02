@@ -17,7 +17,6 @@ export default function ChatInterface() {
   const [reportOpen, setReportOpen] = useState(false);
   const [notebookDraftOpen, setNotebookDraftOpen] = useState(false);
 
-  // Auto-scroll to bottom on new messages or streaming updates
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages, isStreaming]);
@@ -35,13 +34,12 @@ export default function ChatInterface() {
     if (s.includes("fixing query")) return "Fixing query...";
     if (s.includes("verifying")) return "Checking results...";
     if (s.includes("breaking into")) return "Breaking into sub-queries...";
-    if (s.includes("part ")) return status; // "Part 1/2: ..." — show as-is
+    if (s.includes("part ")) return status;
     if (s.includes("multi-database")) return "Querying multiple databases...";
     if (s.includes("loading schemas")) return "Loading database schemas...";
     if (s.includes("planning")) return "Planning analysis strategy...";
     if (s.includes("deep analysis")) return "Running comprehensive analysis...";
     if (s.includes("joining")) return "Merging results from multiple sources...";
-    // Strip technical prefixes
     return status.replace(/^(decided to use: |sql |code )/, "").trim() || "Processing...";
   }
 
@@ -155,7 +153,6 @@ function EmptyState({ onSuggestionClick }: { onSuggestionClick: (message: string
   const [dynamicSuggestions, setDynamicSuggestions] = useState<string[]>([]);
   const [loadingSuggestions, setLoadingSuggestions] = useState(false);
 
-  // Fetch schema-aware suggestions when connection is active
   useEffect(() => {
     if (activeConnectionId) {
       setLoadingSuggestions(true);

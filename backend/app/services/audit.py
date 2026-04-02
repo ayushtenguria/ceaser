@@ -26,7 +26,6 @@ async def log_action(
     from sqlalchemy import select
     from app.db.models import User
 
-    # Resolve clerk_id to DB user UUID
     resolved_user_id = None
     if user_id:
         try:

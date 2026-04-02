@@ -37,7 +37,6 @@ async def generate_report_from_conversation(
     """
     import uuid
 
-    # Step 0: Load conversation messages
     yield {"type": "report_status", "stage": "Loading conversation", "progress": 5}
 
     stmt = (
@@ -52,7 +51,6 @@ async def generate_report_from_conversation(
         yield {"type": "report_error", "error": "No messages found in this conversation."}
         return
 
-    # Convert to dicts for the agents
     messages: list[dict[str, Any]] = []
     for msg in db_messages:
         messages.append({
@@ -68,12 +66,10 @@ async def generate_report_from_conversation(
 
     yield {"type": "report_status", "stage": f"Analyzing {len(messages)} messages", "progress": 15}
 
-    # Step 1: Plan
     yield {"type": "report_status", "stage": "Planning report structure", "progress": 25}
     plan = await plan_report(messages, llm)
     yield {"type": "report_status", "stage": f"Planned {len(plan.sections)} sections", "progress": 35}
 
-    # Step 2: Write
     total_sections = len(plan.sections) or 1
     for i in range(total_sections):
         pct = 35 + int((i / total_sections) * 40)
@@ -84,7 +80,6 @@ async def generate_report_from_conversation(
 
     yield {"type": "report_status", "stage": "Writing complete", "progress": 80}
 
-    # Stream individual sections as they're ready
     for section in report.sections:
         yield {
             "type": "report_section",
@@ -97,13 +92,11 @@ async def generate_report_from_conversation(
             },
         }
 
-    # Step 3: Enrich
     yield {"type": "report_status", "stage": "Enriching with additional insights", "progress": 90}
     report = await enrich_report(report, llm)
 
     yield {"type": "report_status", "stage": "Report complete", "progress": 100}
 
-    # Final report
     yield {
         "type": "report_complete",
         "report": {

@@ -24,7 +24,6 @@ def validate_sql(state: AgentState) -> AgentState:
 
     sql_upper = sql.upper().strip()
 
-    # 1. Must be a SELECT or WITH (CTE)
     if not sql_upper.startswith("SELECT") and not sql_upper.startswith("WITH"):
         return {
             **state,
@@ -32,7 +31,6 @@ def validate_sql(state: AgentState) -> AgentState:
             "retry_count": state.get("retry_count", 0) + 1,
         }
 
-    # 2. Block destructive operations
     destructive = re.findall(
         r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|'
         r'EXEC|EXECUTE|CALL|COPY|VACUUM|REINDEX|CLUSTER|COMMENT|'
@@ -47,8 +45,6 @@ def validate_sql(state: AgentState) -> AgentState:
             "retry_count": state.get("retry_count", 0) + 1,
         }
 
-    # 2b. Block multiple statements (SQL injection via semicolons)
-    # Allow semicolons only at the very end of the query
     statements = [s.strip() for s in sql.rstrip(";").split(";") if s.strip()]
     if len(statements) > 1:
         return {
@@ -58,17 +54,12 @@ def validate_sql(state: AgentState) -> AgentState:
             "retry_count": state.get("retry_count", 0) + 1,
         }
 
-    # 3. Check table references against schema context
     schema_ctx = state.get("schema_context", "")
-    # Extract known table names from the schema context (handles both JSON and text formats)
     known_tables: set[str] = set()
-    # JSON format: "name": "table_name"
     known_tables.update(re.findall(r'"name"\s*:\s*"(\w+)"', schema_ctx))
-    # Text format: Table: table_name
     known_tables.update(re.findall(r'Table:\s*(\w+)', schema_ctx))
     known_tables = {t.lower() for t in known_tables}
 
-    # SQL keywords/functions that appear after FROM but aren't table names
     _SQL_KEYWORDS = {
         "select", "where", "group", "order", "having", "limit", "offset",
         "union", "intersect", "except", "values", "set", "dual",
@@ -76,8 +67,7 @@ def validate_sql(state: AgentState) -> AgentState:
         "lateral", "unnest", "generate_series", "json_each", "jsonb_each",
     }
 
-    if known_tables:  # Only validate if we could parse table names
-        # Match FROM/JOIN table refs, but skip subqueries (FROM () and function calls (FROM func()
+    if known_tables:
         from_tables = re.findall(r'\bfrom\s+([a-z_]\w*)\b(?!\s*\()', sql.lower())
         join_tables = re.findall(r'\bjoin\s+([a-z_]\w*)\b(?!\s*\()', sql.lower())
         referenced_tables = set(from_tables + join_tables) - _SQL_KEYWORDS
@@ -91,7 +81,6 @@ def validate_sql(state: AgentState) -> AgentState:
                 "retry_count": state.get("retry_count", 0) + 1,
             }
 
-    # 4. Add LIMIT if missing (safety net)
     if "LIMIT" not in sql_upper:
         sql = sql.rstrip(";").strip() + "\nLIMIT 1000;"
         logger.info("Added LIMIT 1000 to query.")

@@ -38,7 +38,6 @@ async def load_memories(
         user_id: optional user ID for user-specific memories
         question: the user's question (for relevance filtering)
     """
-    # Try Graph RAG first (Neo4j hybrid retrieval)
     try:
         from app.services.memory_graph import retrieve_memories, update_memory_access
         memories = await retrieve_memories(
@@ -47,7 +46,6 @@ async def load_memories(
             user_id=str(user_id) if user_id else None,
         )
         if memories:
-            # Update access tracking in background
             mem_ids = [m["id"] for m in memories if m.get("id")]
             await update_memory_access(mem_ids)
             logger.info("Graph RAG memories: %d loaded for org %s", len(memories), org_id)
@@ -55,7 +53,6 @@ async def load_memories(
     except Exception as exc:
         logger.debug("Graph memory retrieval failed, falling back to PostgreSQL: %s", exc)
 
-    # Fallback: load from PostgreSQL (flat, load-all)
     return await _load_memories_flat(db, org_id, user_id)
 
 
@@ -89,10 +86,8 @@ async def _load_memories_flat(
     result = await db.execute(stmt)
     memories = list(result.scalars().all())
 
-    # Filter expired
     active = [m for m in memories if not m.expires_at or m.expires_at > now]
 
-    # Update access counts
     if active:
         mem_ids = [m.id for m in active]
         await db.execute(
@@ -120,14 +115,12 @@ def format_memories_for_prompt(memories: list[dict]) -> str:
     if not memories:
         return ""
 
-    # Use graph formatter if available
     try:
         from app.services.memory_graph import format_memories_for_prompt as graph_format
         return graph_format(memories)
     except ImportError:
         pass
 
-    # Fallback flat formatting
     lines = [
         "",
         "AGENT MEMORY (use these facts silently — do NOT mention them to the user):",
@@ -167,7 +160,6 @@ async def save_memory(
     related_columns: list[dict] | None = None,
 ) -> AgentMemory:
     """Save a memory to both PostgreSQL and Neo4j graph."""
-    # Check for duplicate
     existing_stmt = select(AgentMemory).where(
         AgentMemory.organization_id == org_id,
         AgentMemory.memory_type == memory_type,
@@ -182,12 +174,10 @@ async def save_memory(
         logger.debug("Duplicate memory skipped: %s", content[:80])
         return existing.scalar_one_or_none()
 
-    # Set expiry for user-level memories
     expires_at = None
     if user_id and memory_type in ("preference", "correction"):
         expires_at = datetime.utcnow() + timedelta(days=_USER_MEMORY_TTL_DAYS)
 
-    # Save to PostgreSQL
     memory = AgentMemory(
         organization_id=org_id,
         user_id=user_id,
@@ -201,7 +191,6 @@ async def save_memory(
     db.add(memory)
     await db.flush()
 
-    # Save to Neo4j graph (non-blocking)
     try:
         from app.services.memory_graph import save_memory_to_graph
         await save_memory_to_graph(

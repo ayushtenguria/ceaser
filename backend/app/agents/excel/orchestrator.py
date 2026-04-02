@@ -23,10 +23,6 @@ from app.agents.excel.state import ExcelPipelineState
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Pipeline nodes — each reads/writes ExcelPipelineState
-# ---------------------------------------------------------------------------
-
 def _node_inspect(state: ExcelPipelineState) -> ExcelPipelineState:
     """Node 1: Inspect the file — detect type, encoding, sheet count."""
     try:
@@ -55,8 +51,6 @@ def _node_extract_sheets(state: ExcelPipelineState) -> ExcelPipelineState:
     try:
         from app.agents.excel.sheet_extractor import extract_all_sheets
 
-        # Pass None for inspection — let the extractor handle everything from scratch.
-        # The extractor's own fallback logic is more robust than a partial compat object.
         inspection = None
 
         sheets = extract_all_sheets(state["file_path"], inspection)
@@ -127,7 +121,6 @@ def _node_map_relationships(state: ExcelPipelineState) -> ExcelPipelineState:
         from app.agents.excel.relationship_mapper import map_relationships
         from app.agents.excel.sheet_extractor import ExtractedSheet
 
-        # Rebuild ExtractedSheet objects from state dicts
         extracted = []
         for sd in sheets:
             es = ExtractedSheet(
@@ -137,7 +130,6 @@ def _node_map_relationships(state: ExcelPipelineState) -> ExcelPipelineState:
             )
             extracted.append(es)
 
-        # Build formulas compat
         formula_obj = None
         if state.get("formulas"):
             formula_obj = type("F", (), {
@@ -227,7 +219,6 @@ def _node_quality_gate(state: ExcelPipelineState) -> ExcelPipelineState:
     auto_fixes: list[str] = []
     quality_issues: list[str] = list(state.get("quality_issues", []))
 
-    # Auto-normalize typos detected by the profiler
     for prof in profiles:
         sheet_name = prof.get("sheet_name", "")
         matching_sheet = next((s for s in sheets if s["name"] == sheet_name), None)
@@ -247,14 +238,12 @@ def _node_quality_gate(state: ExcelPipelineState) -> ExcelPipelineState:
                         auto_fixes.append(fix_msg)
                         logger.info("Quality Gate: %s", fix_msg)
 
-        # Flag high null columns
         for col_prof in prof.get("columns", []):
             if col_prof.get("null_pct", 0) > 50:
                 quality_issues.append(
                     f"{sheet_name}.{col_prof['name']}: {col_prof['null_pct']:.0f}% null values"
                 )
 
-    # Classify severity
     total_warnings = len(state.get("warnings", []))
     if not quality_issues and total_warnings == 0:
         severity = "clean"
@@ -285,7 +274,6 @@ def _node_build_context(state: ExcelPipelineState) -> ExcelPipelineState:
             save_dataframes_to_parquet, build_excel_context, generate_code_preamble,
         )
 
-        # Build compat objects for the context builder
         wb_compat = _make_wb_compat(state)
         rel_compat = _make_rel_compat(state.get("relationships", []))
 
@@ -345,10 +333,6 @@ async def _node_generate_insight(state: ExcelPipelineState, llm: BaseChatModel |
         }
 
 
-# ---------------------------------------------------------------------------
-# Main entry point
-# ---------------------------------------------------------------------------
-
 async def process_excel_upload(
     file_path: str,
     llm: BaseChatModel | None = None,
@@ -358,7 +342,6 @@ async def process_excel_upload(
     start_time = time.monotonic()
     logger.info("Excel pipeline: starting for %s", file_path)
 
-    # Initialize state
     state: ExcelPipelineState = {
         "file_path": file_path,
         "org_id": org_id,
@@ -373,13 +356,10 @@ async def process_excel_upload(
         "retry_count": 0,
     }
 
-    # Run pipeline nodes sequentially — each reads/writes shared state
-    # Node 1: Inspect
     state = await asyncio.to_thread(_node_inspect, state)
     logger.info("Node 1 (Inspector): file=%s type=%s sheets=%s",
                 state.get("file_name"), state.get("file_type"), state.get("sheet_count"))
 
-    # Node 2: Extract sheets
     state = await asyncio.to_thread(_node_extract_sheets, state)
     sheets = state.get("sheets", [])
     logger.info("Node 2 (Extractor): %d sheets, %d total rows",
@@ -390,25 +370,19 @@ async def process_excel_upload(
         elapsed = time.monotonic() - start_time
         return _build_result(state, elapsed)
 
-    # Node 3: Extract formulas
     state = await asyncio.to_thread(_node_extract_formulas, state)
 
-    # Node 4: Map relationships
     state = await asyncio.to_thread(_node_map_relationships, state)
     logger.info("Node 4 (Relationships): %d found", len(state.get("relationships", [])))
 
-    # Node 5: Profile data quality
     state = await asyncio.to_thread(_node_profile, state)
 
-    # Node 6: Quality Gate — auto-fix and classify
     state = await asyncio.to_thread(_node_quality_gate, state)
     logger.info("Node 6 (Quality Gate): severity=%s, auto-fixes=%d",
                 state.get("quality_severity"), len(state.get("auto_fixes_applied", [])))
 
-    # Node 7: Build context + save parquet
     state = await asyncio.to_thread(_node_build_context, state)
 
-    # Node 8: Generate insight (async — uses LLM)
     state = await _node_generate_insight(state, llm)
 
     elapsed = time.monotonic() - start_time
@@ -418,10 +392,6 @@ async def process_excel_upload(
 
     return _build_result(state, elapsed)
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 
 def _build_result(state: ExcelPipelineState, elapsed: float) -> dict[str, Any]:
     """Convert pipeline state into the result dict expected by the file upload API."""

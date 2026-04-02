@@ -16,10 +16,6 @@ from app.services.encryption import decrypt_value
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Schema data structures
-# ---------------------------------------------------------------------------
-
 @dataclass
 class ColumnInfo:
     """Metadata for a single column."""
@@ -29,7 +25,7 @@ class ColumnInfo:
     nullable: bool
     primary_key: bool = False
     foreign_key: str | None = None
-    sample_values: list[str] = field(default_factory=list)  # distinct values for low-cardinality columns
+    sample_values: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -47,10 +43,6 @@ class SchemaInfo:
 
     tables: list[TableInfo] = field(default_factory=list)
 
-
-# ---------------------------------------------------------------------------
-# Introspection
-# ---------------------------------------------------------------------------
 
 def _build_sync_url(conn: DatabaseConnection) -> str:
     """Build a synchronous SQLAlchemy connection URL for introspection."""
@@ -78,7 +70,6 @@ def _introspect_schema_sync(connection: DatabaseConnection) -> SchemaInfo:
         inspector = inspect(sync_engine)
         table_names = inspector.get_table_names()
 
-        # Build a set of PKs / FKs per table for quick lookup.
         for table_name in table_names:
             pk_cols = {c for c in inspector.get_pk_constraint(table_name).get("constrained_columns", [])}
             fk_map: dict[str, str] = {}
@@ -99,7 +90,6 @@ def _introspect_schema_sync(connection: DatabaseConnection) -> SchemaInfo:
                     )
                 )
 
-            # Approximate row count (fast, non-locking).
             row_count: int | None = None
             try:
                 with sync_engine.connect() as conn:
@@ -108,18 +98,15 @@ def _introspect_schema_sync(connection: DatabaseConnection) -> SchemaInfo:
             except Exception:
                 logger.debug("Could not get row count for %s", table_name)
 
-            # Fetch distinct values for low-cardinality string/categorical columns.
             for col_info in columns:
                 col_name = col_info.name
                 dtype_lower = col_info.data_type.lower()
 
-                # Only for string-like and boolean columns
                 if not any(t in dtype_lower for t in ("char", "text", "varchar", "bool", "enum")):
                     continue
 
                 try:
                     with sync_engine.connect() as conn_:
-                        # Check cardinality first (fast)
                         count_result = conn_.execute(
                             text(f'SELECT COUNT(DISTINCT "{col_name}") FROM "{table_name}"')
                         )
@@ -152,10 +139,6 @@ async def introspect_schema(connection: DatabaseConnection) -> SchemaInfo:
     return await asyncio.to_thread(_introspect_schema_sync, connection)
 
 
-# ---------------------------------------------------------------------------
-# LLM formatting
-# ---------------------------------------------------------------------------
-
 def format_schema_for_llm(schema: SchemaInfo) -> str:
     """Return a human-readable text representation of the schema.
 
@@ -183,8 +166,6 @@ def format_schema_for_llm(schema: SchemaInfo) -> str:
             if col.sample_values:
                 vals = ", ".join(f"'{v}'" for v in col.sample_values[:15])
                 parts.append(f"  values: [{vals}]")
-                # Flag columns that appear to have inconsistent values
-                # (case variations, similar strings that might be typos)
                 str_vals = [str(v).lower().strip() for v in col.sample_values if v]
                 unique_lower = set(str_vals)
                 if len(unique_lower) < len(col.sample_values) and col.data_type.upper() in (
@@ -194,7 +175,6 @@ def format_schema_for_llm(schema: SchemaInfo) -> str:
                     parts.append("[DIRTY DATA - use LOWER(TRIM()) for comparison]")
             lines.append(" ".join(parts))
 
-    # Relationships section
     relationships: list[str] = []
     for table in schema.tables:
         for col in table.columns:

@@ -36,7 +36,7 @@ const clerkEnabled = !!import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
 const NAV_GROUPS = [
   {
-    label: null, // No label for primary group
+    label: null,
     items: [
       { label: "Chat", icon: MessageSquare, path: "/chat", adminOnly: false },
       { label: "Reports", icon: BarChart3, path: "/reports", adminOnly: false },
@@ -76,7 +76,6 @@ export default function Sidebar() {
     setActiveConversation,
   } = useChatStore();
 
-  // Fetch user permissions to show/hide admin nav
   useEffect(() => {
     api.getPermissions()
       .then((data) => setUserRole(data.role || "member"))
@@ -110,7 +109,6 @@ export default function Sidebar() {
           navigate("/chat");
         }
       } catch {
-        // Silent fail
       }
     },
     [activeConversationId, setActiveConversation, navigate]

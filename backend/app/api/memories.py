@@ -17,10 +17,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/memories", tags=["memories"])
 
 
-# ---------------------------------------------------------------------------
-# User endpoints — view and manage own memories
-# ---------------------------------------------------------------------------
-
 @router.get("/")
 async def list_memories(
     current_user: CurrentUser,
@@ -46,7 +42,6 @@ async def list_memories(
     elif scope == "org":
         filters.append(AgentMemory.user_id == None)  # noqa: E711
     else:
-        # all: org-level + this user's
         filters.append(
             (AgentMemory.user_id == None) | (AgentMemory.user_id == user.id)  # noqa: E711
         )
@@ -78,7 +73,7 @@ async def create_memory(
 
     content = body.get("content", "").strip()
     memory_type = body.get("memoryType", "domain_term")
-    scope = body.get("scope", "org")  # "org" or "user"
+    scope = body.get("scope", "org")
 
     if not content:
         raise HTTPException(status_code=400, detail="Content is required.")
@@ -120,7 +115,6 @@ async def delete_memory(
     if mem is None:
         raise HTTPException(status_code=404, detail="Memory not found.")
 
-    # Users can only delete their own memories, admins can delete any
     if mem.user_id and mem.user_id != user.id and user.role not in ("admin", "super_admin"):
         raise HTTPException(status_code=403, detail="Cannot delete another user's memory.")
 
@@ -134,7 +128,6 @@ async def memory_stats(current_user: CurrentUser, db: DbSession) -> dict:
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
     org_id = user.organization_id or ""
 
-    # Count by type
     stmt = (
         select(AgentMemory.memory_type, func.count())
         .where(
@@ -146,7 +139,6 @@ async def memory_stats(current_user: CurrentUser, db: DbSession) -> dict:
     result = await db.execute(stmt)
     by_type = {row[0]: row[1] for row in result.all()}
 
-    # Count by scope
     org_count_stmt = (
         select(func.count())
         .select_from(AgentMemory)

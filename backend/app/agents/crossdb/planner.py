@@ -24,22 +24,22 @@ class SubQuery:
     """A query to run against one specific data source."""
     connection_id: str
     connection_name: str
-    sql: str                          # SQL for databases, empty for files
-    python_code: str = ""             # Pandas code for file sources
-    source_type: str = "database"     # "database" or "file"
-    purpose: str = ""                 # "fetch customer names"
-    result_alias: str = ""            # "df_users"
-    parquet_paths: dict[str, str] = field(default_factory=dict)  # For file sources
+    sql: str
+    python_code: str = ""
+    source_type: str = "database"
+    purpose: str = ""
+    result_alias: str = ""
+    parquet_paths: dict[str, str] = field(default_factory=dict)
 
 
 @dataclass
 class JoinStep:
     """How to join two intermediate results."""
-    left_alias: str       # "df_users"
-    right_alias: str      # "df_orders"
-    left_on: str          # "id"
-    right_on: str         # "user_id"
-    how: str = "left"     # "left", "inner", "outer"
+    left_alias: str
+    right_alias: str
+    left_on: str
+    right_on: str
+    how: str = "left"
 
 
 @dataclass
@@ -47,9 +47,9 @@ class CrossDbQueryPlan:
     """Complete plan for a cross-database query."""
     queries: list[SubQuery] = field(default_factory=list)
     joins: list[JoinStep] = field(default_factory=list)
-    post_join_operations: str = ""  # pandas code for final aggregation/sort
+    post_join_operations: str = ""
     explanation: str = ""
-    is_single_db: bool = False  # True if only one DB needed
+    is_single_db: bool = False
 
 
 _PLAN_PROMPT = """\
@@ -135,7 +135,6 @@ async def plan_cross_db_query(
             sql = q.get("sql", "")
             if not sql:
                 continue
-            # Validate SELECT only
             if not sql.strip().upper().startswith(("SELECT", "WITH")):
                 logger.warning("Cross-DB planner produced non-SELECT: %s", sql[:50])
                 continue

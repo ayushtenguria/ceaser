@@ -20,7 +20,7 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [attachedFile, setAttachedFile] = useState<{
     id: string; name: string; size: number; type: string;
-    allFileIds?: string[];  // all uploaded file IDs (for multi-file)
+    allFileIds?: string[];
     qualityIssues?: string[]; qualitySeverity?: string;
   } | null>(null);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
@@ -33,7 +33,6 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
   const { connections, activeConnectionId, activeConnectionIds, setActiveConnection, setActiveConnectionIds, toggleConnectionId } = useConnectionsStore();
   const [connDropdownOpen, setConnDropdownOpen] = useState(false);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     if (!connDropdownOpen) return;
     const handler = (e: MouseEvent) => {
@@ -73,7 +72,6 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
     textarea.style.height = `${Math.min(textarea.scrollHeight, 200)}px`;
   }, []);
 
-  // File name + extension available immediately on select (before upload completes)
   const [pendingFileName, setPendingFileName] = useState("");
   const [pendingFileSize, setPendingFileSize] = useState(0);
   const [pendingFileType, setPendingFileType] = useState("");
@@ -82,7 +80,6 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
     const files = e.target.files;
     if (!files || files.length === 0) return;
 
-    // Copy file list BEFORE clearing input (clearing input empties FileList in some browsers)
     const fileList = Array.from(files);
     e.target.value = "";
 
@@ -130,7 +127,8 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
         qualityIssues: qr?.items || [],
         qualitySeverity: qr?.severity || "clean",
       });
-    } catch {
+    } catch (err) {
+      console.error("[ChatInput] File upload failed:", err);
       setUploadProgress(0);
       setUploadStage("");
       setPendingFileName("");
@@ -318,9 +316,6 @@ export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
 }
 
 
-// ---------------------------------------------------------------------------
-// File Card Component — Julius-style file attachment display
-// ---------------------------------------------------------------------------
 
 const FILE_ICONS: Record<string, { icon: typeof FileSpreadsheet; color: string; label: string }> = {
   xlsx: { icon: FileSpreadsheet, color: "text-emerald-400", label: "spreadsheet" },

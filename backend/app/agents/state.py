@@ -17,13 +17,11 @@ class AgentState(TypedDict):
 
     messages: Annotated[list[BaseMessage], add_messages]
 
-    # ── Inputs ─────────────────────────────────────────────────────
     query: str
     connection_id: str | None
     file_id: str | None
     schema_context: str
 
-    # ── Intermediate artifacts ─────────────────────────────────────
     sql_query: str | None
     code_block: str | None
     execution_result: str | None
@@ -31,6 +29,5 @@ class AgentState(TypedDict):
     plotly_figure: dict[str, Any] | None
     error: str | None
 
-    # ── Control flow ───────────────────────────────────────────────
     retry_count: int
-    next_action: str  # "sql", "python", "respond", "error"
+    next_action: str

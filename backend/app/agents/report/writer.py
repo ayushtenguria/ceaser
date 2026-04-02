@@ -24,7 +24,7 @@ class ReportSection:
     """A section in the generated report."""
     order: int
     title: str
-    narrative: str                        # Markdown text with insights
+    narrative: str
     table_data: dict[str, Any] | None = None
     chart_data: dict[str, Any] | None = None
     source_message_ids: list[str] = field(default_factory=list)
@@ -37,7 +37,7 @@ class GeneratedReport:
     title: str
     subtitle: str
     executive_summary: str
-    key_metrics: list[dict[str, str]] = field(default_factory=list)  # [{"label": "MRR", "value": "$157K"}]
+    key_metrics: list[dict[str, str]] = field(default_factory=list)
     sections: list[ReportSection] = field(default_factory=list)
     recommendations: list[str] = field(default_factory=list)
     conversation_id: str = ""
@@ -117,18 +117,14 @@ async def write_report(
         total_messages_analyzed=plan.total_messages_analyzed,
     )
 
-    # Collect all findings for summary/recommendations
     all_findings: list[str] = []
 
-    # Step 1: Write each section
     for i, section_plan in enumerate(plan.sections):
         logger.info("Writing section %d/%d: %s", i + 1, len(plan.sections), section_plan.title)
 
-        # Gather data from source messages
         data_context = _build_section_data(section_plan, messages)
         key_points = "\n".join(f"- {p}" for p in section_plan.key_data_points) or "None specified"
 
-        # Write narrative
         try:
             section_msgs = [
                 SystemMessage(content=_SECTION_PROMPT.format(
@@ -145,7 +141,6 @@ async def write_report(
             logger.warning("Section writing failed: %s", exc)
             narrative = section_plan.description
 
-        # Get table/chart from source messages
         table_data, chart_data, msg_ids = _extract_artifacts(section_plan, messages)
 
         section = ReportSection(
@@ -159,7 +154,6 @@ async def write_report(
         report.sections.append(section)
         all_findings.append(f"{section_plan.title}: {narrative[:200]}")
 
-    # Step 2: Write executive summary
     findings_text = "\n".join(all_findings)
     try:
         summary_msgs = [
@@ -184,7 +178,6 @@ async def write_report(
         logger.warning("Summary writing failed: %s", exc)
         report.executive_summary = f"This report analyzes {plan.total_messages_analyzed} data points across {len(plan.sections)} areas."
 
-    # Step 3: Write recommendations
     try:
         topics = "\n".join(f"- {t}" for t in plan.recommendation_topics) or "General improvements"
         rec_msgs = [

@@ -43,8 +43,6 @@ async def verify_results(state: AgentState, llm: BaseChatModel) -> AgentState:
     sql_query = state.get("sql_query", "")
     query = state.get("query", "")
 
-    # Skip verification if no results or already retried at all
-    # (prevents infinite retry loops that kill the SSE stream)
     if not table_data or state.get("retry_count", 0) >= 1:
         return state
 
@@ -52,7 +50,6 @@ async def verify_results(state: AgentState, llm: BaseChatModel) -> AgentState:
     columns = table_data.get("columns", [])
     total = table_data.get("total_rows", 0)
 
-    # Build a preview of results
     preview = json.dumps(rows[:10], default=str) if rows else "No rows returned"
 
     messages = [
@@ -82,6 +79,5 @@ async def verify_results(state: AgentState, llm: BaseChatModel) -> AgentState:
             "retry_count": state.get("retry_count", 0) + 1,
         }
 
-    # Ambiguous response — trust the results
     logger.info("Verification ambiguous ('%s'), trusting results.", verdict[:50])
     return state

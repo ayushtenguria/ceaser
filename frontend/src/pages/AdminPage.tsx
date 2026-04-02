@@ -150,12 +150,10 @@ function CreateOrgDialog({ onCreated }: { onCreated: (org: any) => void }) {
     setError(null);
     try {
       const org = await api.createAdminOrganization({ name });
-      // If admin email provided, invite them
       if (adminEmail.trim()) {
         try {
           await api.inviteUserToOrg(org.id, { email: adminEmail, role: "admin" });
         } catch {
-          // Org created but invite failed — still show success
         }
       }
       onCreated(org);

@@ -21,14 +21,12 @@ from langchain_core.messages import HumanMessage, SystemMessage
 
 logger = logging.getLogger(__name__)
 
-# Patterns that indicate a correction/throwaway message
 _CORRECTION_PATTERNS = [
     r"^(sorry|oops|wait|no |nope|not that|wrong|ignore|scratch|never\s?mind|my bad|actually\s*,?\s*$)",
     r"^(ok|okay|yes|yeah|sure|thanks|thank you|cool|great|perfect|got it|nice)[\s!.]*$",
 ]
 _CORRECTION_RE = [re.compile(p, re.IGNORECASE) for p in _CORRECTION_PATTERNS]
 
-# Minimum message length to be considered a real analysis step
 _MIN_STEP_LENGTH = 10
 
 

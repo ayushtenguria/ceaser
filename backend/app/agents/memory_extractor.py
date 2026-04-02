@@ -58,7 +58,6 @@ async def extract_memories(
     Returns the number of memories saved. Non-blocking — errors are logged, not raised.
     """
     try:
-        # Skip very short or empty exchanges
         if len(user_message) < 10 or len(assistant_response) < 20:
             return 0
 
@@ -74,7 +73,6 @@ async def extract_memories(
         response = await llm.ainvoke(messages)
         text = response.content.strip()
 
-        # Parse JSON response
         if text.startswith("```"):
             text = text.split("```")[1]
             if text.startswith("json"):
@@ -95,13 +93,10 @@ async def extract_memories(
             if not content or len(content) < 5:
                 continue
 
-            # Validate type
             valid_types = {"correction", "preference", "column_alias", "domain_term", "business_rule", "learned_fact"}
             if mem_type not in valid_types:
                 mem_type = "learned_fact"
 
-            # Determine scope: corrections and preferences are user-level,
-            # domain terms and business rules are org-level
             mem_user_id = user_id if mem_type in ("correction", "preference") else None
 
             await save_memory(

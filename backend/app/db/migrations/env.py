@@ -11,7 +11,6 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from app.core.config import get_settings
 from app.db.session import Base
 
-# Ensure all models are imported so Base.metadata is fully populated.
 import app.db.models  # noqa: F401
 
 config = context.config

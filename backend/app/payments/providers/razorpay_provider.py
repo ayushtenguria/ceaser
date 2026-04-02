@@ -29,7 +29,7 @@ class RazorpayProvider(IPaymentProvider):
         self._key_id = key_id
         self._key_secret = key_secret
         self._webhook_secret = webhook_secret
-        self._plan_map = plan_map  # plan_name → razorpay plan_id
+        self._plan_map = plan_map
 
     def _auth(self) -> tuple[str, str]:
         return (self._key_id, self._key_secret)
@@ -48,13 +48,12 @@ class RazorpayProvider(IPaymentProvider):
             raise ValueError(f"No Razorpay plan configured for: {plan_name}")
 
         async with httpx.AsyncClient() as client:
-            # Create subscription
             resp = await client.post(
                 f"{self.BASE_URL}/subscriptions",
                 auth=self._auth(),
                 json={
                     "plan_id": rz_plan_id,
-                    "total_count": 12,  # 12 billing cycles
+                    "total_count": 12,
                     "notes": {"org_id": org_id, "plan_name": plan_name},
                     "customer_notify": 0,
                 },

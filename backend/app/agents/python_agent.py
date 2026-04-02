@@ -14,7 +14,6 @@ from app.agents.state import AgentState
 
 logger = logging.getLogger(__name__)
 
-# Temp directory for passing SQL results to the sandbox as CSV
 _DATA_DIR = Path(tempfile.gettempdir()) / "ceaser_data"
 _DATA_DIR.mkdir(exist_ok=True)
 
@@ -108,7 +107,6 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
         rows = td.get("rows", [])
         total_rows = td.get("total_rows", len(rows))
 
-        # Save full data to CSV for the sandbox to read
         csv_path = _save_table_data_as_csv(td)
 
         if csv_path:
@@ -120,13 +118,11 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
             preamble_lines.append("        df[_col] = _converted")
             preamble_lines.append("")
 
-        # Give LLM column info + sample rows + the SQL that produced the data
         sample_rows = rows[:5]
         sql_info = ""
         if state.get("sql_query"):
             sql_info = f"\nSQL query that produced this data:\n{state['sql_query']}\n"
 
-        # Build explicit column listing with types to prevent wrong column usage
         col_details = []
         for col in columns:
             sample_vals = [str(row.get(col, "")) for row in rows[:3] if row.get(col) is not None]
@@ -164,13 +160,11 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
     response = await llm.ainvoke(messages)
     raw_code: str = response.content.strip()  # type: ignore[union-attr]
 
-    # Strip markdown fencing
     if raw_code.startswith("```"):
         lines = raw_code.split("\n")
         lines = [ln for ln in lines if not ln.strip().startswith("```")]
         raw_code = "\n".join(lines).strip()
 
-    # Prepend data loading preamble + any Excel file preamble
     if "CODE PREAMBLE" in state.get("schema_context", ""):
         preamble_marker = "CODE PREAMBLE (prepend to all Python code):\n"
         ctx = state.get("schema_context", "")
@@ -189,20 +183,16 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
                 else:
                     break
 
-    # Remove duplicate imports from LLM-generated code
     code_lines = raw_code.split("\n")
     filtered = []
     for line in code_lines:
         stripped = line.strip()
-        # Skip if preamble already has this import/read
         if stripped.startswith("import pandas") or stripped.startswith("import plotly"):
             continue
         if stripped.startswith("df = pd.read_csv") and any("pd.read_csv" in p for p in preamble_lines):
             continue
         if stripped.startswith("data = ["):
-            # LLM tried to inline data — skip it, we already loaded from CSV
             if any("pd.read_csv" in p for p in preamble_lines):
-                # Skip all lines until df = pd.DataFrame(data)
                 continue
         filtered.append(line)
 

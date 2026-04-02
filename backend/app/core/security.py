@@ -18,11 +18,8 @@ logger = logging.getLogger(__name__)
 
 _bearer_scheme = HTTPBearer(auto_error=False)
 
-# ---------------------------------------------------------------------------
-# JWKS cache
-# ---------------------------------------------------------------------------
 
-_JWKS_CACHE_TTL_SECONDS = 3600  # re-fetch every hour
+_JWKS_CACHE_TTL_SECONDS = 3600
 
 
 @dataclass
@@ -56,17 +53,12 @@ async def _get_jwks(settings: Settings) -> list[dict[str, Any]]:
     return _jwks_cache.keys
 
 
-# ---------------------------------------------------------------------------
-# Token verification
-# ---------------------------------------------------------------------------
-
-
 @dataclass
 class AuthenticatedUser:
     """Lightweight representation of the authenticated caller."""
 
-    user_id: str  # Clerk user ID (sub claim)
-    org_id: str | None  # Clerk org ID if present
+    user_id: str
+    org_id: str | None
 
 
 async def verify_token(
@@ -80,7 +72,6 @@ async def verify_token(
 
     Raises ``HTTPException(401)`` on any verification failure.
     """
-    # Dev auth bypass — skip JWT verification when Clerk is not configured or dev_mode is on.
     if settings.clerk_jwks_url.startswith("https://your-clerk") or (
         settings.dev_mode and credentials is None
     ):
@@ -97,7 +88,6 @@ async def verify_token(
 
     try:
         jwks = await _get_jwks(settings)
-        # Clerk tokens are signed with RS256; we need the matching key.
         unverified_header = jwt.get_unverified_header(token)
         kid = unverified_header.get("kid")
         rsa_key: dict[str, Any] = {}

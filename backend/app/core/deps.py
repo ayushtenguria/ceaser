@@ -58,7 +58,6 @@ def get_llm(
             max_tokens=4096,
         )
 
-    # Gemini — select model based on tier
     model_name = settings.gemini_model_light if tier == "light" else settings.gemini_model
 
     return ChatGoogleGenerativeAI(
@@ -69,6 +68,5 @@ def get_llm(
     )
 
 
-# Annotated shortcuts for use in route signatures
 CurrentUser = Annotated[AuthenticatedUser, Depends(verify_token)]
 DbSession = Annotated[AsyncSession, Depends(get_db)]

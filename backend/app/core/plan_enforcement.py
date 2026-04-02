@@ -39,7 +39,6 @@ async def get_org_plan(db: AsyncSession, org_id: str) -> OrganizationPlan | None
     result = await db.execute(stmt)
     plan = result.scalar_one_or_none()
 
-    # Auto-create Free plan for existing orgs that don't have one
     if plan is None:
         plan = OrganizationPlan(
             organization_id=org_id,
@@ -58,7 +57,6 @@ async def get_org_plan(db: AsyncSession, org_id: str) -> OrganizationPlan | None
 
 async def check_query_limit(db: AsyncSession, org_id: str) -> None:
     """Check if org has exceeded daily query limit. Raises 429 if exceeded."""
-    # Super admins bypass all limits
     if await _is_super_admin(db, org_id):
         return
 
@@ -138,10 +136,10 @@ async def check_report_limit(db: AsyncSession, org_id: str) -> None:
 def check_file_size(file_size: int, plan_name: str = "free") -> None:
     """Check if file size is within plan limits."""
     limits = {
-        "free": 5 * 1024 * 1024,       # 5 MB
-        "starter": 50 * 1024 * 1024,    # 50 MB
-        "business": 200 * 1024 * 1024,  # 200 MB
-        "enterprise": 1024 * 1024 * 1024, # 1 GB
+        "free": 5 * 1024 * 1024,
+        "starter": 50 * 1024 * 1024,
+        "business": 200 * 1024 * 1024,
+        "enterprise": 1024 * 1024 * 1024,
     }
     max_size = limits.get(plan_name, limits["free"])
 

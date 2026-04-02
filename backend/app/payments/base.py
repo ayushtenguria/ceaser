@@ -32,12 +32,12 @@ class CheckoutResult:
 @dataclass
 class PaymentEvent:
     """Normalized webhook event from any provider."""
-    event_type: str  # "payment.success", "subscription.updated", "subscription.cancelled"
+    event_type: str
     provider: str
     provider_subscription_id: str | None
     provider_payment_id: str | None
     plan_name: str | None
-    amount: int | None  # cents
+    amount: int | None
     currency: str | None
     metadata: dict | None
 
@@ -48,7 +48,7 @@ class SubscriptionInfo:
     provider_subscription_id: str
     status: str
     plan_name: str
-    current_period_end: str | None  # ISO datetime
+    current_period_end: str | None
     cancel_at_period_end: bool
 
 

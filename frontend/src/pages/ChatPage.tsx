@@ -12,7 +12,6 @@ export default function ChatPage() {
     setConversations,
   } = useChatStore();
 
-  // Load conversations list
   useEffect(() => {
     let cancelled = false;
 
@@ -23,7 +22,6 @@ export default function ChatPage() {
           setConversations(conversations);
         }
       } catch {
-        // Silent fail; sidebar will show empty state
       }
     }
 
@@ -33,7 +31,6 @@ export default function ChatPage() {
     };
   }, [setConversations]);
 
-  // Load specific conversation if ID provided
   useEffect(() => {
     if (!conversationId) {
       setActiveConversation(null);
@@ -44,6 +41,12 @@ export default function ChatPage() {
 
     setActiveConversation(conversationId);
 
+    // If we already have messages for this conversation in the store
+    // (e.g. from an active streaming session), skip the API fetch
+    // to avoid overwriting in-flight messages.
+    const existing = useChatStore.getState().messages[conversationId];
+    if (existing && existing.length > 0) return;
+
     async function loadMessages() {
       try {
         const messages = await api.getMessages(conversationId!);
@@ -51,7 +54,6 @@ export default function ChatPage() {
           setMessages(conversationId!, messages);
         }
       } catch {
-        // Silent fail
       }
     }
 

@@ -70,14 +70,12 @@ async def enrich_report(
 
         data = json.loads(raw)
 
-        # Apply improvements
         if data.get("improved_summary"):
             report.executive_summary = data["improved_summary"]
 
         if data.get("additional_metrics"):
             for m in data["additional_metrics"]:
                 if isinstance(m, dict) and "label" in m and "value" in m:
-                    # Don't duplicate existing metrics
                     existing_labels = {em["label"].lower() for em in report.key_metrics}
                     if m["label"].lower() not in existing_labels:
                         report.key_metrics.append(m)

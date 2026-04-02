@@ -44,7 +44,6 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
     schema_context = state.get("schema_context", "")
     query = state["query"]
 
-    # If there is no data source at all, default to a direct response.
     has_connection = bool(state.get("connection_id"))
     has_file = bool(state.get("file_id"))
     has_file_context = any(
@@ -52,11 +51,9 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
         for marker in ("EXCEL DATA CONTEXT", "FILE DATA SUMMARY", "AVAILABLE DATAFRAMES", "CODE PREAMBLE")
     )
 
-    # Effective data source check
     has_data = has_connection or has_file or has_file_context
 
     if not has_data:
-        # No data at all — tell user to connect or upload
         data_keywords = (
             "revenue", "sales", "customer", "employee", "ticket", "order",
             "report", "top", "total", "average", "count", "how many",
@@ -73,9 +70,7 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
             }
         return {**state, "next_action": "respond"}
 
-    # If only file data (no DB), route to python for simple queries or analyze for complex ones
     if not has_connection and (has_file or has_file_context):
-        # Complex/strategic questions → analyze (DataFrame analyst mode)
         strategic_keywords = (
             "insight", "recommend", "strategy", "potential", "should we",
             "how can we", "improve", "cross-sell", "upsell", "lapsed",
@@ -94,7 +89,6 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
         logger.info("Router: file-only mode → python")
         return {**state, "next_action": "python"}
 
-    # DB connected — use LLM to decide
     messages = [
         SystemMessage(content=_ROUTER_SYSTEM_PROMPT.format(schema_context=schema_context)),
         *state["messages"],

@@ -98,7 +98,6 @@ async def test_connection(
     connection = await _load_connection(db, connection_id, user.id)
 
     try:
-        # Use the enriched introspection (includes sample values, FKs, row counts).
         schema = await introspect_schema(connection)
         schema_dict: dict = {
             "tables": [
@@ -125,7 +124,6 @@ async def test_connection(
         connection.schema_cache = schema_dict
         await db.flush()
 
-        # Build Neo4j schema graph for Graph RAG
         try:
             from app.services.schema_graph import build_schema_graph
             org_id = connection.organization_id or ""
@@ -160,7 +158,6 @@ async def refresh_schema(
 
     try:
         schema = await introspect_schema(connection)
-        # Store the raw dict representation.
         schema_dict: dict = {
             "tables": [
                 {
@@ -206,10 +203,6 @@ async def delete_connection(
     connection = await _load_connection(db, connection_id, user.id)
     await db.delete(connection)
 
-
-# ---------------------------------------------------------------------------
-# Internal helpers
-# ---------------------------------------------------------------------------
 
 async def _load_connection(
     db: DbSession,

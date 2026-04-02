@@ -47,7 +47,7 @@ def log_edge_case(
         "sheet_name": sheet_name,
         "category": category,
         "description": description,
-        "raw_error": raw_error[:500],  # Truncate long errors
+        "raw_error": raw_error[:500],
         "context": context or {},
     }
 

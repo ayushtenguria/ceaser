@@ -35,7 +35,6 @@ export default function NotebookDraftSheet({
   const [skipped, setSkipped] = useState<any[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  // Fetch draft when opened
   useEffect(() => {
     if (!open || !conversationId) return;
     setIsLoading(true);

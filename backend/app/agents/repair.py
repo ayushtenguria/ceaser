@@ -55,7 +55,6 @@ async def repair_sql(state: AgentState, llm: BaseChatModel) -> AgentState:
     if not sql or not error:
         return state
 
-    # Extract dialect from schema context
     dialect = "PostgreSQL"
     if "MYSQL" in schema.upper():
         dialect = "MySQL"
@@ -74,20 +73,18 @@ async def repair_sql(state: AgentState, llm: BaseChatModel) -> AgentState:
     response = await llm.ainvoke(messages)
     fixed_sql: str = response.content.strip()  # type: ignore[union-attr]
 
-    # Strip markdown fences
     if fixed_sql.startswith("```"):
         lines = fixed_sql.split("\n")
         lines = [ln for ln in lines if not ln.strip().startswith("```")]
         fixed_sql = "\n".join(lines).strip()
 
-    # Validate it's still a SELECT
     if not fixed_sql.upper().startswith(("SELECT", "WITH")):
         logger.warning("Repair agent produced non-SELECT: %s", fixed_sql[:50])
-        return state  # Don't use the repair, keep original error
+        return state
 
     logger.info("Repair agent: fixed SQL (%d chars)", len(fixed_sql))
     return {
         **state,
         "sql_query": fixed_sql,
-        "error": None,  # Clear the error so executor retries
+        "error": None,
     }

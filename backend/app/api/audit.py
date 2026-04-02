@@ -30,7 +30,6 @@ async def list_audit_logs(
     """List audit logs for the organization. Newest first."""
     user = await require_permission(Permission.VIEW_AUDIT, current_user, db)
 
-    # Filter by org: only show logs from users in the same organization
     org_user_ids = select(User.id).where(User.organization_id == (user.organization_id or ""))
 
     stmt = select(AuditLog).where(
@@ -53,10 +52,8 @@ async def audit_stats(current_user: CurrentUser, db: DbSession) -> dict:
     user = await require_permission(Permission.VIEW_AUDIT, current_user, db)
     org_id = user.organization_id or ""
 
-    # Only count logs from users in the same organization
     org_user_ids = select(User.id).where(User.organization_id == org_id)
 
-    # Count by action type in the last 24 hours
     since = datetime.utcnow().replace(hour=0, minute=0, second=0)
     stmt = (
         select(AuditLog.action, func.count())
@@ -66,7 +63,6 @@ async def audit_stats(current_user: CurrentUser, db: DbSession) -> dict:
     result = await db.execute(stmt)
     action_counts = {row[0]: row[1] for row in result.all()}
 
-    # Total queries today
     total = sum(action_counts.values())
 
     return {

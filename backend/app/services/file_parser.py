@@ -16,7 +16,7 @@ _SUPPORTED_EXTENSIONS: dict[str, str] = {
     ".xls": "excel",
 }
 
-_MAX_ROWS_FOR_SUMMARY = 500_000  # avoid OOM on huge files
+_MAX_ROWS_FOR_SUMMARY = 500_000
 
 
 def parse_file(file_path: str, file_type: str) -> tuple[pd.DataFrame, dict[str, Any]]:
@@ -61,10 +61,8 @@ def _extract_column_info(df: pd.DataFrame) -> dict[str, Any]:
             "null_count": int(series.isna().sum()),
             "unique_count": int(series.nunique()),
         }
-        # Include sample values for context (up to 5 unique).
         try:
             samples = series.dropna().unique()[:5].tolist()
-            # Convert numpy types to native Python for JSON serialisation.
             col_meta["sample_values"] = [
                 v.item() if hasattr(v, "item") else v for v in samples
             ]
@@ -101,7 +99,6 @@ def get_file_summary(df: pd.DataFrame) -> str:
         unique = series.nunique()
         lines.append(f"  {col} ({dtype}) — {unique:,} unique, {nulls:,} nulls")
 
-    # Numeric summary
     numeric_cols = df.select_dtypes(include="number")
     if not numeric_cols.empty:
         lines.append("")
@@ -110,7 +107,6 @@ def get_file_summary(df: pd.DataFrame) -> str:
         desc = numeric_cols.describe().round(2)
         lines.append(desc.to_string())
 
-    # First few rows
     lines.append("")
     lines.append("FIRST 5 ROWS:")
     lines.append("-" * 40)

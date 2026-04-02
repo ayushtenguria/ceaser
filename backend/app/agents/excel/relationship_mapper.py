@@ -28,7 +28,7 @@ class Relationship:
     target_sheet: str
     target_column: str
     confidence: float
-    method: str  # "name_match", "formula_ref", "value_overlap", "id_pattern"
+    method: str
     rel_type: str = "many_to_one"
 
 
@@ -42,21 +42,16 @@ def map_relationships(
 
     rels: list[Relationship] = []
 
-    # Strategy 1: Formula cross-references
     if formulas:
         rels.extend(_from_formulas(sheets, formulas))
 
-    # Strategy 2: Column name matching
     rels.extend(_from_names(sheets))
 
-    # Strategy 3: ID pattern matching (customer_id -> customers.id)
     rels.extend(_from_id_patterns(sheets))
 
-    # Strategy 4: Value overlap (expensive — only for remaining candidates)
     existing = {(r.source_sheet, r.source_column, r.target_sheet, r.target_column) for r in rels}
     rels.extend(_from_value_overlap(sheets, existing))
 
-    # Deduplicate
     rels = _deduplicate(rels)
     logger.info("Mapped %d relationships across %d sheets", len(rels), len(sheets))
     return rels

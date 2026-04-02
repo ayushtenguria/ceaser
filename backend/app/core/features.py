@@ -30,41 +30,32 @@ logger = logging.getLogger(__name__)
 class Feature(str, Enum):
     """All gatable features in the platform."""
 
-    # ── Data Sources ──
-    SQL_QUERIES = "sql_queries"                  # Basic SQL chat
-    FILE_UPLOAD = "file_upload"                   # CSV/Excel upload
-    MULTI_DB = "multi_db"                         # Cross-database queries
-    SNOWFLAKE = "snowflake"                       # Snowflake connector
-    BIGQUERY = "bigquery"                         # BigQuery connector
+    SQL_QUERIES = "sql_queries"
+    FILE_UPLOAD = "file_upload"
+    MULTI_DB = "multi_db"
+    SNOWFLAKE = "snowflake"
+    BIGQUERY = "bigquery"
 
-    # ── Analytics ──
-    ADVANCED_ANALYTICS = "advanced_analytics"     # Data analyst agent (multi-query)
-    PYTHON_EXECUTION = "python_execution"         # Python sandbox code execution
-    VISUALIZATIONS = "visualizations"             # Plotly chart generation
+    ADVANCED_ANALYTICS = "advanced_analytics"
+    PYTHON_EXECUTION = "python_execution"
+    VISUALIZATIONS = "visualizations"
 
-    # ── Collaboration ──
-    NOTEBOOKS = "notebooks"                       # Notebook system
-    REPORTS = "reports"                            # Report generation + PDF export
-    SCHEDULED_REPORTS = "scheduled_reports"        # Cron-based report scheduling
-    SHARED_CONVERSATIONS = "shared_conversations" # Org-wide conversation visibility
+    NOTEBOOKS = "notebooks"
+    REPORTS = "reports"
+    SCHEDULED_REPORTS = "scheduled_reports"
+    SHARED_CONVERSATIONS = "shared_conversations"
 
-    # ── Semantic Layer ──
-    METRICS = "metrics"                           # Custom metric definitions
-    CUSTOM_PROMPTS = "custom_prompts"             # Org-specific LLM instructions
+    METRICS = "metrics"
+    CUSTOM_PROMPTS = "custom_prompts"
 
-    # ── Security & Compliance ──
-    AUDIT_LOGS = "audit_logs"                     # Audit log access
-    SSO = "sso"                                   # Single sign-on (Clerk enterprise)
-    IP_ALLOWLIST = "ip_allowlist"                  # IP-based access restriction
-    DATA_MASKING = "data_masking"                  # PII masking in query results
+    AUDIT_LOGS = "audit_logs"
+    SSO = "sso"
+    IP_ALLOWLIST = "ip_allowlist"
+    DATA_MASKING = "data_masking"
 
-    # ── AI ──
-    CLAUDE_MODEL = "claude_model"                 # Claude as LLM (vs only Gemini)
-    PRIORITY_QUEUE = "priority_queue"             # Faster inference queue
+    CLAUDE_MODEL = "claude_model"
+    PRIORITY_QUEUE = "priority_queue"
 
-
-# ── Plan defaults ─────────────────────────────────────────────────────────
-# Each plan inherits all features from the tier below it.
 
 _FREE = {
     Feature.SQL_QUERIES,
@@ -106,8 +97,6 @@ PLAN_FEATURES: dict[str, set[Feature]] = {
 }
 
 
-# ── Resolution logic ─────────────────────────────────────────────────────
-
 async def _get_org_features(db: AsyncSession, org_id: str) -> tuple[str, dict | None]:
     """Return (plan_name, features_override) for an org."""
     if not org_id:
@@ -132,7 +121,6 @@ async def has_feature(feature: str | Feature, db: AsyncSession, org_id: str) -> 
     """
     feat = Feature(feature) if isinstance(feature, str) else feature
 
-    # Super admins get everything
     admin_stmt = select(User).where(
         User.organization_id == org_id, User.is_super_admin == True  # noqa: E712
     )
@@ -142,11 +130,9 @@ async def has_feature(feature: str | Feature, db: AsyncSession, org_id: str) -> 
 
     plan_name, overrides = await _get_org_features(db, org_id)
 
-    # Check per-org override first
     if overrides and feat.value in overrides:
         return bool(overrides[feat.value])
 
-    # Fall back to plan defaults
     plan_feats = PLAN_FEATURES.get(plan_name, PLAN_FEATURES["free"])
     return feat in plan_feats
 
@@ -165,7 +151,6 @@ async def get_all_features(db: AsyncSession, org_id: str) -> dict[str, bool]:
     """Return all features with their enabled/disabled state for the org."""
     plan_name, overrides = await _get_org_features(db, org_id)
 
-    # Super admin check
     admin_stmt = select(User).where(
         User.organization_id == org_id, User.is_super_admin == True  # noqa: E712
     )

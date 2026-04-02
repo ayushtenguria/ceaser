@@ -1,4 +1,5 @@
 import { useState, useCallback, useEffect } from "react";
+import { useNavigate } from "react-router-dom";
 import { useChatStore } from "@/store/chat";
 import { useConnectionsStore } from "@/store/connections";
 import * as api from "@/lib/api";
@@ -16,6 +17,7 @@ export function useChat() {
     setActiveConversation,
   } = useChatStore();
 
+  const navigate = useNavigate();
   const { activeConnectionId, activeConnectionIds } = useConnectionsStore();
   const [isStreaming, setIsStreaming] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -23,38 +25,33 @@ export function useChat() {
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [streamStatus, setStreamStatus] = useState<string>("");
 
-  // Show messages from active conversation, or from temp conversation while streaming
   const effectiveConvId = activeConversationId || pendingConvId;
   const currentMessages = effectiveConvId
     ? messages[effectiveConvId] || []
     : [];
 
-  // Fetch suggestions when loading an existing conversation
   useEffect(() => {
     if (!activeConversationId || isStreaming) return;
     const msgs = messages[activeConversationId];
     if (msgs && msgs.length > 0) {
-      // Has messages — fetch context-aware follow-up suggestions
       api.getSuggestions(activeConnectionId || undefined, activeConversationId)
         .then(setSuggestions)
         .catch(() => setSuggestions([]));
     } else {
       setSuggestions([]);
     }
-  }, [activeConversationId, activeConnectionId, messages]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [activeConversationId, activeConnectionId, messages]);
 
   const sendMessage = useCallback(
     async (content: string, fileId?: string, fileIds?: string[]) => {
       setError(null);
       let conversationId = activeConversationId;
 
-      // Use a temp conversation ID if none yet — backend creates conversations automatically
       const tempConvId = conversationId || `temp-${crypto.randomUUID()}`;
       if (!conversationId) {
         setPendingConvId(tempConvId);
       }
 
-      // Add user message to store
       const userMessage: Message = {
         id: `temp-user-${crypto.randomUUID()}`,
         conversationId: tempConvId,
@@ -65,7 +62,6 @@ export function useChat() {
       };
       addMessage(tempConvId, userMessage);
 
-      // Create placeholder assistant message
       const assistantMessageId = `temp-assistant-${crypto.randomUUID()}`;
       const assistantMessage: Message = {
         id: assistantMessageId,
@@ -107,7 +103,6 @@ export function useChat() {
                 currentConvId = chunk.content;
                 const existingMsgs = useChatStore.getState().messages[tempConvId] || [];
                 useChatStore.getState().setMessages(currentConvId, existingMsgs);
-                setActiveConversation(currentConvId);
                 setPendingConvId(null);
                 conversationId = currentConvId;
                 addConversation({
@@ -117,6 +112,9 @@ export function useChat() {
                   createdAt: new Date().toISOString(),
                   updatedAt: new Date().toISOString(),
                 });
+                // Navigate to the new conversation URL so ChatPage picks up
+                // the conversationId from params and syncs the store correctly.
+                navigate(`/chat/${currentConvId}`, { replace: true });
               }
               break;
             case "text":
@@ -145,8 +143,6 @@ export function useChat() {
               break;
             }
             case "error":
-              // Don't append to accumulatedContent — keeps error separate from text
-              // so it's not duplicated in both the text bubble and error box
               if (!accumulatedContent) {
                 accumulatedContent = chunk.content;
               }
@@ -182,7 +178,6 @@ export function useChat() {
         let errorMessage =
           err instanceof Error ? err.message : "An unexpected error occurred";
 
-        // Detect plan limit errors
         if (errorMessage.includes("429") || errorMessage.includes("limit reached") || errorMessage.includes("too many")) {
           errorMessage = "You've reached your plan limit. Visit Usage & Plan to upgrade.";
         } else if (errorMessage.includes("402") || errorMessage.includes("Upgrade")) {
@@ -209,6 +204,7 @@ export function useChat() {
       updateMessage,
       addConversation,
       setActiveConversation,
+      navigate,
     ]
   );
 

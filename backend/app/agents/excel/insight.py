@@ -62,23 +62,19 @@ async def generate_upload_insight(
         total_rows=sum(wb.total_rows for wb in workbooks),
     )
 
-    # Build sheet summaries
     for wb in workbooks:
         for sheet in wb.sheets:
             insight.sheet_summaries.append(
                 f"{sheet.name}: {sheet.row_count:,} rows, {sheet.column_count} columns"
             )
 
-    # Relationship summaries
     for rel in relationships:
         insight.relationships_found.append(
             f"{rel.source_sheet}.{rel.source_column} -> {rel.target_sheet}.{rel.target_column}"
         )
 
-    # Quality warnings
     insight.quality_warnings = quality_report.summary_items[:5]
 
-    # LLM summary
     summary_text = "\n".join([
         f"Files: {', '.join(wb.file_name for wb in workbooks)}",
         f"Sheets: {', '.join(insight.sheet_summaries)}",

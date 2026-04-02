@@ -17,7 +17,7 @@ from app.sandbox.executor import execute_python
 
 logger = logging.getLogger(__name__)
 
-_MAX_TABLE_ROWS = 500  # cap rows stored in state to avoid blowing context
+_MAX_TABLE_ROWS = 500
 
 
 async def execute_sql(state: AgentState, db: AsyncSession) -> AgentState:
@@ -28,7 +28,6 @@ async def execute_sql(state: AgentState, db: AsyncSession) -> AgentState:
     if not sql or not connection_id:
         return {**state, "error": "Missing SQL query or connection_id.", "next_action": "error"}
 
-    # Load connection record.
     stmt = select(DatabaseConnection).where(
         DatabaseConnection.id == uuid.UUID(connection_id)
     )
@@ -42,7 +41,6 @@ async def execute_sql(state: AgentState, db: AsyncSession) -> AgentState:
         await connector.connect()
         columns, rows = await connector.execute_query(sql)
 
-        # Truncate for state.
         truncated = rows[:_MAX_TABLE_ROWS]
         table_data: dict[str, Any] = {
             "columns": columns,
@@ -96,7 +94,6 @@ async def execute_code(state: AgentState) -> AgentState:
     plotly_figure = result.plotly_figure
     execution_result = result.stdout
 
-    # If stdout contains JSON that looks like table data, parse it.
     table_data: dict[str, Any] | None = state.get("table_data")
     if execution_result:
         try:

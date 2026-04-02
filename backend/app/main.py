@@ -22,10 +22,6 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
-# Lifespan
-# ---------------------------------------------------------------------------
-
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     """Create database tables on startup (dev convenience) and dispose on shutdown."""
@@ -34,7 +30,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
     logger.info("Database tables ensured.")
-    # Ensure Neo4j vector index for memory search
     try:
         from app.services.memory_graph import ensure_vector_index
         await ensure_vector_index()
@@ -42,7 +37,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         logger.debug("Neo4j vector index setup skipped: %s", exc)
     yield
     await engine.dispose()
-    # Close Neo4j driver
     try:
         from app.services.schema_graph import close_graph_driver
         await close_graph_driver()
@@ -50,10 +44,6 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         pass
     logger.info("Ceaser backend shut down.")
 
-
-# ---------------------------------------------------------------------------
-# App
-# ---------------------------------------------------------------------------
 
 settings = get_settings()
 
@@ -64,7 +54,6 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# ── CORS ────────────────────────────────────────────────────────────────────
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -73,7 +62,6 @@ app.add_middleware(
     allow_headers=["Content-Type", "Authorization"],
 )
 
-# ── Routers ─────────────────────────────────────────────────────────────────
 _API_PREFIX = "/api/v1"
 
 app.include_router(auth.router, prefix=_API_PREFIX)
@@ -90,15 +78,11 @@ app.include_router(memories.router, prefix=_API_PREFIX)
 app.include_router(admin.router, prefix=_API_PREFIX)
 
 
-# ── Health check ────────────────────────────────────────────────────────────
-
 @app.get("/health", tags=["health"])
 async def health_check() -> dict[str, str]:
     """Lightweight liveness probe."""
     return {"status": "ok"}
 
-
-# ── Exception handlers ─────────────────────────────────────────────────────
 
 @app.exception_handler(ValueError)
 async def value_error_handler(_request: Request, exc: ValueError) -> JSONResponse:

@@ -62,7 +62,6 @@ async def generate_notebook_from_description(
         if not isinstance(cells, list):
             return _default_cells(description)
 
-        # Validate and clean cells
         valid_types = {"text", "file", "input", "prompt", "code"}
         cleaned = []
         for cell in cells:

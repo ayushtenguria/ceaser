@@ -33,10 +33,6 @@ logger = logging.getLogger(__name__)
 _driver: AsyncDriver | None = None
 
 
-# ---------------------------------------------------------------------------
-# Driver management
-# ---------------------------------------------------------------------------
-
 def get_graph_driver() -> AsyncDriver | None:
     """Return the Neo4j async driver singleton. None if not configured."""
     global _driver
@@ -62,10 +58,6 @@ async def close_graph_driver():
         await _driver.close()
         _driver = None
 
-
-# ---------------------------------------------------------------------------
-# Domain classification
-# ---------------------------------------------------------------------------
 
 def _classify_domain(col_name: str, col_type: str) -> str:
     """Classify a column into a business domain."""
@@ -114,10 +106,6 @@ def _is_categorical(unique_count: int, row_count: int) -> bool:
     return unique_count < 50 and (unique_count / max(row_count, 1)) < 0.1
 
 
-# ---------------------------------------------------------------------------
-# Graph builder — runs on connection create/refresh
-# ---------------------------------------------------------------------------
-
 async def build_schema_graph(
     connection_id: str,
     org_id: str,
@@ -145,7 +133,6 @@ async def build_schema_graph(
         return 0
 
     async with driver.session() as session:
-        # Clear old graph for this connection
         await session.run(
             "MATCH (t:Table {connection_id: $conn_id}) DETACH DELETE t",
             conn_id=connection_id,
@@ -155,13 +142,11 @@ async def build_schema_graph(
             conn_id=connection_id,
         )
 
-        # Create table + column nodes
         for table in tables:
             table_name = table.get("name", "")
             row_count = table.get("row_count", 0)
             columns = table.get("columns", [])
 
-            # Create table node
             await session.run("""
                 CREATE (t:Table {
                     name: $name, connection_id: $conn_id, org_id: $org_id,
@@ -277,13 +262,11 @@ def extract_entities(question: str) -> dict[str, Any]:
         "is_complex": q.count("?") >= 3 or len(question) > 300,
     }
 
-    # Detect chart type
     for chart_type, keywords in CHART_KEYWORDS.items():
         if any(kw in q for kw in keywords):
             entities["chart_type"] = chart_type
             break
 
-    # Extract meaningful keywords (skip stop words)
     stop_words = {"the", "a", "an", "is", "are", "was", "were", "show", "me", "give",
                   "please", "can", "you", "what", "how", "many", "much", "do", "does",
                   "for", "by", "in", "of", "to", "and", "or", "with", "as", "from"}
@@ -291,10 +274,6 @@ def extract_entities(question: str) -> dict[str, Any]:
 
     return entities
 
-
-# ---------------------------------------------------------------------------
-# Graph traversal — query-time schema selection
-# ---------------------------------------------------------------------------
 
 _TRAVERSAL_CYPHER = """
 // Step 1: Find tables with columns matching any keyword
@@ -389,29 +368,25 @@ def _score_tables(records: list[dict], entities: dict) -> list[tuple[dict, float
     """Score tables by relevance to the question."""
     scored = []
     for record in records:
-        score = 0.3  # base score for being connected
+        score = 0.3
 
         table_name = record.get("table_name", "").lower()
         columns = record.get("columns", [])
 
-        # Table name match
         for kw in entities["keywords"]:
             if kw in table_name:
                 score += 0.4
 
-        # Column name match
         for col in columns:
             col_name = col.get("name", "").lower()
             for kw in entities["keywords"]:
                 if kw in col_name:
                     score += 0.3
 
-        # Temporal boost
         if entities["needs_temporal"]:
             if any(col.get("temporal") for col in columns):
                 score += 0.2
 
-        # Numeric boost
         if entities["needs_numeric"]:
             if any(col.get("numeric") for col in columns):
                 score += 0.2
@@ -428,7 +403,6 @@ def _apply_token_budget(scored: list[tuple[dict, float]], budget: int) -> list[d
     total_tokens = 0
 
     for record, score in scored:
-        # Estimate tokens: ~20 per column + ~30 for table header + ~20 for joins
         col_count = len(record.get("columns", []))
         estimated = 30 + (col_count * 20) + 20
 
@@ -482,14 +456,12 @@ def _format_graph_context(tables: list[dict], entities: dict) -> str:
             if j.get("join_sql"):
                 all_joins.append(j["join_sql"])
 
-    # JOIN paths section
     if all_joins:
         lines.append("\n\nJOIN PATHS (use these exact conditions)")
         lines.append("=" * 55)
         for join_sql in set(all_joins):
             lines.append(f"  {join_sql}")
 
-    # Query hints
     hints = []
     if entities.get("chart_type") == "histogram":
         hints.append("HISTOGRAM: Return RAW individual values — do NOT aggregate with CASE/GROUP BY.")
@@ -503,10 +475,6 @@ def _format_graph_context(tables: list[dict], entities: dict) -> str:
 
     return "\n".join(lines)
 
-
-# ═══════════════════════════════════════════════════════════════════
-# FILE GRAPH — uploaded Excel/CSV files as graph nodes
-# ═══════════════════════════════════════════════════════════════════
 
 async def build_file_graph(
     file_id: str,
@@ -534,7 +502,6 @@ async def build_file_graph(
 
     try:
         async with driver.session() as session:
-            # Check if this supersedes an older file with same name
             await session.run("""
                 MATCH (old:FileNode {org_id: $org_id, filename: $filename, is_active: true})
                 WHERE old.file_id <> $file_id
@@ -791,22 +758,18 @@ def _score_files(records: list[dict], entities: dict) -> list[tuple[dict, float]
         filename = (record.get("filename") or "").lower()
         columns = record.get("columns", [])
 
-        # Filename keyword match
         for kw in entities["keywords"]:
             if kw in filename:
                 score += 0.3
 
-        # Column name match
         for col in columns:
             for kw in entities["keywords"]:
                 if kw in (col.get("name") or "").lower():
                     score += 0.2
 
-        # Has cross-source links (file connects to DB)
         if record.get("db_links"):
             score += 0.2
 
-        # Has cross-file links
         if record.get("file_links"):
             score += 0.1
 
@@ -848,7 +811,6 @@ def _format_file_context(files: list[dict], entities: dict) -> str:
         file_links = record.get("file_links", [])
         db_links = record.get("db_links", [])
 
-        # Derive DataFrame variable name
         import re
         stem = filename.rsplit(".", 1)[0].lower()
         stem = re.sub(r'[^a-z0-9_]', '_', stem)
@@ -875,7 +837,6 @@ def _format_file_context(files: list[dict], entities: dict) -> str:
         all_file_links.extend(file_links)
         all_db_links.extend(db_links)
 
-    # Cross-file merge paths
     if all_file_links:
         lines.append("\n\nCROSS-FILE MERGE PATHS (use pd.merge)")
         lines.append("=" * 55)
@@ -889,7 +850,6 @@ def _format_file_context(files: list[dict], entities: dict) -> str:
             seen.add(key)
             lines.append(f"  pd.merge(on='{link['shared_column']}')  → {link.get('to_file', '?')}")
 
-    # Cross-source links (file ↔ database)
     if all_db_links:
         lines.append("\n\nCROSS-SOURCE LINKS (file data ↔ database)")
         lines.append("=" * 55)

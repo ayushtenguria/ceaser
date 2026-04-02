@@ -22,7 +22,6 @@ function Root() {
     );
   }
 
-  // Dev mode: no Clerk auth
   return (
     <BrowserRouter>
       <App />

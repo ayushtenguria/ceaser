@@ -67,7 +67,6 @@ async def generate_follow_up_suggestions(
     llm: BaseChatModel,
 ) -> list[str]:
     """Generate 3 contextual follow-up suggestions based on the conversation."""
-    # Build conversation summary
     conv_summary = ""
     for msg in conversation_history[-6:]:
         role = "User" if msg["role"] == "user" else "Assistant"
@@ -137,7 +136,6 @@ async def generate_initial_suggestions(
     return _DEFAULT_SUGGESTIONS
 
 
-# Keep backward-compatible alias for the /suggestions endpoint
 async def generate_suggestions(
     schema_context: str,
     llm: BaseChatModel,

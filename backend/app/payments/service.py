@@ -12,7 +12,6 @@ logger = logging.getLogger(__name__)
 _provider_instance: IPaymentProvider | None = None
 
 
-# Plan limits mapping
 PLAN_LIMITS = {
     "free": {"max_queries_per_day": 50, "max_connections": 1, "max_reports": 5, "max_seats": 5},
     "starter": {"max_queries_per_day": 100, "max_connections": 3, "max_reports": 30, "max_seats": 3},

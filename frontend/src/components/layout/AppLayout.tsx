@@ -17,7 +17,6 @@ function AuthenticatedLayout() {
     api.getConnections()
       .then((conns) => {
         setConnections(conns);
-        // Auto-select if user has exactly 1 connection and nothing selected
         if (conns.length === 1 && !activeConnectionId) {
           setActiveConnection(conns[0].id);
           toggleConnectionId(conns[0].id);
@@ -46,14 +45,12 @@ function ClerkAppLayout() {
   const navigate = useNavigate();
   const syncedRef = useRef(false);
 
-  // Set the Clerk token getter for API calls
   useEffect(() => {
     if (isLoaded && isSignedIn) {
       setAuthTokenGetter(getToken);
     }
   }, [isLoaded, isSignedIn, getToken]);
 
-  // Sync user to our DB after sign-in
   useEffect(() => {
     if (isLoaded && isSignedIn && user && !syncedRef.current) {
       syncedRef.current = true;
@@ -69,7 +66,6 @@ function ClerkAppLayout() {
     }
   }, [isLoaded, isSignedIn, user]);
 
-  // Redirect unauthenticated users
   useEffect(() => {
     if (isLoaded && !isSignedIn) {
       navigate("/sign-in", { replace: true });
@@ -93,7 +89,6 @@ function ClerkAppLayout() {
 
 export default function AppLayout() {
   if (!clerkEnabled) {
-    // Dev mode: skip Clerk auth entirely
     return <AuthenticatedLayout />;
   }
 

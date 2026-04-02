@@ -351,44 +351,37 @@ async def _run_dataframe_analyst(
     plan_response = await llm.ainvoke(plan_messages)
     code: str = plan_response.content.strip()
 
-    # Strip markdown fences
     if code.startswith("```"):
         lines = code.split("\n")
         lines = [ln for ln in lines if not ln.strip().startswith("```")]
         code = "\n".join(lines).strip()
 
-    # Prepend the code preamble (loads DataFrames from files)
     preamble = ""
     if "CODE PREAMBLE" in schema_context:
         marker = "CODE PREAMBLE (prepend to all Python code):\n"
         if marker in schema_context:
             raw_preamble = schema_context.split(marker, 1)[1].strip()
-            # Keep ONLY valid Python lines: imports and DataFrame reads
-            # Stop at first blank line or non-code line to avoid picking up relationship text
             preamble_lines = []
             for line in raw_preamble.split("\n"):
                 stripped = line.strip()
                 if not stripped:
                     if preamble_lines:
-                        break  # Stop at first blank line after code starts
+                        break
                     continue
-                # Only keep actual Python: imports and pd.read_parquet assignments
                 if stripped.startswith(("import ", "from ")) or "= pd.read_parquet(" in stripped:
                     preamble_lines.append(line)
                 elif "→" in stripped or "CROSS" in stripped or "RELATIONSHIP" in stripped:
-                    break  # Hit relationship text — stop
+                    break
                 else:
-                    break  # Unknown line — stop to be safe
+                    break
             preamble = "\n".join(preamble_lines) + "\n\n" if preamble_lines else ""
 
     full_code = preamble + code
     logger.info("DataFrame Analyst: Executing %d chars of code", len(full_code))
 
-    # Execute with retry
     result = await execute_python(full_code)
 
     if not result.success:
-        # Retry with error context
         logger.warning("DataFrame Analyst: First attempt failed: %s", result.error[:200] if result.error else "")
         fix_messages = [
             SystemMessage(content=(
@@ -418,7 +411,6 @@ async def _run_dataframe_analyst(
             "error": result.error or "Analysis failed",
         }
 
-    # Synthesize the stdout output into a clean answer
     stdout_text = result.stdout or ""
     synth_messages = [
         SystemMessage(content=_SYNTHESIZE_PROMPT.format(

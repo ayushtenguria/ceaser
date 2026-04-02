@@ -23,14 +23,8 @@ def _sandbox_timeout() -> int:
 
 _TIMEOUT_SECONDS = _sandbox_timeout()
 
-# Use the current Python executable (from the venv) so the sandbox subprocess
-# can import pandas, plotly, numpy, etc.  Do NOT resolve() — that follows the
-# symlink to the system Python and loses the venv site-packages.
 _PYTHON_EXECUTABLE = sys.executable
 
-# Blocklist of dangerous modules — network access, process spawning, etc.
-# We deliberately allow os/sys/pathlib because numpy/pandas/plotly need them
-# internally. The subprocess is the real execution sandbox boundary.
 _BLOCKED_MODULES = frozenset(
     {
         "subprocess",
@@ -75,14 +69,11 @@ def _build_runner_script(user_code: str, figure_path: str) -> str:
     prefix = textwrap.dedent("""\
         import json
 
-        # ── User code ──────────────────────────────────────────
     """)
 
     postfix = textwrap.dedent(f"""\
 
-        # ── End user code ──────────────────────────────────────
 
-        # Capture any plotly figure written to a variable named `fig`.
         try:
             fig  # noqa: F821
             import json as _json

@@ -16,7 +16,6 @@ from app.payments.base import (
 logger = logging.getLogger(__name__)
 
 
-# Plan → Stripe Price ID mapping (set in env)
 PLAN_PRICE_MAP: dict[str, str] = {}
 
 
@@ -68,7 +67,6 @@ class StripeProvider(IPaymentProvider):
         event_type = event["type"]
         obj = event["data"]["object"]
 
-        # Map Stripe events to our normalized events
         if event_type == "checkout.session.completed":
             metadata = obj.get("metadata", {})
             return PaymentEvent(
@@ -82,12 +80,10 @@ class StripeProvider(IPaymentProvider):
                 metadata=metadata,
             )
         elif event_type in ("customer.subscription.updated", "customer.subscription.deleted"):
-            # Extract plan from subscription items
             plan_name = None
             items = obj.get("items", {}).get("data", [])
             if items:
                 price_id = items[0].get("price", {}).get("id", "")
-                # Reverse lookup
                 for pn, pid in PLAN_PRICE_MAP.items():
                     if pid == price_id:
                         plan_name = pn

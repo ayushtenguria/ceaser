@@ -16,7 +16,6 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
-# Common stop words to exclude from matching
 _STOP_WORDS = frozenset({
     "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
     "have", "has", "had", "do", "does", "did", "will", "would", "shall",
@@ -36,7 +35,6 @@ _STOP_WORDS = frozenset({
     "data", "table", "sheet", "file", "column", "row", "value",
 })
 
-# Question intent keywords that boost certain sheet types
 _INTENT_KEYWORDS = {
     "sales": ["sale", "sales", "revenue", "sold", "quantity", "order", "transaction"],
     "inventory": ["inventory", "stock", "count", "warehouse", "available", "oos", "out_of_stock"],
@@ -67,7 +65,6 @@ class SheetMeta:
     column_names: list[str] = field(default_factory=list)
     column_types: dict[str, str] = field(default_factory=dict)
     sample_values: dict[str, list] = field(default_factory=dict)
-    # The full context text for this sheet (from excel_context)
     full_context_text: str = ""
 
 
@@ -91,7 +88,6 @@ def select_relevant_sheets(
     question_keywords = _extract_keywords(question)
 
     if not question_keywords:
-        # Generic question — return the largest sheets
         return sorted(sheets, key=lambda s: s.row_count, reverse=True)[:max_sheets]
 
     scores: list[SheetScore] = []
@@ -100,10 +96,8 @@ def select_relevant_sheets(
         score_obj = _score_sheet(sheet, question_keywords)
         scores.append(score_obj)
 
-    # Sort by score descending
     scores.sort(key=lambda s: s.score, reverse=True)
 
-    # Select top N above minimum score
     selected_names = set()
     selected: list[SheetMeta] = []
 
@@ -116,7 +110,6 @@ def select_relevant_sheets(
                 selected.append(sheet)
                 selected_names.add(sheet.name)
 
-    # Fallback: if nothing scored well, return the largest sheet
     if not selected:
         largest = sorted(sheets, key=lambda s: s.row_count, reverse=True)[0]
         selected = [largest]
@@ -137,7 +130,6 @@ def build_compact_summary(sheets: list[SheetMeta]) -> str:
     ]
 
     for i, sheet in enumerate(sheets, 1):
-        # Generate a brief description from column names
         key_cols = [c for c in sheet.column_names[:6] if not c.startswith("unnamed")]
         col_hint = ", ".join(key_cols) if key_cols else "various columns"
         lines.append(f"  {i}. {sheet.name} ({sheet.row_count:,} rows, {sheet.column_count} cols) — {col_hint}")
@@ -163,7 +155,6 @@ def build_selected_context(
         if sheet.full_context_text:
             parts.append(sheet.full_context_text)
         else:
-            # Build from metadata
             parts.append(f"\nDataFrame: df_{sheet.name.lower().replace(' ', '_')} ({sheet.row_count:,} rows)")
             for col in sheet.column_names:
                 col_type = sheet.column_types.get(col, "unknown")
@@ -187,10 +178,8 @@ def parse_excel_context_to_sheets(excel_context: str) -> list[SheetMeta]:
     current_text_lines: list[str] = []
 
     for line in excel_context.split("\n"):
-        # Detect sheet header: "df_name  (N rows, M columns)"
         sheet_match = re.match(r"^(df_\w+)\s+\(([0-9,]+)\s+rows?,\s*(\d+)\s+columns?\)", line.strip())
         if sheet_match:
-            # Save previous sheet
             if current_sheet:
                 current_sheet.full_context_text = "\n".join(current_text_lines)
                 sheets.append(current_sheet)
@@ -210,7 +199,6 @@ def parse_excel_context_to_sheets(excel_context: str) -> list[SheetMeta]:
         if current_sheet:
             current_text_lines.append(line)
 
-            # Parse column info: "    col_name: type   values: [...]"
             col_match = re.match(r"^\s{2,}(\w+):\s+(\w+)", line.strip())
             if col_match:
                 col_name = col_match.group(1)
@@ -218,7 +206,6 @@ def parse_excel_context_to_sheets(excel_context: str) -> list[SheetMeta]:
                 current_sheet.column_names.append(col_name)
                 current_sheet.column_types[col_name] = col_type
 
-                # Extract sample values
                 val_match = re.search(r"values:\s*\[(.+?)\]", line)
                 if val_match:
                     try:
@@ -227,7 +214,6 @@ def parse_excel_context_to_sheets(excel_context: str) -> list[SheetMeta]:
                     except Exception:
                         pass
 
-    # Save last sheet
     if current_sheet:
         current_sheet.full_context_text = "\n".join(current_text_lines)
         sheets.append(current_sheet)
@@ -235,17 +221,11 @@ def parse_excel_context_to_sheets(excel_context: str) -> list[SheetMeta]:
     return sheets
 
 
-# ---------------------------------------------------------------------------
-# Internal scoring
-# ---------------------------------------------------------------------------
-
 def _extract_keywords(question: str) -> list[str]:
     """Extract meaningful keywords from a question."""
     words = re.findall(r"[a-zA-Z_]+", question.lower())
-    # Remove stop words, keep meaningful terms
     keywords = [w for w in words if w not in _STOP_WORDS and len(w) > 1]
 
-    # Add intent-expanded keywords
     expanded = list(keywords)
     for intent, intent_words in _INTENT_KEYWORDS.items():
         if any(kw in intent_words for kw in keywords):
@@ -260,22 +240,19 @@ def _score_sheet(sheet: SheetMeta, keywords: list[str]) -> SheetScore:
     sheet_name_lower = sheet.name.lower()
 
     for kw in keywords:
-        # Match against sheet name (highest weight)
         if kw in sheet_name_lower:
             score.score += 10
             score.matched_keywords.append(kw)
             score.match_reasons.append(f"sheet name contains '{kw}'")
 
-        # Match against column names (high weight)
         for col in sheet.column_names:
             if kw in col.lower():
                 score.score += 5
                 if kw not in score.matched_keywords:
                     score.matched_keywords.append(kw)
                 score.match_reasons.append(f"column '{col}' matches '{kw}'")
-                break  # Don't double-count same keyword
+                break
 
-        # Match against sample values (lower weight)
         for col, samples in sheet.sample_values.items():
             for sample in samples:
                 if kw in str(sample).lower():
@@ -286,7 +263,6 @@ def _score_sheet(sheet: SheetMeta, keywords: list[str]) -> SheetScore:
             if kw in [s.matched_keywords[-1] if s.matched_keywords else "" for s in [score]]:
                 break
 
-    # Bonus for larger sheets (more likely to be main data)
     if sheet.row_count > 1000:
         score.score += 1
     if sheet.row_count > 10000:

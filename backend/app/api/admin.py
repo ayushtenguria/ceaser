@@ -31,7 +31,6 @@ def _clerk_headers() -> dict[str, str]:
 async def _require_admin(current_user: CurrentUser, db: DbSession) -> User:
     """Check if the current user is a super admin. Raises 403 if not."""
     settings = get_settings()
-    # Look up user email
     stmt = select(User).where(User.clerk_id == current_user.user_id)
     result = await db.execute(stmt)
     user = result.scalar_one_or_none()
@@ -50,11 +49,9 @@ async def _require_admin(current_user: CurrentUser, db: DbSession) -> User:
             return user
         raise HTTPException(status_code=403, detail="Not authorized. Admin account not found.")
 
-    # Check both DB flag and config list
     if not user.is_super_admin and user.email not in settings.super_admin_emails:
         raise HTTPException(status_code=403, detail="Super admin access required.")
 
-    # Auto-upgrade if in config but not yet flagged in DB
     if not user.is_super_admin and user.email in settings.super_admin_emails:
         user.is_super_admin = True
         user.role = "super_admin"
@@ -62,10 +59,6 @@ async def _require_admin(current_user: CurrentUser, db: DbSession) -> User:
 
     return user
 
-
-# ---------------------------------------------------------------------------
-# Dashboard stats
-# ---------------------------------------------------------------------------
 
 @router.get("/stats")
 async def get_platform_stats(current_user: CurrentUser, db: DbSession) -> dict:
@@ -78,7 +71,6 @@ async def get_platform_stats(current_user: CurrentUser, db: DbSession) -> dict:
     total_connections = (await db.execute(select(func.count()).select_from(DatabaseConnection))).scalar() or 0
     total_reports = (await db.execute(select(func.count()).select_from(Report))).scalar() or 0
 
-    # Get distinct organizations
     orgs_result = await db.execute(
         select(User.organization_id, func.count(User.id))
         .where(User.organization_id.isnot(None))
@@ -96,17 +88,13 @@ async def get_platform_stats(current_user: CurrentUser, db: DbSession) -> dict:
     }
 
 
-# ---------------------------------------------------------------------------
-# Organization management (via Clerk API)
-# ---------------------------------------------------------------------------
-
 class OrgCreate(_CamelModel):
     name: str
     slug: str = ""
 
 class InviteUser(_CamelModel):
     email: str
-    role: str = "basic_member"  # or "admin"
+    role: str = "basic_member"
 
 
 @router.post("/organizations")
@@ -146,14 +134,12 @@ async def invite_user(org_id: str, body: InviteUser, current_user: CurrentUser, 
     """Invite a user to an organization via Clerk."""
     await _require_admin(current_user, db)
 
-    # Check seat limit
     from app.db.models import OrganizationPlan
     plan_stmt = select(OrganizationPlan).where(OrganizationPlan.organization_id == org_id)
     plan_result = await db.execute(plan_stmt)
     plan = plan_result.scalar_one_or_none()
 
     if plan:
-        # Count current members
         member_count_stmt = select(func.count()).select_from(User).where(User.organization_id == org_id)
         member_count = (await db.execute(member_count_stmt)).scalar() or 0
 
@@ -173,10 +159,6 @@ async def invite_user(org_id: str, body: InviteUser, current_user: CurrentUser, 
             raise HTTPException(status_code=resp.status_code, detail=resp.json())
         return resp.json()
 
-
-# ---------------------------------------------------------------------------
-# User management
-# ---------------------------------------------------------------------------
 
 @router.get("/users")
 async def list_all_users(current_user: CurrentUser, db: DbSession) -> list[dict]:
@@ -200,10 +182,6 @@ async def list_all_users(current_user: CurrentUser, db: DbSession) -> list[dict]
     ]
 
 
-# ---------------------------------------------------------------------------
-# Plan management
-# ---------------------------------------------------------------------------
-
 class PlanUpdate(_CamelModel):
     plan_name: str | None = None
     max_seats: int | None = None
@@ -223,7 +201,6 @@ async def get_org_plan(org_id: str, current_user: CurrentUser, db: DbSession) ->
     plan = result.scalar_one_or_none()
 
     if plan is None:
-        # Create default free plan
         plan = OrganizationPlan(organization_id=org_id, plan_name="free", max_seats=5)
         db.add(plan)
         await db.flush()
@@ -296,7 +273,6 @@ async def update_org_features(org_id: str, body: dict, current_user: CurrentUser
     from app.db.models import OrganizationPlan
     from app.core.features import Feature, get_all_features
 
-    # Validate feature names
     valid_features = {f.value for f in Feature}
     for key in body:
         if key not in valid_features:
@@ -308,11 +284,10 @@ async def update_org_features(org_id: str, body: dict, current_user: CurrentUser
     if plan is None:
         raise HTTPException(status_code=404, detail="Organization plan not found.")
 
-    # Merge with existing overrides
     current = plan.features or {}
     for key, value in body.items():
         if value is None:
-            current.pop(key, None)  # Remove override → fall back to plan default
+            current.pop(key, None)
         else:
             current[key] = bool(value)
 

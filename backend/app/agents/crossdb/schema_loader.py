@@ -25,16 +25,15 @@ class DbSchemaEntry:
     """Schema for one data source (database OR file)."""
     connection_id: str
     connection_name: str
-    db_type: str                    # "postgresql", "mysql", "sqlite", "excel", "csv"
-    source_type: str = "database"   # "database" or "file"
+    db_type: str
+    source_type: str = "database"
     schema: SchemaInfo | None = None
     schema_text: str = ""
     is_available: bool = True
     error: str | None = None
     table_names: list[str] = field(default_factory=list)
-    # File-specific fields
     file_id: str | None = None
-    parquet_paths: dict[str, str] = field(default_factory=dict)  # var_name → path
+    parquet_paths: dict[str, str] = field(default_factory=dict)
     excel_context: str | None = None
 
 
@@ -77,7 +76,6 @@ async def load_all_schemas(
     if not connection_ids:
         return result
 
-    # Load connection records
     connections: list[DatabaseConnection] = []
     for cid in connection_ids:
         try:
@@ -92,7 +90,6 @@ async def load_all_schemas(
     if not connections:
         return result
 
-    # Load schemas in parallel with per-DB timeout
     async def _load_one(conn: DatabaseConnection) -> DbSchemaEntry:
         entry = DbSchemaEntry(
             connection_id=str(conn.id),
@@ -100,7 +97,6 @@ async def load_all_schemas(
             db_type=conn.db_type,
         )
         try:
-            # Use cached schema if available
             if conn.schema_cache:
                 from app.services.schema import SchemaInfo, TableInfo, ColumnInfo
                 tables = []
@@ -119,7 +115,6 @@ async def load_all_schemas(
                     tables.append(TableInfo(name=t["name"], columns=cols, row_count=t.get("row_count")))
                 entry.schema = SchemaInfo(tables=tables)
             else:
-                # Introspect with timeout
                 entry.schema = await asyncio.wait_for(
                     introspect_schema(conn),
                     timeout=timeout_per_db,
@@ -141,14 +136,12 @@ async def load_all_schemas(
 
         return entry
 
-    # Execute all DB loads in parallel
     entries = await asyncio.gather(
         *[_load_one(conn) for conn in connections],
         return_exceptions=False,
     )
     result.entries = list(entries)
 
-    # Load file sources
     if file_ids:
         from app.db.models import FileUpload
         for fid in file_ids:
@@ -175,7 +168,6 @@ async def load_all_schemas(
     result.total_connections = len([e for e in result.entries if e.is_available])
     result.total_tables = sum(len(e.table_names) for e in result.entries if e.is_available)
 
-    # Build combined context
     result.combined_context = _build_combined_context(result.entries)
 
     logger.info(
@@ -203,7 +195,6 @@ def _build_combined_context(entries: list[DbSchemaEntry]) -> str:
             lines.append(f"  Error: {entry.error}")
             continue
 
-        # File sources — use their excel_context directly
         if entry.source_type == "file":
             lines.append(f"\nFILE: {entry.connection_name} ({entry.db_type})")
             lines.append(f"Source ID: {entry.connection_id}")
@@ -213,7 +204,6 @@ def _build_combined_context(entries: list[DbSchemaEntry]) -> str:
                 lines.append(entry.excel_context[:2000])
             continue
 
-        # Database sources
         lines.append(f"\nDATABASE: {entry.connection_name} ({entry.db_type})")
         lines.append(f"Connection ID: {entry.connection_id}")
         lines.append(f"Query method: SQL")
@@ -234,7 +224,6 @@ def _build_combined_context(entries: list[DbSchemaEntry]) -> str:
                         parts.append(f"  values: [{vals}]")
                     lines.append(" ".join(parts))
 
-    # Cross-DB relationship hints
     lines.append("\n\nCROSS-DATABASE JOIN HINTS:")
     lines.append("=" * 50)
     lines.append("When joining across databases, Ceaser will:")

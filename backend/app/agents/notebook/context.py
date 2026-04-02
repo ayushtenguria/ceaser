@@ -19,12 +19,12 @@ class CellOutput:
     """Output from a completed cell."""
     cell_id: str
     cell_type: str
-    variable_name: str          # e.g., "result_0"
+    variable_name: str
     text: str = ""
     table_data: dict | None = None
     chart_data: dict | None = None
     code: str | None = None
-    dataframe_info: dict | None = None  # {columns, rows, dtypes} for context
+    dataframe_info: dict | None = None
     error: str | None = None
 
 
@@ -41,8 +41,8 @@ class NotebookContext:
     def __init__(self) -> None:
         self._user_inputs: dict[str, Any] = {}
         self._cell_outputs: list[CellOutput] = []
-        self._dataframes: dict[str, dict] = {}  # var_name → {columns, rows, path}
-        self._variables: dict[str, Any] = {}      # var_name → value
+        self._dataframes: dict[str, dict] = {}
+        self._variables: dict[str, Any] = {}
         self._code_preamble_lines: list[str] = [
             "import pandas as pd",
             "import numpy as np",
@@ -76,7 +76,6 @@ class NotebookContext:
         """Register the output of a completed cell."""
         self._cell_outputs.append(output)
 
-        # If the cell produced a DataFrame, register it
         if output.dataframe_info and output.variable_name:
             self._dataframes[output.variable_name] = output.dataframe_info
 
@@ -89,7 +88,7 @@ class NotebookContext:
             safe_key = key.lower().replace(" ", "_").replace("-", "_")
             if safe_key in self._variables:
                 return str(self._variables[safe_key])
-            return match.group(0)  # Keep original if not found
+            return match.group(0)
 
         return re.sub(r"\{\{(\w[\w\s-]*)\}\}", replacer, text)
 
@@ -97,11 +96,9 @@ class NotebookContext:
         """Build the full context string for a prompt cell."""
         parts: list[str] = []
 
-        # DB schema if available
         if self._connection_schema:
             parts.append(self._connection_schema)
 
-        # Available DataFrames
         if self._dataframes:
             parts.append("\nAVAILABLE DATAFRAMES:")
             parts.append("-" * 40)
@@ -110,16 +107,14 @@ class NotebookContext:
                 rows = info.get("rows", "?")
                 parts.append(f"  {var}: {rows} rows, columns: {', '.join(str(c) for c in cols[:15])}")
 
-        # User inputs
         if self._user_inputs:
             parts.append("\nUSER INPUTS:")
             for key, val in self._user_inputs.items():
                 parts.append(f"  {key} = {json.dumps(val)}")
 
-        # Previous results summary
         if self._cell_outputs:
             parts.append("\nPREVIOUS CELL RESULTS:")
-            for out in self._cell_outputs[-5:]:  # Last 5 results
+            for out in self._cell_outputs[-5:]:
                 parts.append(f"  [{out.cell_type}] {out.variable_name}: {out.text[:100]}")
 
         return "\n".join(parts)

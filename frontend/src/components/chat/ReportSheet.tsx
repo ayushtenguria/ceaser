@@ -44,7 +44,6 @@ export default function ReportSheet({ conversationId, open, onClose }: ReportShe
   const [error, setError] = useState<string | null>(null);
   const reportRef = useRef<HTMLDivElement>(null);
 
-  // Load existing report when sheet opens
   useEffect(() => {
     if (!open || !conversationId) return;
     setIsLoading(true);
@@ -97,9 +96,7 @@ export default function ReportSheet({ conversationId, open, onClose }: ReportShe
 
   const handleDownloadPDF = useCallback(async () => {
     if (!reportRef.current) return;
-    // Switch to light theme for PDF
     setIsPdfMode(true);
-    // Wait for re-render
     await new Promise((r) => setTimeout(r, 100));
 
     const html2pdf = (await import("html2pdf.js")).default;
@@ -115,7 +112,6 @@ export default function ReportSheet({ conversationId, open, onClose }: ReportShe
       .from(reportRef.current)
       .save();
 
-    // Switch back to dark theme
     setIsPdfMode(false);
   }, [report]);
 

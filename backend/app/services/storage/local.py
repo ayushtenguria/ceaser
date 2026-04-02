@@ -10,7 +10,7 @@ from app.services.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
-_ROOT = Path(__file__).resolve().parent.parent.parent.parent  # backend/
+_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 
 
 class LocalStorage(StorageBackend):
@@ -20,7 +20,6 @@ class LocalStorage(StorageBackend):
         self._root = root or _ROOT
 
     def _full_path(self, remote_path: str) -> Path:
-        # If already absolute (backward compat from old data), use as-is
         if os.path.isabs(remote_path):
             return Path(remote_path)
         return self._root / remote_path
@@ -37,7 +36,6 @@ class LocalStorage(StorageBackend):
         path = self._full_path(remote_path)
         if path.exists():
             return str(path)
-        # Backward compat: remote_path might already be an absolute path
         if os.path.isabs(remote_path) and os.path.exists(remote_path):
             return remote_path
         raise FileNotFoundError(f"File not found: {remote_path}")

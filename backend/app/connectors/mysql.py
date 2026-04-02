@@ -23,7 +23,6 @@ class MySQLConnector(BaseConnector):
         self._password = decrypt_value(connection.encrypted_password)
         self._conn: pymysql.connections.Connection | None = None
 
-    # ------------------------------------------------------------------
 
     def _connect_sync(self) -> pymysql.connections.Connection:
         return pymysql.connect(
@@ -51,7 +50,6 @@ class MySQLConnector(BaseConnector):
         assert self._conn is not None
 
         def _run() -> tuple[list[str], list[dict[str, Any]]]:
-            # HARD BLOCK: reject non-SELECT at connector level
             stripped = query.strip().upper()
             if not stripped.startswith("SELECT") and not stripped.startswith("WITH"):
                 raise PermissionError(
@@ -59,13 +57,11 @@ class MySQLConnector(BaseConnector):
                 )
 
             with self._conn.cursor() as cursor:  # type: ignore[union-attr]
-                # Set session to read-only
                 cursor.execute("SET SESSION TRANSACTION READ ONLY")
                 cursor.execute(query)
                 rows: list[dict[str, Any]] = cursor.fetchall()
                 columns = [desc[0] for desc in cursor.description] if cursor.description else []
 
-                # Serialise non-native types.
                 for row in rows:
                     for key, value in row.items():
                         if not isinstance(value, (str, int, float, bool, type(None), list, dict)):

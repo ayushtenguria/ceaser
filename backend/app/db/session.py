@@ -9,7 +9,6 @@ from app.core.config import get_settings
 
 _settings = get_settings()
 
-# Build connect args — Neon/cloud DBs need SSL
 _connect_args: dict = {}
 if "neon.tech" in _settings.database_url or "ssl=require" in _settings.database_url:
     ssl_ctx = ssl.create_default_context()
@@ -18,7 +17,7 @@ if "neon.tech" in _settings.database_url or "ssl=require" in _settings.database_
     _connect_args["ssl"] = ssl_ctx
 
 engine = create_async_engine(
-    _settings.database_url.split("?")[0],  # Strip query params, SSL handled via connect_args
+    _settings.database_url.split("?")[0],
     echo=False,
     pool_size=5,
     max_overflow=10,

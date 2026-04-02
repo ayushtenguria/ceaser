@@ -32,7 +32,7 @@ def _cell_timeout() -> int:
     except Exception:
         return 120
 
-_CELL_TIMEOUT_SECONDS = _cell_timeout()  # Hard timeout per cell
+_CELL_TIMEOUT_SECONDS = _cell_timeout()
 
 
 async def execute_notebook_cells(
@@ -54,7 +54,6 @@ async def execute_notebook_cells(
     user_inputs = user_inputs or {}
     file_uploads = file_uploads or {}
 
-    # Load connection schema if available
     if connection_id:
         try:
             from app.api.chat import _build_schema_context
@@ -101,7 +100,6 @@ async def execute_notebook_cells(
         result["executionMs"] = elapsed_ms
         result["type"] = "cell_complete"
 
-        # Register output in context
         var_name = cell.output_variable or f"result_{cell_order}"
         output = CellOutput(
             cell_id=cell_id,
@@ -117,10 +115,6 @@ async def execute_notebook_cells(
 
         yield result
 
-
-# ---------------------------------------------------------------------------
-# Cell executors
-# ---------------------------------------------------------------------------
 
 async def _execute_text_cell(cell: NotebookCell, ctx: NotebookContext) -> dict:
     """Text cells just resolve templates and pass through."""
@@ -141,7 +135,6 @@ async def _execute_file_cell(
     if not file_id:
         return {"status": "skipped", "text": "No file provided for this cell."}
 
-    # Load file record
     stmt = select(FileUpload).where(FileUpload.id == uuid.UUID(file_id))
     result = await db.execute(stmt)
     upload = result.scalar_one_or_none()
@@ -149,8 +142,6 @@ async def _execute_file_cell(
     if upload is None:
         return _error_result(cell_id, "File not found.")
 
-    # If Excel processing already done, use safe ceaser:// aliases
-    # (resolved to real URLs at sandbox execution time only)
     if upload.parquet_paths:
         from app.agents.excel.context import CEASER_PROTOCOL
         for var_name, remote_path in upload.parquet_paths.items():
@@ -164,7 +155,6 @@ async def _execute_file_cell(
         text = f"Loaded {upload.filename}: {len(upload.parquet_paths)} sheet(s)"
         return {"status": "success", "text": text}
 
-    # Fallback: basic file load
     try:
         import asyncio
         from app.agents.excel.orchestrator import process_excel_upload
@@ -206,14 +196,10 @@ async def _execute_prompt_cell(
     from app.agents.graph import run_agent
     from app.core.deps import get_llm
 
-    # Resolve templates in prompt
     prompt = ctx.resolve_template(cell.content)
 
-    # Build schema context from notebook context
     schema_context = ctx.build_prompt_context()
 
-    # If notebook has file DataFrames, include the code preamble in schema context
-    # so the agent knows about the uploaded files' data
     has_files = ctx.dataframe_count > 0
     if has_files:
         code_preamble = ctx.build_code_preamble()
@@ -222,14 +208,10 @@ async def _execute_prompt_cell(
         schema_context += " Use Python/pandas to query these DataFrames — NOT SQL."
         schema_context += " If the user's question is about this uploaded data, use Python mode."
 
-    # If only files (no DB connection), force Python mode
-    # If both files AND a connection exist, still pass connection — the router + schema
-    # context will help the agent decide (SQL for DB questions, Python for file questions)
     effective_connection = None if (has_files and not connection_id) else connection_id
 
     llm = get_llm(tier="heavy")
 
-    # Collect results from the agent run
     collected_text = ""
     collected_table = None
     collected_chart = None
@@ -280,7 +262,6 @@ async def _execute_code_cell(cell: NotebookCell, ctx: NotebookContext) -> dict:
     """Code cells execute Python directly in the sandbox."""
     from app.sandbox.executor import execute_python
 
-    # Prepend context preamble
     preamble = ctx.build_code_preamble()
     full_code = preamble + cell.content
 

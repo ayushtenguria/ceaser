@@ -30,7 +30,7 @@ class ColumnProfile:
     mean_val: float | None = None
     outlier_count: int = 0
     top_values: list[str] = field(default_factory=list)
-    suspected_typos: list[tuple[str, str]] = field(default_factory=list)  # (typo, likely_correct)
+    suspected_typos: list[tuple[str, str]] = field(default_factory=list)
 
 
 @dataclass
@@ -56,12 +56,10 @@ def profile_sheet(sheet: ExtractedSheet) -> SheetProfile:
     if df.empty:
         return profile
 
-    # Duplicate rows
     profile.duplicate_rows = int(df.duplicated().sum())
     if profile.duplicate_rows > 0:
         profile.warnings.append(f"{profile.duplicate_rows} duplicate rows")
 
-    # Per-column profiles
     for col in df.columns:
         cp = _profile_column(df[col], col)
         profile.columns.append(cp)
@@ -93,20 +91,17 @@ def _profile_column(series: pd.Series, name: str) -> ColumnProfile:
     if non_null.empty:
         return cp
 
-    # Top values
     try:
         cp.top_values = [str(v) for v in non_null.value_counts().head(5).index.tolist()]
     except Exception:
         pass
 
-    # Numeric stats
     if pd.api.types.is_numeric_dtype(non_null):
         try:
             cp.min_val = str(non_null.min())
             cp.max_val = str(non_null.max())
             cp.mean_val = float(non_null.mean())
 
-            # Outlier detection (IQR)
             q1 = non_null.quantile(0.25)
             q3 = non_null.quantile(0.75)
             iqr = q3 - q1
@@ -121,7 +116,6 @@ def _profile_column(series: pd.Series, name: str) -> ColumnProfile:
         except Exception:
             pass
 
-    # Fuzzy duplicate detection for string columns with low cardinality
     if non_null.dtype == "object" and cp.unique_count <= 50:
         cp.suspected_typos = _detect_fuzzy_duplicates(non_null)
 
@@ -143,26 +137,21 @@ def _detect_fuzzy_duplicates(series: pd.Series) -> list[tuple[str, str]]:
 
     for i, val_a in enumerate(values):
         for val_b in values[i + 1:]:
-            # Only flag if one is much less common than the other (likely typo)
             count_a = value_counts.get(val_a, 0)
             count_b = value_counts.get(val_b, 0)
             if min(count_a, count_b) >= max(count_a, count_b) * 0.8:
-                continue  # Both have similar counts — probably intentional variants
+                continue
 
             dist = _edit_distance(val_a.lower(), val_b.lower())
             max_len = max(len(val_a), len(val_b))
 
-            # Flag if edit distance is small relative to string length
-            # Short strings (3-5 chars): allow dist 2 (open/opne)
-            # Medium strings (6-10 chars): allow dist 3 (enterprise/enterprize)
-            # Long strings (11+): allow dist ~25% of length
             threshold = 2 if max_len <= 5 else (3 if max_len <= 10 else max(3, max_len // 4))
             if max_len > 2 and dist <= threshold:
                 typo = val_a if count_a < count_b else val_b
                 correct = val_b if count_a < count_b else val_a
                 typos.append((typo, correct))
 
-    return typos[:10]  # Cap to avoid noise
+    return typos[:10]
 
 
 def _edit_distance(s1: str, s2: str) -> int:

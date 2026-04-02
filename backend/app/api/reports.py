@@ -159,7 +159,6 @@ async def refresh_report(
     if not report.sql_query and not report.original_question:
         raise HTTPException(status_code=400, detail="Report has no query to refresh.")
 
-    # Build schema context
     schema_context = ""
     if report.connection_id:
         from app.api.chat import _build_schema_context
@@ -167,7 +166,6 @@ async def refresh_report(
 
     llm = get_llm()
 
-    # Run the agent
     new_table = None
     new_plotly = None
     new_text = ""
@@ -191,7 +189,6 @@ async def refresh_report(
         elif chunk_type == "sql":
             new_sql = chunk.get("content")
 
-    # Update report with fresh results
     if new_table is not None:
         report.table_data = new_table
     if new_plotly is not None:

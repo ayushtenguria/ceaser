@@ -76,7 +76,6 @@ export default function DataExplorer({ data, title, onExpand, compact = false }:
   const [globalFilter, setGlobalFilter] = useState("");
   const [activeFilter, setActiveFilter] = useState<string | null>(null);
 
-  // Detect column types
   const colTypes = useMemo(() => {
     const types: Record<string, string> = {};
     for (const col of columns) {
@@ -85,7 +84,6 @@ export default function DataExplorer({ data, title, onExpand, compact = false }:
     return types;
   }, [columns, rows]);
 
-  // Build TanStack columns
   const tableColumns = useMemo<ColumnDef<Record<string, unknown>>[]>(
     () =>
       columns.map((col) => ({

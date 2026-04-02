@@ -35,10 +35,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["chat"])
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 async def _get_user(db: DbSession, clerk_id: str) -> User:
     """Fetch user by clerk_id, auto-creating in dev mode if needed."""
     stmt = select(User).where(User.clerk_id == clerk_id)
@@ -114,7 +110,6 @@ async def _build_schema_context(
 
     graph_rag_used = False
     if connection_id:
-        # Try Graph RAG first — selective schema based on question
         try:
             from app.services.schema_graph import select_relevant_schema
             graph_context = await select_relevant_schema(
@@ -137,7 +132,6 @@ async def _build_schema_context(
         if conn:
             parts.append(f"DATABASE DIALECT: {conn.db_type.upper()}")
             if conn.schema_cache:
-                # Reconstruct SchemaInfo from cache and format for LLM.
                 from app.services.schema import SchemaInfo, TableInfo, ColumnInfo
                 tables = []
                 for t in conn.schema_cache.get("tables", []):
@@ -166,11 +160,8 @@ async def _build_schema_context(
         result = await db.execute(stmt)
         upload = result.scalar_one_or_none()
         if upload:
-            # code_preamble uses safe ceaser:// aliases — no real URLs exposed.
-            # Aliases are resolved to real URLs only at sandbox execution time.
             preamble = upload.code_preamble or ""
 
-            # Use rich Excel context if available (from Excel Intelligence Engine)
             if upload.excel_context:
                 from app.agents.excel.sheet_selector import (
                     parse_excel_context_to_sheets, select_relevant_sheets,
@@ -192,19 +183,16 @@ async def _build_schema_context(
                     if preamble:
                         parts.append(f"\nCODE PREAMBLE (prepend to all Python code):\n{preamble}")
             else:
-                # Fallback to basic file summary — resolve path for parsing only
                 try:
                     from app.services.storage import get_storage
                     storage = get_storage()
                     local_path = await storage.download_url(upload.file_path)
                     df, _ = parse_file(local_path, upload.file_type)
                     parts.append(get_file_summary(df))
-                    # Use ceaser:// alias for code, not the real path
                     parts.append(f"\nFile path for code: ceaser://{upload.file_path}")
                 except Exception as exc:
                     logger.warning("Could not parse file for context: %s", exc)
 
-    # Append metric definitions (semantic layer) if any exist.
     if connection_id:
         metrics_filter = [MetricDefinition.connection_id == connection_id]
         if org_id:
@@ -271,21 +259,18 @@ async def _build_multi_file_context(
         if not upload:
             continue
 
-        # Collect file info for cross-file relationship discovery
         file_contexts.append({
             "filename": upload.filename,
             "parquet_paths": upload.parquet_paths or {},
             "column_info": upload.column_info or {},
         })
 
-        # Collect preamble read_parquet lines from each file
         if upload.code_preamble:
             for line in upload.code_preamble.split("\n"):
                 stripped = line.strip()
                 if "= pd.read_parquet(" in stripped and stripped not in all_preamble_lines:
                     all_preamble_lines.append(stripped)
 
-        # Build context per file (schema description, NOT preamble — preamble is unified below)
         if upload.excel_context:
             from app.agents.excel.sheet_selector import (
                 parse_excel_context_to_sheets, select_relevant_sheets,
@@ -296,16 +281,14 @@ async def _build_multi_file_context(
             if all_sheet_metas and len(all_sheet_metas) > 3:
                 parts.append(build_compact_summary(all_sheet_metas))
                 selected = select_relevant_sheets(user_question, all_sheet_metas, max_sheets=3)
-                parts.append(build_selected_context(selected, ""))  # no preamble here
+                parts.append(build_selected_context(selected, ""))
             else:
                 parts.append(upload.excel_context)
 
-    # Add SINGLE unified preamble with ALL DataFrames
-    if len(all_preamble_lines) > 3:  # more than just imports
+    if len(all_preamble_lines) > 3:
         unified_preamble = "\n".join(all_preamble_lines)
         parts.append(f"\nCODE PREAMBLE (prepend to all Python code):\n{unified_preamble}\n")
 
-    # Cross-file relationship discovery
     cross_rels: list[dict] = []
     if len(file_contexts) > 1:
         from app.agents.excel.cross_file import discover_cross_file_relationships, format_cross_file_context
@@ -332,11 +315,9 @@ def _build_adaptive_history(
     history: list[dict[str, str]] = []
     total_chars = 0
 
-    # Walk backward from most recent (excluding the latest user msg)
     for msg in reversed(prev_msgs[:-1]):
         content = msg.content or ""
 
-        # For assistant messages, add brief data summary (not raw SQL/JSON)
         if msg.role == "assistant":
             if msg.table_data:
                 cols = msg.table_data.get("columns", [])
@@ -348,21 +329,15 @@ def _build_adaptive_history(
 
         msg_chars = len(content)
 
-        # Check budget
         if total_chars + msg_chars > max_chars:
             break
 
         total_chars += msg_chars
         history.append({"role": msg.role, "content": content})
 
-    # Reverse to chronological order
     history.reverse()
     return history
 
-
-# ---------------------------------------------------------------------------
-# Endpoints
-# ---------------------------------------------------------------------------
 
 @router.get("/suggestions")
 async def get_suggestions(
@@ -383,9 +358,8 @@ async def get_suggestions(
         await _verify_org_connection(db, connection_id, org_id)
         schema_context = await _build_schema_context(db, connection_id, None, org_id=org_id)
 
-    llm = get_llm(tier="light")  # Suggestions use light model
+    llm = get_llm(tier="light")
 
-    # If conversation_id provided, use conversation history for context-aware suggestions
     if conversation_id:
         await _verify_org_conversation(db, conversation_id, org_id)
         msg_stmt = (
@@ -397,9 +371,7 @@ async def get_suggestions(
         msgs = list(msg_result.scalars().all())
 
         if msgs:
-            # Build history
             history = [{"role": m.role, "content": m.content or ""} for m in msgs[-10:]]
-            # Last user question and assistant answer
             last_q = ""
             last_a = ""
             for m in reversed(msgs):
@@ -419,7 +391,6 @@ async def get_suggestions(
             )
             return {"suggestions": suggestions}
 
-    # No conversation — generic suggestions
     suggestions = await generate_suggestions(schema_context, llm)
     return {"suggestions": suggestions}
 
@@ -436,7 +407,6 @@ async def chat(
     """
     user = await require_permission(Permission.QUERY_DATA, current_user, db)
 
-    # Super admins bypass rate limiting and plan limits
     if not user.is_super_admin:
         from app.core.rate_limiter import check_rate_limit
         check_rate_limit(current_user.user_id, max_requests=30, window_seconds=60)
@@ -446,7 +416,6 @@ async def chat(
 
     org_id = user.organization_id or ""
 
-    # ── Feature gates ─────────────────────────────────────────────
     from app.core.features import check_feature, has_feature, Feature
     if body.model == "claude":
         await check_feature(Feature.CLAUDE_MODEL, db, org_id)
@@ -455,15 +424,12 @@ async def chat(
     if body.file_id:
         await check_feature(Feature.FILE_UPLOAD, db, org_id)
 
-    # ── Validate connection belongs to this org ───────────────────
     if body.connection_id:
         await _verify_org_connection(db, body.connection_id, org_id)
 
-    # ── Validate file belongs to this org ─────────────────────────
     if body.file_id:
         await _verify_org_file(db, body.file_id, org_id)
 
-    # ── Resolve or create conversation ──────────────────────────────
     if body.conversation_id:
         conversation = await _verify_org_conversation(db, body.conversation_id, org_id)
     else:
@@ -478,7 +444,6 @@ async def chat(
         await db.flush()
         await db.refresh(conversation)
 
-    # ── Save user message ───────────────────────────────────────────
     user_msg = Message(
         conversation_id=conversation.id,
         role="user",
@@ -488,13 +453,9 @@ async def chat(
     db.add(user_msg)
     await db.flush()
 
-    # Commit conversation + user message NOW so follow-up requests can find it.
-    # After commit, session stays open for the SSE generator's later writes.
     await db.commit()
-    # Re-attach the conversation object to this session after commit
     await db.refresh(conversation)
 
-    # ── Accumulate files per conversation ────────────────────────────
     logger.info("Chat request: file_id=%s file_ids=%s connection_id=%s",
                 body.file_id, body.file_ids, body.connection_id)
     incoming_file_ids: list[str] = []
@@ -512,11 +473,10 @@ async def chat(
                 changed = True
         if changed:
             conversation.file_ids = existing_ids
-            conversation.file_id = uuid.UUID(incoming_file_ids[-1])  # backward compat
+            conversation.file_id = uuid.UUID(incoming_file_ids[-1])
             from sqlalchemy.orm.attributes import flag_modified
             flag_modified(conversation, "file_ids")
 
-            # Update file graph with conversation_id for cross-file discovery
             try:
                 from app.services.schema_graph import get_graph_driver
                 driver = get_graph_driver()
@@ -530,6 +490,8 @@ async def chat(
             except Exception:
                 pass
             await db.flush()
+            await db.commit()
+            await db.refresh(conversation)
 
     # ── Build context (all files in conversation) ─────────────────
     effective_connection_id = body.connection_id or conversation.connection_id
@@ -582,6 +544,30 @@ async def chat(
                 if file_context:
                     schema_context = (schema_context + "\n\n" + file_context) if schema_context else file_context
 
+            # Always append CODE PREAMBLE from file uploads so the Python
+            # agent knows how to load the data (parquet paths).  Graph RAG
+            # returns column metadata but NOT the preamble, so we must add
+            # it regardless of which context path was taken.
+            preamble_lines: list[str] = ["import pandas as pd", "import plotly.express as px", ""]
+            for fid in all_file_ids:
+                try:
+                    fid_uuid = uuid.UUID(fid)
+                except ValueError:
+                    continue
+                stmt = select(FileUpload).where(FileUpload.id == fid_uuid)
+                if org_id:
+                    stmt = stmt.where(FileUpload.organization_id == org_id)
+                result = await db.execute(stmt)
+                upload = result.scalar_one_or_none()
+                if upload and upload.code_preamble:
+                    for line in upload.code_preamble.split("\n"):
+                        stripped = line.strip()
+                        if "= pd.read_parquet(" in stripped and stripped not in preamble_lines:
+                            preamble_lines.append(stripped)
+            if len(preamble_lines) > 3:  # more than just the imports
+                unified_preamble = "\n".join(preamble_lines)
+                schema_context += f"\n\nCODE PREAMBLE (prepend to all Python code):\n{unified_preamble}\n"
+
     logger.info("Chat context: connection=%s files=%d",
                 effective_connection_id, len(all_file_ids))
 
@@ -616,7 +602,6 @@ async def chat(
 
     async def event_stream():  # noqa: ANN202
         """Yield SSE-formatted events from the agent run."""
-        # Send conversation_id first so the frontend can track it.
         yield _sse({"type": "conversation_id", "content": str(conversation_id)})
 
         collected_text = ""
@@ -637,7 +622,6 @@ async def chat(
             llm_light=llm_light,
             db=db,
         ):
-            # Transform chunk types to match frontend expectations.
             chunk_type = chunk.get("type", "")
             if chunk_type == "plotly":
                 sse_chunk = {"type": "chart", "content": "", "data": chunk["content"]}
@@ -647,7 +631,6 @@ async def chat(
                 sse_chunk = chunk
             yield _sse(sse_chunk)
 
-            # Collect artifacts for the final persisted message.
             sse_type = sse_chunk.get("type", "")
             if sse_type == "text":
                 collected_text += chunk.get("content", "")
@@ -662,7 +645,6 @@ async def chat(
             elif sse_type == "error":
                 collected_error = chunk.get("content")
 
-        # ── Determine message type ──────────────────────────────────
         if collected_error and not collected_text:
             msg_type = "error"
         elif collected_plotly:
@@ -674,7 +656,6 @@ async def chat(
         else:
             msg_type = "text"
 
-        # ── Save assistant message ──────────────────────────────────
         assistant_msg = Message(
             conversation_id=conversation_id,
             role="assistant",
@@ -699,14 +680,13 @@ async def chat(
             details={"question": body.message, "sql": collected_sql, "model": body.model},
         )
 
-        # ── Extract memories async (non-blocking) ────────────────
         try:
             from app.agents.memory_extractor import extract_memories
             await extract_memories(
                 user_message=body.message,
                 assistant_response=collected_text or "",
                 sql_query=collected_sql,
-                llm=llm_light,  # LIGHT — simple extraction task
+                llm=llm_light,
                 db=db,
                 org_id=org_id,
                 user_id=user.id,
@@ -725,10 +705,6 @@ def _sse(data: dict) -> str:
     return f"data: {json.dumps(data, default=str)}\n\n"
 
 
-# ---------------------------------------------------------------------------
-# Save as Notebook
-# ---------------------------------------------------------------------------
-
 @router.post("/conversations/{conversation_id}/notebook/draft")
 async def get_notebook_draft(
     conversation_id: uuid.UUID,
@@ -742,7 +718,6 @@ async def get_notebook_draft(
     org_id = user.organization_id or ""
     conversation = await _verify_org_conversation(db, conversation_id, org_id)
 
-    # Load conversation messages
     msg_stmt = (
         select(Message)
         .where(Message.conversation_id == conversation_id)
@@ -766,7 +741,7 @@ async def get_notebook_draft(
         for m in db_messages
     ]
 
-    llm = get_llm(tier="light")  # Notebook extraction is a simple task
+    llm = get_llm(tier="light")
     draft = await extract_notebook_draft(messages, llm, conversation.title if conversation else "")
 
     return {
@@ -791,13 +766,11 @@ async def save_conversation_as_notebook(
     org_id = user.organization_id or ""
     conversation = await _verify_org_conversation(db, conversation_id, org_id)
 
-    # If body has steps (from reviewed draft), use those
     if body and body.get("steps"):
         title = body.get("title", "Analysis Notebook")
         description = body.get("description", "")
         steps = [s for s in body["steps"] if s.get("included", True)]
     else:
-        # No body — generate draft and save directly (backward compat)
         msg_stmt = (
             select(Message)
             .where(Message.conversation_id == conversation_id)
@@ -821,7 +794,6 @@ async def save_conversation_as_notebook(
         description = draft["description"]
         steps = [s for s in draft["steps"] if s.get("included", True)]
 
-    # Create notebook
     notebook = Notebook(
         name=title,
         description=description,
@@ -832,7 +804,6 @@ async def save_conversation_as_notebook(
     db.add(notebook)
     await db.flush()
 
-    # File cell at top
     file_cell = NotebookCell(
         notebook_id=notebook.id, order=0,
         cell_type="file", content="Upload your data file",
@@ -840,7 +811,6 @@ async def save_conversation_as_notebook(
     )
     db.add(file_cell)
 
-    # Create cells from steps
     for i, step in enumerate(steps):
         cell = NotebookCell(
             notebook_id=notebook.id,
@@ -859,13 +829,9 @@ async def save_conversation_as_notebook(
     return {
         "notebookId": str(notebook.id),
         "name": title,
-        "cellCount": len(steps) + 1,  # +1 for file cell
+        "cellCount": len(steps) + 1,
     }
 
-
-# ---------------------------------------------------------------------------
-# Report Generation
-# ---------------------------------------------------------------------------
 
 @router.get("/conversations/{conversation_id}/report")
 async def get_conversation_report(
@@ -878,7 +844,6 @@ async def get_conversation_report(
 
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
 
-    # Find existing report for this conversation
     stmt = (
         select(Report)
         .where(
@@ -894,7 +859,6 @@ async def get_conversation_report(
     if report is None:
         raise HTTPException(status_code=404, detail="No report found for this conversation.")
 
-    # Check if conversation has new messages since report was generated
     latest_msg_stmt = (
         select(sqlfunc.max(Message.created_at))
         .where(Message.conversation_id == conversation_id)
@@ -907,7 +871,7 @@ async def get_conversation_report(
         has_new_messages = latest_msg_time > report.created_at
 
     return {
-        "report": report.plotly_figure,  # We store full report JSON here
+        "report": report.plotly_figure,
         "reportId": str(report.id),
         "createdAt": report.created_at.isoformat() if report.created_at else None,
         "hasNewMessages": has_new_messages,
@@ -927,14 +891,12 @@ async def generate_conversation_report(
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
     org_id = user.organization_id or ""
 
-    # Check plan limits
     from app.core.plan_enforcement import check_report_limit
     await check_report_limit(db, org_id)
 
-    # Verify conversation belongs to this org
     conversation = await _verify_org_conversation(db, conversation_id, org_id)
 
-    llm = get_llm(tier="heavy")  # Reports need best quality
+    llm = get_llm(tier="heavy")
 
     async def stream():
         final_report = None
@@ -949,9 +911,7 @@ async def generate_conversation_report(
             if event.get("type") == "report_complete":
                 final_report = event.get("report")
 
-        # Save the report to DB
         if final_report:
-            # Delete old report for this conversation
             old_stmt = select(Report).where(
                 Report.original_question == str(conversation_id),
                 Report.organization_id == (user.organization_id or ""),
@@ -960,13 +920,12 @@ async def generate_conversation_report(
             for old in old_result.scalars().all():
                 await db.delete(old)
 
-            # Save new report
             saved_report = Report(
                 name=final_report.get("title", "Report"),
                 description=final_report.get("subtitle", ""),
                 original_question=str(conversation_id),
                 summary_text=final_report.get("executiveSummary", ""),
-                plotly_figure=final_report,  # Store full report JSON in this column
+                plotly_figure=final_report,
                 table_data=None,
                 connection_id=conversation.connection_id,
                 user_id=user.id,
@@ -978,15 +937,10 @@ async def generate_conversation_report(
     return StreamingResponse(stream(), media_type="text/event-stream")
 
 
-# ---------------------------------------------------------------------------
-# Conversation CRUD
-# ---------------------------------------------------------------------------
-
 @router.get("/conversations", response_model=list[ConversationResponse])
 async def list_conversations(current_user: CurrentUser, db: DbSession) -> list[Conversation]:
     """List all conversations for the authenticated user, newest first."""
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
-    # Filter by org instead of user for shared access within org
     stmt = (
         select(Conversation)
         .join(User, Conversation.user_id == User.id)
@@ -1037,7 +991,6 @@ async def delete_conversation(
     user = await require_permission(Permission.QUERY_DATA, current_user, db)
     conversation = await _verify_org_conversation(db, conversation_id, user.organization_id or "")
 
-    # Delete messages first (cascade could handle this, but explicit is clearer).
     msg_stmt = select(Message).where(Message.conversation_id == conversation_id)
     msg_result = await db.execute(msg_stmt)
     for msg in msg_result.scalars().all():

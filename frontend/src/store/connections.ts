@@ -46,7 +46,6 @@ export const useConnectionsStore = create<ConnectionsState>((set) => ({
       const ids = state.activeConnectionIds.includes(id)
         ? state.activeConnectionIds.filter((i) => i !== id)
         : [...state.activeConnectionIds, id];
-      // Also set single activeConnectionId for backward compat
       return { activeConnectionIds: ids, activeConnectionId: ids[0] || null };
     }),
 

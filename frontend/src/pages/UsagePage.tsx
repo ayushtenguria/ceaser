@@ -227,7 +227,6 @@ export default function UsagePage() {
   );
 }
 
-// Static class maps — Tailwind JIT can't detect dynamically interpolated classes
 const PLAN_BORDER: Record<string, string> = {
   sky: "border-sky-500/30",
   purple: "border-purple-500/30",

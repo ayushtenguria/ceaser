@@ -37,7 +37,6 @@ export default function FilesPage() {
         const data = await api.getFiles();
         if (!cancelled) setFiles(data);
       } catch {
-        // Silent fail
       } finally {
         if (!cancelled) setIsLoading(false);
       }
@@ -55,7 +54,6 @@ export default function FilesPage() {
       const uploaded = await api.uploadFile(file);
       setFiles((prev) => [uploaded, ...prev]);
     } catch {
-      // Could show toast error here
     } finally {
       setIsUploading(false);
     }
@@ -65,7 +63,6 @@ export default function FilesPage() {
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
       if (file) handleUpload(file);
-      // Reset input so the same file can be selected again
       e.target.value = "";
     },
     [handleUpload]
@@ -87,7 +84,6 @@ export default function FilesPage() {
       await api.deleteFile(id);
       setFiles((prev) => prev.filter((f) => f.id !== id));
     } catch {
-      // Silent fail
     } finally {
       setDeletingIds((prev) => {
         const next = new Set(prev);

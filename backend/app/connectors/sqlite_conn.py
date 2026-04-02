@@ -18,7 +18,7 @@ class SQLiteConnector(BaseConnector):
 
     def __init__(self, connection: DatabaseConnection) -> None:
         self._meta = connection
-        self._db_path = connection.database  # file path for SQLite
+        self._db_path = connection.database
         self._conn: aiosqlite.Connection | None = None
 
     async def connect(self) -> bool:
@@ -36,7 +36,6 @@ class SQLiteConnector(BaseConnector):
             await self.connect()
         assert self._conn is not None
 
-        # HARD BLOCK: reject non-SELECT at connector level
         stripped = query.strip().upper()
         if not stripped.startswith("SELECT") and not stripped.startswith("WITH"):
             raise PermissionError(

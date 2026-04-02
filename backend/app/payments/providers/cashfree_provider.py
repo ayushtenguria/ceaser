@@ -27,7 +27,7 @@ class CashfreeProvider(IPaymentProvider):
         self._app_id = app_id
         self._secret_key = secret_key
         self._webhook_secret = webhook_secret
-        self._plan_map = plan_map  # plan_name → cashfree plan_id
+        self._plan_map = plan_map
         self._base_url = (
             "https://sandbox.cashfree.com/pg" if sandbox
             else "https://api.cashfree.com/pg"

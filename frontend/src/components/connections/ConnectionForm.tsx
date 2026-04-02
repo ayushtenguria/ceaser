@@ -130,17 +130,14 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
     setTestResult(null);
 
     try {
-      // Create the connection first, then test it
       const connection = await api.createConnection(buildPayload());
       const result = await api.testConnection(connection.id);
       setTestResult(result);
 
       if (result.success) {
-        // Connection works — add it to the store
         addConnection(connection);
         onSuccess();
       } else {
-        // Test failed — clean up the created connection
         await api.deleteConnection(connection.id).catch(() => {});
       }
     } catch {
@@ -173,7 +170,6 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
   const showStandardFields =
     form.dbType !== "sqlite" && form.dbType !== "bigquery";
 
-  // Human-readable connection error messages
   function _humanizeConnectionError(error: string): string {
     const e = error.toLowerCase();
     if (e.includes("connection refused") || e.includes("could not connect"))

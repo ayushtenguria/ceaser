@@ -46,7 +46,6 @@ export default function ConnectionCard({ connection }: ConnectionCardProps) {
       await api.deleteConnection(connection.id);
       removeConnection(connection.id);
     } catch {
-      // Silently fail, could add toast here
     } finally {
       setIsDeleting(false);
     }

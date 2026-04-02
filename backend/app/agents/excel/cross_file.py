@@ -22,7 +22,6 @@ def discover_cross_file_relationships(
     if len(file_contexts) < 2:
         return []
 
-    # Collect all column names per DataFrame variable
     var_columns: dict[str, set[str]] = {}
     var_to_file: dict[str, str] = {}
 
@@ -37,19 +36,16 @@ def discover_cross_file_relationships(
             var_columns[var_name] = col_names
             var_to_file[var_name] = filename
 
-    # Find shared columns between DataFrames from DIFFERENT files
     relationships = []
     vars_list = list(var_columns.keys())
 
     for i, var_a in enumerate(vars_list):
         for var_b in vars_list[i + 1:]:
-            # Skip if same file
             if var_to_file[var_a] == var_to_file[var_b]:
                 continue
 
             shared = var_columns[var_a] & var_columns[var_b]
             for col in shared:
-                # Heuristic: columns with "id", "key", "code" are likely join keys
                 is_key = any(kw in col for kw in ("id", "key", "code", "name", "email", "sku"))
                 relationships.append({
                     "source_var": var_a,

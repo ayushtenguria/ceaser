@@ -15,22 +15,21 @@ from sqlalchemy import select
 
 class Permission(str, Enum):
     """Available permissions in the platform."""
-    QUERY_DATA = "query_data"           # Chat, run SQL
-    VIEW_DATA = "view_data"             # View reports, conversations, results
-    SAVE_REPORTS = "save_reports"       # Create/update reports
-    MANAGE_CONNECTIONS = "manage_connections"  # Create/delete DB connections
-    MANAGE_METRICS = "manage_metrics"   # Define/edit semantic layer metrics
-    UPLOAD_FILES = "upload_files"       # Upload data files
-    DELETE_FILES = "delete_files"       # Delete files
-    VIEW_AUDIT = "view_audit"           # View audit logs
-    INVITE_USERS = "invite_users"       # Invite users to org
-    ADMIN_DASHBOARD = "admin_dashboard" # Access admin panel
-    MANAGE_ORGS = "manage_orgs"         # Create/manage organizations
+    QUERY_DATA = "query_data"
+    VIEW_DATA = "view_data"
+    SAVE_REPORTS = "save_reports"
+    MANAGE_CONNECTIONS = "manage_connections"
+    MANAGE_METRICS = "manage_metrics"
+    UPLOAD_FILES = "upload_files"
+    DELETE_FILES = "delete_files"
+    VIEW_AUDIT = "view_audit"
+    INVITE_USERS = "invite_users"
+    ADMIN_DASHBOARD = "admin_dashboard"
+    MANAGE_ORGS = "manage_orgs"
 
 
-# Role -> permissions mapping
 ROLE_PERMISSIONS: dict[str, set[Permission]] = {
-    "super_admin": set(Permission),  # All permissions
+    "super_admin": set(Permission),
     "admin": {
         Permission.QUERY_DATA,
         Permission.VIEW_DATA,

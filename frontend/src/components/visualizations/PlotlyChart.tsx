@@ -67,8 +67,6 @@ export default function PlotlyChart({ figure }: { figure: PlotlyFigure }) {
       modeBarButtonsToRemove: ["lasso2d", "select2d"],
     });
 
-    // Force resize after render to fill container width
-    // Delay ensures the DOM layout is complete before measuring
     setTimeout(() => {
       try { Plotly.Plots.resize(el); } catch {}
     }, 100);
@@ -87,7 +85,6 @@ export default function PlotlyChart({ figure }: { figure: PlotlyFigure }) {
     };
   }, [renderChart]);
 
-  // ResizeObserver for container width changes
   useEffect(() => {
     const el = containerRef.current;
     if (!el) return;

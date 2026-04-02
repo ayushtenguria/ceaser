@@ -16,8 +16,7 @@ from app.services.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
-# Signed URL validity (seconds)
-_SIGNED_URL_EXPIRY = 600  # 10 minutes
+_SIGNED_URL_EXPIRY = 600
 
 
 class SupabaseStorage(StorageBackend):
@@ -85,7 +84,6 @@ class SupabaseStorage(StorageBackend):
 
         data = resp.json()
         signed_path = data.get("signedURL", "")
-        # signedURL is relative like /object/sign/... — needs /storage/v1 prefix
         if signed_path.startswith("/"):
             return f"{self._url}/storage/v1{signed_path}"
         return signed_path

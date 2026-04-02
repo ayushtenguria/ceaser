@@ -23,12 +23,11 @@ class User(Base):
     last_name: Mapped[str] = mapped_column(String(255), default="")
     organization_id: Mapped[str | None] = mapped_column(String(255), nullable=True)
     image_url: Mapped[str | None] = mapped_column(Text, nullable=True)
-    role: Mapped[str] = mapped_column(String(50), default="member")  # "super_admin", "admin", "member", "viewer"
+    role: Mapped[str] = mapped_column(String(50), default="member")
     is_super_admin: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
-    # Relationships
     conversations: Mapped[list[Conversation]] = relationship(back_populates="user")
     connections: Mapped[list[DatabaseConnection]] = relationship(back_populates="user")
     file_uploads: Mapped[list[FileUpload]] = relationship(back_populates="user")
@@ -41,12 +40,12 @@ class OrganizationPlan(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    plan_name: Mapped[str] = mapped_column(String(100), default="free")  # free, starter, business, enterprise
+    plan_name: Mapped[str] = mapped_column(String(100), default="free")
     max_seats: Mapped[int] = mapped_column(default=5)
     max_connections: Mapped[int] = mapped_column(default=1)
     max_queries_per_day: Mapped[int] = mapped_column(default=50)
     max_reports: Mapped[int] = mapped_column(default=5)
-    features: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # Feature flags
+    features: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True)
     trial_ends_at: Mapped[datetime | None] = mapped_column(nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
@@ -60,7 +59,7 @@ class DatabaseConnection(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(255))
-    db_type: Mapped[str] = mapped_column(String(50))  # postgresql, mysql, sqlite, bigquery, snowflake
+    db_type: Mapped[str] = mapped_column(String(50))
     host: Mapped[str] = mapped_column(String(255), default="")
     port: Mapped[int] = mapped_column(default=5432)
     database: Mapped[str] = mapped_column(String(255))
@@ -91,7 +90,7 @@ class Conversation(Base):
     file_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("file_uploads.id"), nullable=True
     )
-    file_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)  # accumulated file UUIDs
+    file_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
@@ -111,11 +110,11 @@ class Message(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     conversation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("conversations.id"))
-    role: Mapped[str] = mapped_column(String(20))  # "user" or "assistant"
+    role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text, default="")
     message_type: Mapped[str] = mapped_column(
         String(50), default="text"
-    )  # text, sql_result, visualization, code_execution, error
+    )
     sql_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     code_block: Mapped[str | None] = mapped_column(Text, nullable=True)
     plotly_figure: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -139,10 +138,10 @@ class FileUpload(Base):
     organization_id: Mapped[str] = mapped_column(String(255))
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     column_info: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    excel_context: Mapped[str | None] = mapped_column(Text, nullable=True)  # LLM context string
-    code_preamble: Mapped[str | None] = mapped_column(Text, nullable=True)  # Python import code
-    parquet_paths: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {var_name: path}
-    excel_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # relationships, quality, insight
+    excel_context: Mapped[str | None] = mapped_column(Text, nullable=True)
+    code_preamble: Mapped[str | None] = mapped_column(Text, nullable=True)
+    parquet_paths: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    excel_metadata: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     user: Mapped[User] = relationship(back_populates="file_uploads")
@@ -157,27 +156,22 @@ class Report(Base):
     name: Mapped[str] = mapped_column(String(500))
     description: Mapped[str] = mapped_column(Text, default="")
 
-    # Source
     connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("database_connections.id"), nullable=True)
     file_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("file_uploads.id"), nullable=True)
 
-    # The saved query/analysis
     sql_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     python_code: Mapped[str | None] = mapped_column(Text, nullable=True)
     original_question: Mapped[str] = mapped_column(Text, default="")
 
-    # Cached results (last run)
     table_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     plotly_figure: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     summary_text: Mapped[str] = mapped_column(Text, default="")
 
-    # Schedule (cron-like)
-    schedule: Mapped[str | None] = mapped_column(String(50), nullable=True)  # "hourly", "daily", "weekly", or None
+    schedule: Mapped[str | None] = mapped_column(String(50), nullable=True)
     last_run_at: Mapped[datetime | None] = mapped_column(nullable=True)
     next_run_at: Mapped[datetime | None] = mapped_column(nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True)
 
-    # Ownership
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     organization_id: Mapped[str] = mapped_column(String(255), default="")
     is_pinned: Mapped[bool] = mapped_column(default=False)
@@ -185,7 +179,6 @@ class Report(Base):
     created_at: Mapped[datetime] = mapped_column(default=func.now())
     updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
 
-    # Relationships
     user: Mapped["User"] = relationship()
     connection: Mapped["DatabaseConnection | None"] = relationship()
 
@@ -197,10 +190,10 @@ class AuditLog(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
-    action: Mapped[str] = mapped_column(String(100))  # "chat_query", "report_created", "connection_created", "file_uploaded", etc.
-    resource_type: Mapped[str] = mapped_column(String(100))  # "conversation", "report", "connection", "file"
+    action: Mapped[str] = mapped_column(String(100))
+    resource_type: Mapped[str] = mapped_column(String(100))
     resource_id: Mapped[str] = mapped_column(String(255), default="")
-    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # Stores query text, SQL, etc.
+    details: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     ip_address: Mapped[str] = mapped_column(String(50), default="")
     created_at: Mapped[datetime] = mapped_column(default=func.now())
 
@@ -213,19 +206,15 @@ class MetricDefinition(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     name: Mapped[str] = mapped_column(String(200), index=True)
     description: Mapped[str] = mapped_column(Text, default="")
-    sql_expression: Mapped[str] = mapped_column(Text)  # e.g., "SUM(revenue.amount) WHERE revenue.type = 'subscription'"
+    sql_expression: Mapped[str] = mapped_column(Text)
     category: Mapped[str] = mapped_column(String(100), default="general")
     connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("database_connections.id"), nullable=True)
     organization_id: Mapped[str] = mapped_column(String(255), default="")
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
-    is_locked: Mapped[bool] = mapped_column(default=False)  # Locked = AI must use this exact definition
+    is_locked: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(default=func.now())
     updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
 
-
-# ---------------------------------------------------------------------------
-# Notebooks
-# ---------------------------------------------------------------------------
 
 class Notebook(Base):
     """Reusable analysis notebook — a sequence of cells that execute top-to-bottom."""
@@ -236,26 +225,21 @@ class Notebook(Base):
     name: Mapped[str] = mapped_column(String(500))
     description: Mapped[str] = mapped_column(Text, default="")
 
-    # Owner
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     organization_id: Mapped[str] = mapped_column(String(255), default="")
 
-    # Optional default data source
     connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("database_connections.id"), nullable=True)
 
-    # Template settings
     is_template: Mapped[bool] = mapped_column(default=False)
     is_public: Mapped[bool] = mapped_column(default=False)
     template_category: Mapped[str] = mapped_column(String(100), default="")
 
-    # Status
     last_run_at: Mapped[datetime | None] = mapped_column(nullable=True)
     run_count: Mapped[int] = mapped_column(default=0)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
-    # Relationships
     cells: Mapped[list["NotebookCell"]] = relationship(
         back_populates="notebook", cascade="all, delete-orphan",
         order_by="NotebookCell.order",
@@ -273,27 +257,18 @@ class NotebookCell(Base):
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     notebook_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("notebooks.id", ondelete="CASCADE"))
 
-    order: Mapped[int] = mapped_column(default=0)  # execution order (0-based)
-    cell_type: Mapped[str] = mapped_column(String(20))  # text, file, input, prompt, code
+    order: Mapped[int] = mapped_column(default=0)
+    cell_type: Mapped[str] = mapped_column(String(20))
 
-    # Content
-    content: Mapped[str] = mapped_column(Text, default="")  # markdown/prompt/code
+    content: Mapped[str] = mapped_column(Text, default="")
 
-    # Config — varies by cell type
-    # text: {} (no config)
-    # file: {"accepted_types": [".xlsx", ".csv"], "description": "Upload sales data"}
-    # input: {"input_type": "text|number|select|date", "label": "Year", "options": ["2023","2024"], "default": "2024"}
-    # prompt: {"show_code": false, "show_table": true, "show_chart": true}
-    # code: {"language": "python"}
     config: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
-    # Variable name — output of this cell is available as this variable in subsequent cells
     output_variable: Mapped[str] = mapped_column(String(100), default="")
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
-    # Relationships
     notebook: Mapped["Notebook"] = relationship(back_populates="cells")
 
 
@@ -306,11 +281,10 @@ class NotebookRun(Base):
     notebook_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("notebooks.id", ondelete="CASCADE"))
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
 
-    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, running, completed, failed
+    status: Mapped[str] = mapped_column(String(20), default="pending")
 
-    # User-provided inputs for this run
-    user_inputs: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {cell_id: value}
-    file_uploads: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # {cell_id: file_id}
+    user_inputs: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    file_uploads: Mapped[dict | None] = mapped_column(JSON, nullable=True)
 
     started_at: Mapped[datetime | None] = mapped_column(nullable=True)
     completed_at: Mapped[datetime | None] = mapped_column(nullable=True)
@@ -319,7 +293,6 @@ class NotebookRun(Base):
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    # Relationships
     notebook: Mapped["Notebook"] = relationship(back_populates="runs")
     cell_results: Mapped[list["NotebookCellResult"]] = relationship(
         cascade="all, delete-orphan",
@@ -334,10 +307,10 @@ class Subscription(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     organization_id: Mapped[str] = mapped_column(String(255), index=True)
-    provider: Mapped[str] = mapped_column(String(50))  # stripe, razorpay, cashfree
+    provider: Mapped[str] = mapped_column(String(50))
     provider_subscription_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
     plan_name: Mapped[str] = mapped_column(String(100))
-    status: Mapped[str] = mapped_column(String(50), default="incomplete")  # active, past_due, cancelled, incomplete
+    status: Mapped[str] = mapped_column(String(50), default="incomplete")
     current_period_end: Mapped[datetime | None] = mapped_column(nullable=True)
     cancel_at_period_end: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
@@ -353,9 +326,9 @@ class Payment(Base):
     organization_id: Mapped[str] = mapped_column(String(255), index=True)
     provider: Mapped[str] = mapped_column(String(50))
     provider_payment_id: Mapped[str] = mapped_column(String(255), unique=True, index=True)
-    amount: Mapped[int] = mapped_column(default=0)  # in smallest currency unit (cents/paise)
+    amount: Mapped[int] = mapped_column(default=0)
     currency: Mapped[str] = mapped_column(String(10), default="usd")
-    status: Mapped[str] = mapped_column(String(50), default="pending")  # pending, success, failed, refunded
+    status: Mapped[str] = mapped_column(String(50), default="pending")
     plan_name: Mapped[str] = mapped_column(String(100), default="")
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
@@ -374,29 +347,23 @@ class AgentMemory(Base):
     )
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
-    organization_id: Mapped[str] = mapped_column(String(255), index=True)  # hard namespace
-    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)  # null = org-level
+    organization_id: Mapped[str] = mapped_column(String(255), index=True)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("users.id"), nullable=True)
 
-    # Type classification
     memory_type: Mapped[str] = mapped_column(String(50))
-    # correction, preference, column_alias, domain_term, business_rule, table_note, learned_fact
 
-    content: Mapped[str] = mapped_column(Text)  # atomic fact, plain text
+    content: Mapped[str] = mapped_column(Text)
 
-    # Provenance
     source: Mapped[str] = mapped_column(String(50), default="auto_extracted")
-    # auto_extracted, user_correction, admin_manual, agent_learned
     source_conversation_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("conversations.id", ondelete="SET NULL"), nullable=True
     )
 
-    # Scoring
-    confidence: Mapped[float] = mapped_column(default=0.7)  # 0-1
+    confidence: Mapped[float] = mapped_column(default=0.7)
     access_count: Mapped[int] = mapped_column(default=0)
     last_accessed_at: Mapped[datetime | None] = mapped_column(nullable=True)
 
-    # Lifecycle
-    expires_at: Mapped[datetime | None] = mapped_column(nullable=True)  # null = no expiry (org-level)
+    expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
     is_active: Mapped[bool] = mapped_column(default=True)
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
@@ -413,14 +380,13 @@ class NotebookCellResult(Base):
     cell_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("notebook_cells.id", ondelete="CASCADE"))
     cell_order: Mapped[int] = mapped_column(default=0)
 
-    status: Mapped[str] = mapped_column(String(20), default="pending")  # pending, running, success, error, skipped
+    status: Mapped[str] = mapped_column(String(20), default="pending")
 
-    # Outputs
     output_text: Mapped[str] = mapped_column(Text, default="")
     output_table: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     output_chart: Mapped[dict | None] = mapped_column(JSON, nullable=True)
-    output_code: Mapped[str | None] = mapped_column(Text, nullable=True)  # generated code (for prompt cells)
-    output_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)  # serialized DataFrame info
+    output_code: Mapped[str | None] = mapped_column(Text, nullable=True)
+    output_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
 
     execution_time_ms: Mapped[int] = mapped_column(default=0)

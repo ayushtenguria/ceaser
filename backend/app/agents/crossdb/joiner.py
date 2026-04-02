@@ -30,7 +30,6 @@ def join_results(
     warnings: list[str] = []
     summary_parts: list[str] = []
 
-    # Check for failures
     for alias, result in results.items():
         if result.success:
             summary_parts.append(
@@ -40,15 +39,12 @@ def join_results(
             warnings.append(f"{result.connection_name}: {result.error}")
             summary_parts.append(f"  {result.connection_name}: FAILED — {result.error}")
 
-    # If only one query or no joins needed
     if len(plan.joins) == 0:
-        # Return the first successful result
         for alias, result in results.items():
             if result.success and result.df is not None:
                 return _format_output(result.df, warnings, summary_parts)
         return _empty_output(warnings, summary_parts)
 
-    # Execute joins sequentially
     dfs: dict[str, pd.DataFrame] = {}
     for alias, result in results.items():
         if result.success and result.df is not None:
@@ -57,7 +53,6 @@ def join_results(
     if not dfs:
         return _empty_output(warnings, summary_parts)
 
-    # Apply join steps
     current_df: pd.DataFrame | None = None
 
     for join in plan.joins:
@@ -73,12 +68,10 @@ def join_results(
             continue
 
         try:
-            # Handle type mismatches — cast both join columns to string
             left_col = join.left_on
             right_col = join.right_on
 
             if left_col not in left_df.columns:
-                # Try case-insensitive match
                 left_col = _find_column(left_df, join.left_on)
             if right_col not in right_df.columns:
                 right_col = _find_column(right_df, join.right_on)
@@ -91,13 +84,11 @@ def join_results(
                 current_df = left_df
                 continue
 
-            # Cast to same type for safe merge
             left_df = left_df.copy()
             right_df = right_df.copy()
             left_df[left_col] = left_df[left_col].astype(str)
             right_df[right_col] = right_df[right_col].astype(str)
 
-            # Handle join type
             how = join.how if join.how in ("left", "right", "inner", "outer") else "left"
 
             current_df = pd.merge(
@@ -124,10 +115,8 @@ def join_results(
     if current_df is None:
         return _empty_output(warnings, summary_parts)
 
-    # Apply post-join operations if any
     if plan.post_join_operations:
         try:
-            # Safe eval of simple pandas operations (sort, head, etc.)
             local_vars = {"df": current_df, "pd": pd}
             exec(plan.post_join_operations, {"__builtins__": {}}, local_vars)
             if "result" in local_vars and isinstance(local_vars["result"], pd.DataFrame):
@@ -144,10 +133,8 @@ def _format_output(
     summary_parts: list[str],
 ) -> dict[str, Any]:
     """Format the final DataFrame into the standard output format."""
-    # Cap at 500 rows for display
     display_df = df.head(500)
 
-    # Convert to serializable format
     columns = list(display_df.columns)
     rows = []
     for _, row in display_df.iterrows():

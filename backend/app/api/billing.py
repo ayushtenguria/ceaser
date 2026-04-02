@@ -18,10 +18,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/billing", tags=["billing"])
 
 
-# ---------------------------------------------------------------------------
-# Checkout
-# ---------------------------------------------------------------------------
-
 @router.post("/checkout")
 async def create_checkout(
     request: dict,
@@ -53,7 +49,6 @@ async def create_checkout(
         cancel_url=cancel_url,
     )
 
-    # Store pending subscription
     sub = Subscription(
         organization_id=org_id,
         provider=result.provider,
@@ -67,14 +62,9 @@ async def create_checkout(
     return {"checkoutUrl": result.checkout_url, "sessionId": result.session_id}
 
 
-# ---------------------------------------------------------------------------
-# Webhooks (no auth — verified by provider signature)
-# ---------------------------------------------------------------------------
-
 @router.post("/webhooks/{provider_name}")
 async def handle_webhook(provider_name: str, request: Request, db: DbSession) -> dict:
     """Handle payment provider webhooks. Verifies signature and updates plan."""
-    # Validate provider_name matches configured provider
     provider = get_payment_provider()
     if not provider:
         raise HTTPException(status_code=501, detail="Payment not configured")
@@ -119,7 +109,6 @@ async def _handle_payment_success(db: DbSession, event: PaymentEvent) -> None:
     plan_name = event.plan_name
 
     if not org_id or not plan_name:
-        # Try to find org from subscription
         if event.provider_subscription_id:
             stmt = select(Subscription).where(
                 Subscription.provider_subscription_id == event.provider_subscription_id
@@ -134,12 +123,10 @@ async def _handle_payment_success(db: DbSession, event: PaymentEvent) -> None:
         logger.error("Cannot process payment: missing org_id or plan_name")
         return
 
-    # Validate plan_name is a known plan (prevent injection of arbitrary plan names)
     if plan_name not in PLAN_LIMITS:
         logger.error("Unknown plan name in webhook: %s", plan_name)
         return
 
-    # Update subscription status
     if event.provider_subscription_id:
         stmt = select(Subscription).where(
             Subscription.provider_subscription_id == event.provider_subscription_id
@@ -159,7 +146,6 @@ async def _handle_payment_success(db: DbSession, event: PaymentEvent) -> None:
             )
             db.add(sub)
 
-    # Record payment (idempotent by provider_payment_id, race-safe)
     if event.provider_payment_id:
         try:
             existing = await db.execute(
@@ -178,12 +164,10 @@ async def _handle_payment_success(db: DbSession, event: PaymentEvent) -> None:
                 db.add(payment)
                 await db.flush()
         except IntegrityError:
-            # Duplicate payment_id from concurrent webhook — safe to ignore
             await db.rollback()
             logger.info("Duplicate payment ignored: %s", event.provider_payment_id)
             return
 
-    # Upgrade org plan limits
     await _upgrade_org_plan(db, org_id, plan_name)
     logger.info("Plan upgraded: org=%s plan=%s", org_id, plan_name)
 
@@ -201,7 +185,6 @@ async def _handle_subscription_cancelled(db: DbSession, event: PaymentEvent) -> 
 
     if sub:
         sub.status = "cancelled"
-        # Downgrade to free
         await _upgrade_org_plan(db, sub.organization_id, "free")
         logger.info("Subscription cancelled, downgraded to free: org=%s", sub.organization_id)
 
@@ -249,10 +232,6 @@ async def _upgrade_org_plan(db: DbSession, org_id: str, plan_name: str) -> None:
 
     await db.flush()
 
-
-# ---------------------------------------------------------------------------
-# Subscription management
-# ---------------------------------------------------------------------------
 
 @router.get("/subscription")
 async def get_subscription(current_user: CurrentUser, db: DbSession) -> dict:

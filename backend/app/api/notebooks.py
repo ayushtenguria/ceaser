@@ -35,10 +35,6 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/notebooks", tags=["notebooks"])
 
 
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
 async def _load_notebook(db: DbSession, notebook_id: uuid.UUID, user: User) -> Notebook:
     """Load notebook with cells, verifying org access."""
     stmt = (
@@ -50,16 +46,11 @@ async def _load_notebook(db: DbSession, notebook_id: uuid.UUID, user: User) -> N
     notebook = result.scalar_one_or_none()
     if notebook is None:
         raise HTTPException(status_code=404, detail="Notebook not found.")
-    # Org check
     if notebook.organization_id and notebook.organization_id != (user.organization_id or ""):
         if not notebook.is_public:
             raise HTTPException(status_code=404, detail="Notebook not found.")
     return notebook
 
-
-# ---------------------------------------------------------------------------
-# Notebook CRUD
-# ---------------------------------------------------------------------------
 
 @router.post("/", response_model=NotebookResponse, status_code=status.HTTP_201_CREATED)
 async def create_notebook(
@@ -80,7 +71,6 @@ async def create_notebook(
     db.add(notebook)
     await db.flush()
 
-    # Add initial cells
     for i, cell_data in enumerate(body.cells):
         cell = NotebookCell(
             notebook_id=notebook.id,
@@ -95,7 +85,6 @@ async def create_notebook(
     await db.flush()
     await db.refresh(notebook)
 
-    # Reload with cells
     stmt = select(Notebook).options(selectinload(Notebook.cells)).where(Notebook.id == notebook.id)
     result = await db.execute(stmt)
     notebook = result.scalar_one()
@@ -178,10 +167,6 @@ async def delete_notebook(
     await db.delete(notebook)
 
 
-# ---------------------------------------------------------------------------
-# Cell management
-# ---------------------------------------------------------------------------
-
 @router.post("/{notebook_id}/cells", response_model=NotebookResponse)
 async def add_cell(
     notebook_id: uuid.UUID, body: NotebookCellCreate, current_user: CurrentUser, db: DbSession,
@@ -190,7 +175,6 @@ async def add_cell(
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
     notebook = await _load_notebook(db, notebook_id, user)
 
-    # Auto-assign order if not specified
     max_order = max((c.order for c in notebook.cells), default=-1)
     order = body.order if body.order > 0 else max_order + 1
 
@@ -205,7 +189,6 @@ async def add_cell(
     db.add(cell)
     await db.flush()
 
-    # Reload
     return await _load_notebook(db, notebook_id, user)
 
 
@@ -267,10 +250,6 @@ async def reorder_cells(
     return await _load_notebook(db, notebook_id, user)
 
 
-# ---------------------------------------------------------------------------
-# Run notebook
-# ---------------------------------------------------------------------------
-
 @router.post("/{notebook_id}/run")
 async def run_notebook(
     notebook_id: uuid.UUID, body: NotebookRunRequest,
@@ -283,7 +262,6 @@ async def run_notebook(
     if not notebook.cells:
         raise HTTPException(status_code=400, detail="Notebook has no cells.")
 
-    # Create run record
     run = NotebookRun(
         notebook_id=notebook.id,
         user_id=user.id,
@@ -317,7 +295,6 @@ async def run_notebook(
         ):
             yield _sse(cell_event)
 
-            # Save cell result
             if cell_event.get("type") == "cell_complete":
                 cell_result = NotebookCellResult(
                     run_id=run_id,
@@ -337,7 +314,6 @@ async def run_notebook(
                 if cell_event.get("status") == "error":
                     has_error = True
 
-        # Update run status
         stmt = select(NotebookRun).where(NotebookRun.id == run_id)
         result = await db.execute(stmt)
         run_record = result.scalar_one_or_none()
@@ -346,7 +322,6 @@ async def run_notebook(
             run_record.completed_at = datetime.utcnow()
             run_record.total_execution_ms = total_ms
 
-        # Update notebook run count
         stmt2 = select(Notebook).where(Notebook.id == notebook_id)
         result2 = await db.execute(stmt2)
         nb = result2.scalar_one_or_none()
@@ -367,7 +342,6 @@ async def list_runs(
 ) -> list[NotebookRun]:
     """List past runs of a notebook."""
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
-    # Verify notebook belongs to this org
     await _load_notebook(db, notebook_id, user)
     stmt = (
         select(NotebookRun)
@@ -386,7 +360,6 @@ async def get_run(
 ) -> NotebookRun:
     """Get a specific run with all cell results."""
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
-    # Verify notebook belongs to this org
     await _load_notebook(db, notebook_id, user)
     stmt = (
         select(NotebookRun)

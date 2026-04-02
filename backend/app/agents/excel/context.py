@@ -18,7 +18,6 @@ from app.agents.excel.relationship_mapper import Relationship
 
 logger = logging.getLogger(__name__)
 
-# Protocol prefix for safe file references (never contains real URLs/tokens)
 CEASER_PROTOCOL = "ceaser://"
 
 
@@ -26,7 +25,7 @@ def _make_var_name(file_name: str, sheet_name: str, sheet_count: int) -> str:
     """Create a clean, short DataFrame variable name."""
     import re
     prefix = Path(file_name).stem.lower().replace(" ", "_").replace("-", "_")
-    prefix = re.sub(r'^[a-f0-9]{20,}_', '', prefix)  # strip UUID prefix
+    prefix = re.sub(r'^[a-f0-9]{20,}_', '', prefix)
     prefix = prefix[:30]
     sheet_clean = sheet_name.lower().replace(' ', '_')[:30]
 
