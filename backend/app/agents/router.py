@@ -70,6 +70,15 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
             }
         return {**state, "next_action": "respond"}
 
+    # Genomics detection — deterministic, no LLM needed
+    has_genomics = any(
+        marker in schema_context
+        for marker in ("GENOMICS DATA CONTEXT", "GENOMICS CODE PREAMBLE", "EXPRESSION MATRIX")
+    )
+    if has_genomics:
+        logger.info("Router: genomics data detected → genomics pipeline")
+        return {**state, "next_action": "genomics"}
+
     if not has_connection and (has_file or has_file_context):
         strategic_keywords = (
             "insight", "recommend", "strategy", "potential", "should we",

@@ -56,6 +56,8 @@ class Feature(str, Enum):
     CLAUDE_MODEL = "claude_model"
     PRIORITY_QUEUE = "priority_queue"
 
+    GENOMICS = "genomics"
+
 
 _FREE = {
     Feature.SQL_QUERIES,
@@ -80,6 +82,7 @@ _BUSINESS = _STARTER | {
     Feature.SNOWFLAKE,
     Feature.BIGQUERY,
     Feature.CUSTOM_PROMPTS,
+    Feature.GENOMICS,
 }
 
 _ENTERPRISE = _BUSINESS | {

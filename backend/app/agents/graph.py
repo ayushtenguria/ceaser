@@ -26,6 +26,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.agents.analyst import run_analyst
 from app.agents.decomposer import decompose_query
 from app.agents.executor import execute_code, execute_sql
+from app.agents.genomics.genomics_agent import generate_genomics_code
+from app.agents.genomics.genomics_repair import repair_genomics_code
+from app.agents.genomics.genomics_validator import validate_genomics
 from app.agents.python_agent import generate_python
 from app.agents.python_repair import repair_python
 from app.agents.python_validator import validate_python
@@ -174,11 +177,33 @@ def _after_validate_python(state: AgentState) -> str:
 
 
 def _after_code_execute(state: AgentState) -> str:
+    is_genomics = state.get("next_action") == "genomics" or state.get("analysis_type")
+    if state.get("error") and state.get("retry_count", 0) < _MAX_RETRIES:
+        retry = state.get("retry_count", 0)
+        if is_genomics:
+            if retry <= 1:
+                return "repair_genomics"
+            return "genomics_agent"
+        if retry <= 1:
+            return "repair_python"
+        return "python_agent"
+    return "respond"
+
+
+def _after_validate_genomics(state: AgentState) -> str:
+    """After genomics validation: retry generation on error, otherwise execute."""
+    if state.get("error") and state.get("retry_count", 0) < _MAX_RETRIES:
+        return "genomics_agent"
+    return "code_execute"
+
+
+def _after_code_execute_genomics(state: AgentState) -> str:
+    """After code execution in genomics path."""
     if state.get("error") and state.get("retry_count", 0) < _MAX_RETRIES:
         retry = state.get("retry_count", 0)
         if retry <= 1:
-            return "repair_python"  # surgical fix on first errors
-        return "python_agent"      # full regeneration after that
+            return "repair_genomics"
+        return "genomics_agent"
     return "respond"
 
 
@@ -231,6 +256,16 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
     async def analyst_node(state: AgentState) -> AgentState:
         return await run_analyst(state, llm, db)
 
+    # ── Genomics pipeline nodes ──
+    async def genomics_agent_node(state: AgentState) -> AgentState:
+        return await generate_genomics_code(state, llm)
+
+    async def validate_genomics_node(state: AgentState) -> AgentState:
+        return validate_genomics(state)
+
+    async def repair_genomics_node(state: AgentState) -> AgentState:
+        return await repair_genomics_code(state, _light)
+
     graph = StateGraph(AgentState)
 
     graph.add_node("router", router_node)
@@ -245,6 +280,9 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
     graph.add_node("respond", respond_node)
     graph.add_node("repair_sql", repair_node)
     graph.add_node("analyst", analyst_node)
+    graph.add_node("genomics_agent", genomics_agent_node)
+    graph.add_node("validate_genomics", validate_genomics_node)
+    graph.add_node("repair_genomics", repair_genomics_node)
 
     graph.set_entry_point("router")
 
@@ -256,6 +294,7 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
             "python": "python_agent",
             "sql_then_viz": "sql_agent",
             "analyze": "analyst",
+            "genomics": "genomics_agent",
             "respond": "respond",
             "error": "respond",
         },
@@ -293,10 +332,21 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
         {
             "repair_python": "repair_python",
             "python_agent": "python_agent",
+            "repair_genomics": "repair_genomics",
+            "genomics_agent": "genomics_agent",
             "respond": "respond",
         },
     )
     graph.add_edge("repair_python", "code_execute")
+
+    # ── Genomics pipeline ──
+    graph.add_edge("genomics_agent", "validate_genomics")
+    graph.add_conditional_edges(
+        "validate_genomics",
+        _after_validate_genomics,
+        {"genomics_agent": "genomics_agent", "code_execute": "code_execute"},
+    )
+    graph.add_edge("repair_genomics", "code_execute")
 
     graph.add_edge("respond", END)
 
@@ -467,6 +517,20 @@ async def _run_single_query(
 
             elif node_name == "repair_python":
                 yield {"type": "status", "content": "Fixing code..."}
+
+            elif node_name == "genomics_agent":
+                code = node_state.get("code_block")
+                analysis = node_state.get("analysis_type", "")
+                if code:
+                    yield {"type": "code", "content": code}
+                yield {"type": "status", "content": f"Running genomics analysis ({analysis})..."}
+
+            elif node_name == "validate_genomics":
+                if node_state.get("error"):
+                    yield {"type": "status", "content": f"Genomics validation issue, regenerating... ({node_state.get('retry_count', 0)}/{_MAX_RETRIES})"}
+
+            elif node_name == "repair_genomics":
+                yield {"type": "status", "content": "Fixing genomics code..."}
 
             elif node_name == "code_execute":
                 if node_state.get("error"):

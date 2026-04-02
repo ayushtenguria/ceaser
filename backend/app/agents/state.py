@@ -31,3 +31,6 @@ class AgentState(TypedDict):
 
     retry_count: int
     next_action: str
+
+    # Genomics-specific (optional — only set when genomics pipeline is active)
+    analysis_type: str  # "de_analysis", "volcano_plot", "pca", "custom", etc.

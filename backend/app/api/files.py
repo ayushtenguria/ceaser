@@ -26,6 +26,9 @@ _ALLOWED_EXTENSIONS: dict[str, str] = {
     ".csv": "csv",
     ".xlsx": "excel",
     ".xls": "excel",
+    ".tsv": "tsv",
+    ".gct": "genomics",
+    ".tab": "tsv",
 }
 
 
@@ -114,26 +117,61 @@ async def upload_file(
     parquet_paths_data = None
     excel_metadata = None
 
-    try:
-        from app.agents.excel.orchestrator import process_excel_upload
-        from app.core.deps import get_llm
-        llm = get_llm()
-        excel_result = await process_excel_upload(parse_path, llm, org_id=org_id)
-        excel_context = excel_result.get("excel_context")
-        code_preamble = excel_result.get("code_preamble")
-        parquet_paths_data = excel_result.get("parquet_paths")
-        excel_metadata = {
-            "insight": excel_result.get("insight"),
-            "quality_report": excel_result.get("quality_report"),
-            "relationships": excel_result.get("relationships"),
-        }
-        logger.info("Excel processing complete for %s", file.filename)
-    except Exception as exc:
-        logger.warning("Excel processing failed (file still saved): %s", exc)
-    finally:
-        if _temp_dir:
-            import shutil
-            shutil.rmtree(_temp_dir, ignore_errors=True)
+    # Detect if this is a genomics file (TSV/GCT or CSV with gene IDs)
+    is_genomics = file_type in ("genomics", "tsv")
+    if not is_genomics and file_type == "csv":
+        try:
+            from app.agents.genomics.detector import detect_format
+            detection = detect_format(parse_path)
+            is_genomics = detection.get("file_format") in ("count_matrix", "deseq2_result", "gct")
+        except Exception:
+            pass
+
+    if is_genomics:
+        try:
+            from app.core.features import check_feature, Feature
+            await check_feature(Feature.GENOMICS, db, org_id)
+
+            from app.agents.genomics.orchestrator import process_genomics_upload
+            from app.core.deps import get_llm
+            llm = get_llm()
+            genomics_result = await process_genomics_upload(parse_path, llm, org_id=org_id)
+            excel_context = genomics_result.get("genomics_context")
+            code_preamble = genomics_result.get("code_preamble")
+            parquet_paths_data = genomics_result.get("parquet_paths")
+            excel_metadata = {
+                "genomics": True,
+                "insight": genomics_result.get("insight"),
+                "quality_report": genomics_result.get("quality_report"),
+                "gene_count": genomics_result.get("gene_count"),
+                "sample_count": genomics_result.get("sample_count"),
+            }
+            logger.info("Genomics processing complete for %s", file.filename)
+        except Exception as exc:
+            logger.warning("Genomics processing failed, falling back to Excel: %s", exc)
+            is_genomics = False  # Fall through to Excel pipeline
+
+    if not is_genomics:
+        try:
+            from app.agents.excel.orchestrator import process_excel_upload
+            from app.core.deps import get_llm
+            llm = get_llm()
+            excel_result = await process_excel_upload(parse_path, llm, org_id=org_id)
+            excel_context = excel_result.get("excel_context")
+            code_preamble = excel_result.get("code_preamble")
+            parquet_paths_data = excel_result.get("parquet_paths")
+            excel_metadata = {
+                "insight": excel_result.get("insight"),
+                "quality_report": excel_result.get("quality_report"),
+                "relationships": excel_result.get("relationships"),
+            }
+            logger.info("Excel processing complete for %s", file.filename)
+        except Exception as exc:
+            logger.warning("Excel processing failed (file still saved): %s", exc)
+
+    if _temp_dir:
+        import shutil
+        shutil.rmtree(_temp_dir, ignore_errors=True)
 
     upload = FileUpload(
         filename=file.filename,

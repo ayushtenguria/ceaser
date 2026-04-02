@@ -96,3 +96,9 @@ watchfiles==1.1.1
 websockets==16.0
 xxhash==3.6.0
 zstandard==0.25.0
+
+# Genomics module
+pydeseq2>=0.4.11
+gseapy>=1.1
+umap-learn>=0.5
+scikit-learn>=1.4
