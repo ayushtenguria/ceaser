@@ -176,9 +176,9 @@ def _after_validate_python(state: AgentState) -> str:
 def _after_code_execute(state: AgentState) -> str:
     if state.get("error") and state.get("retry_count", 0) < _MAX_RETRIES:
         retry = state.get("retry_count", 0)
-        if retry == 1:
-            return "repair_python"
-        return "python_agent"
+        if retry <= 1:
+            return "repair_python"  # surgical fix on first errors
+        return "python_agent"      # full regeneration after that
     return "respond"
 
 
@@ -198,6 +198,10 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
         return await generate_sql(state, llm)
 
     async def python_agent_node(state: AgentState) -> AgentState:
+        # Reset retry_count when entering Python from sql_then_viz so Python
+        # gets its own retry budget independent of SQL retries.
+        if state.get("next_action") == "sql_then_viz" and state.get("retry_count", 0) > 0:
+            state = {**state, "retry_count": 0, "error": None}
         return await generate_python(state, llm)
 
     async def validate_node(state: AgentState) -> AgentState:

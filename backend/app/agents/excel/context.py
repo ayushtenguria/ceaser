@@ -82,7 +82,10 @@ def save_dataframes_to_parquet(
     return paths
 
 
-def generate_code_preamble(parquet_paths: dict[str, str]) -> str:
+def generate_code_preamble(
+    parquet_paths: dict[str, str],
+    workbooks: list[Any] | None = None,
+) -> str:
     """Generate Python code that pre-loads all DataFrames using safe aliases.
 
     The code uses ceaser:// protocol references instead of real URLs:
@@ -93,14 +96,63 @@ def generate_code_preamble(parquet_paths: dict[str, str]) -> str:
     - LLMs never see real storage URLs or tokens
     - Frontend never sees signed URLs in code blocks
     - Database never stores signed URLs
+
+    When *workbooks* is provided, also embeds:
+    - Column names as comments (so the LLM sees them in-line)
+    - Auto type-conversion for numeric-looking string columns
+    - Null-handling defaults
     """
     lines = ["import pandas as pd", "import plotly.express as px", ""]
+
+    # Build a lookup: var_name -> sheet metadata (columns, types)
+    sheet_meta: dict[str, Any] = {}
+    if workbooks:
+        for wb in workbooks:
+            for sheet in wb.sheets:
+                var = _make_var_name(wb.file_name, sheet.name, len(wb.sheets))
+                sheet_meta[var] = {
+                    "columns": list(sheet.df.columns),
+                    "types": sheet.column_types,
+                    "row_count": sheet.row_count,
+                }
 
     for var_name, remote_path in parquet_paths.items():
         safe_ref = f"{CEASER_PROTOCOL}{remote_path}"
         lines.append(f'{var_name} = pd.read_parquet("{safe_ref}")')
 
-    lines.append("")
+        meta = sheet_meta.get(var_name)
+        if meta:
+            cols = meta["columns"]
+            types = meta.get("types", {})
+
+            # Embed column names as a comment so the LLM sees them directly
+            col_list = ", ".join(cols[:50])
+            if len(cols) > 50:
+                col_list += f", ... ({len(cols) - 50} more)"
+            lines.append(f"# Columns ({len(cols)}): {col_list}")
+
+            # Auto-convert numeric-looking string columns
+            numeric_cols = [c for c in cols if types.get(c, "") in ("int64", "float64", "numeric")]
+            if numeric_cols:
+                for nc in numeric_cols:
+                    lines.append(
+                        f"{var_name}['{nc}'] = pd.to_numeric("
+                        f"{var_name}['{nc}'], errors='coerce')"
+                    )
+
+            # Auto-convert date-looking columns
+            date_cols = [c for c in cols if types.get(c, "") in ("datetime64", "date")
+                         or any(d in c.lower() for d in ("date", "time", "year", "month"))]
+            if date_cols:
+                for dc in date_cols:
+                    if types.get(dc, "") not in ("datetime64",):
+                        lines.append(
+                            f"{var_name}['{dc}'] = pd.to_datetime("
+                            f"{var_name}['{dc}'], errors='coerce')"
+                        )
+
+        lines.append("")
+
     return "\n".join(lines)
 
 
@@ -109,6 +161,9 @@ async def resolve_ceaser_refs(code: str) -> str:
 
     Called ONLY by the sandbox executor right before execution.
     The resolved code is never stored, sent to LLMs, or returned to clients.
+
+    If ANY reference fails to resolve, raises RuntimeError so the caller
+    can surface a clear error instead of executing partially-resolved code.
     """
     import re
     from app.services.storage import get_storage
@@ -121,12 +176,22 @@ async def resolve_ceaser_refs(code: str) -> str:
         return code
 
     resolved = code
+    failed: list[str] = []
     for remote_path in set(matches):
         try:
             real_url = await storage.download_url(remote_path)
             resolved = resolved.replace(f"{CEASER_PROTOCOL}{remote_path}", real_url)
         except Exception as exc:
             logger.warning("Could not resolve ceaser://%s: %s", remote_path, exc)
+            failed.append(remote_path)
+
+    if failed:
+        names = ", ".join(f.rsplit("/", 1)[-1] for f in failed)
+        raise RuntimeError(
+            f"Could not load data file(s): {names}. "
+            f"The file may have been deleted or storage is temporarily unavailable. "
+            f"Please try re-uploading the file."
+        )
 
     return resolved
 

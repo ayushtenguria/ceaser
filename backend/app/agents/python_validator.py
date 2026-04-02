@@ -114,12 +114,16 @@ def _check_column_refs(code: str, known_dfs: dict[str, list[str]]) -> list[str]:
             # Check case-insensitive match
             lower_known = {c.lower(): c for c in known_cols}
             if col.lower() in lower_known:
-                warnings.append(
-                    f"Column '{col}' on {var} — did you mean '{lower_known[col.lower()]}'? "
-                    f"(case mismatch)"
-                )
+                # Case mismatch — runtime fuzzy matching will handle this,
+                # so only warn (don't error) to avoid unnecessary retries.
+                continue
             else:
-                # Find closest match
+                # Try substring match (revenue → total_revenue)
+                substr_match = _find_substring_match(col, known_cols)
+                if substr_match:
+                    # Substring match found — runtime will resolve this too
+                    continue
+                # Find closest by edit distance
                 close = _find_closest(col, known_cols)
                 hint = f" Did you mean '{close}'?" if close else ""
                 warnings.append(
@@ -130,7 +134,21 @@ def _check_column_refs(code: str, known_dfs: dict[str, list[str]]) -> list[str]:
     return warnings
 
 
-def _find_closest(target: str, candidates: list[str], max_dist: int = 3) -> str | None:
+def _find_substring_match(target: str, candidates: list[str]) -> str | None:
+    """Find a column where target is a substring or vice versa."""
+    target_lower = target.lower()
+    # target is substring of candidate (revenue → total_revenue)
+    matches = [c for c in candidates if target_lower in c.lower()]
+    if len(matches) == 1:
+        return matches[0]
+    # candidate is substring of target (total_revenue → revenue... less common)
+    matches = [c for c in candidates if c.lower() in target_lower]
+    if len(matches) == 1:
+        return matches[0]
+    return None
+
+
+def _find_closest(target: str, candidates: list[str], max_dist: int = 4) -> str | None:
     """Find closest column name by edit distance."""
     target_lower = target.lower()
     best, best_dist = None, max_dist + 1

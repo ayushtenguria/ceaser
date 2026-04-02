@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback, useRef } from "react";
+import { useNavigate } from "react-router-dom";
 import {
   FileUp,
   File,
@@ -9,6 +10,8 @@ import {
   CheckCircle2,
   XCircle,
   ChevronRight,
+  MessageSquare,
+  X,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -20,14 +23,38 @@ import * as api from "@/lib/api";
 import type { FileUpload } from "@/types";
 import { formatBytes, formatRelativeTime } from "@/lib/utils";
 import { cn } from "@/lib/utils";
+import { useChatStore } from "@/store/chat";
 
 export default function FilesPage() {
+  const navigate = useNavigate();
+  const { setActiveConversation } = useChatStore();
   const [files, setFiles] = useState<FileUpload[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isUploading, setIsUploading] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const [deletingIds, setDeletingIds] = useState<Set<string>>(new Set());
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const toggleSelect = useCallback((id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const clearSelection = useCallback(() => setSelectedIds(new Set()), []);
+
+  const startChatWithFiles = useCallback(() => {
+    if (selectedIds.size === 0) return;
+    setActiveConversation(null);
+    const ids = Array.from(selectedIds);
+    const params = new URLSearchParams();
+    ids.forEach((id) => params.append("fileId", id));
+    navigate(`/chat?${params.toString()}`);
+  }, [selectedIds, navigate, setActiveConversation]);
 
   useEffect(() => {
     let cancelled = false;
@@ -182,19 +209,42 @@ export default function FilesPage() {
               getFileTypeColor={getFileTypeColor}
               onDelete={handleDelete}
               isDeleting={deletingIds.has(file.id)}
+              isSelected={selectedIds.has(file.id)}
+              onToggleSelect={toggleSelect}
             />
           ))}
+        </div>
+      )}
+
+      {/* Floating action bar when files are selected */}
+      {selectedIds.size > 0 && (
+        <div className="fixed bottom-6 left-1/2 z-50 -translate-x-1/2">
+          <div className="flex items-center gap-3 rounded-xl border bg-card px-4 py-3 shadow-lg">
+            <span className="text-sm font-medium">
+              {selectedIds.size} {selectedIds.size === 1 ? "file" : "files"} selected
+            </span>
+            <Button size="sm" variant="ghost" onClick={clearSelection}>
+              <X className="mr-1 h-3.5 w-3.5" />
+              Clear
+            </Button>
+            <Button size="sm" onClick={startChatWithFiles}>
+              <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
+              Start Chat
+            </Button>
+          </div>
         </div>
       )}
     </div>
   );
 }
 
-function FileCard({ file, getFileTypeColor, onDelete, isDeleting }: {
+function FileCard({ file, getFileTypeColor, onDelete, isDeleting, isSelected, onToggleSelect }: {
   file: FileUpload;
   getFileTypeColor: (t: string) => string;
   onDelete: (id: string) => void;
   isDeleting: boolean;
+  isSelected: boolean;
+  onToggleSelect: (id: string) => void;
 }) {
   const [showQuality, setShowQuality] = useState(false);
   const qr = file.excelMetadata?.quality_report;
@@ -210,10 +260,29 @@ function FileCard({ file, getFileTypeColor, onDelete, isDeleting }: {
     qr.severity === "minor" ? AlertTriangle : XCircle;
 
   return (
-    <Card>
+    <Card className={cn(
+      "transition-colors",
+      isSelected && "border-primary/50 bg-primary/5",
+    )}>
       <CardContent className="p-4">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-3">
+            {/* Selection checkbox */}
+            <button
+              onClick={() => onToggleSelect(file.id)}
+              className={cn(
+                "flex h-5 w-5 shrink-0 items-center justify-center rounded border transition-colors",
+                isSelected
+                  ? "border-primary bg-primary text-primary-foreground"
+                  : "border-muted-foreground/40 hover:border-muted-foreground",
+              )}
+            >
+              {isSelected && (
+                <svg className="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={3}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                </svg>
+              )}
+            </button>
             <File className={cn("h-5 w-5", getFileTypeColor(file.fileType))} />
             <div>
               <p className="text-sm font-medium">{file.filename}</p>

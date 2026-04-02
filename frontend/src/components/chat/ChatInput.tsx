@@ -14,15 +14,47 @@ import { cn } from "@/lib/utils";
 interface ChatInputProps {
   onSend: (message: string, fileId?: string, fileIds?: string[]) => void;
   isStreaming: boolean;
+  preselectedFileIds?: string[];
 }
 
-export default function ChatInput({ onSend, isStreaming }: ChatInputProps) {
+export default function ChatInput({ onSend, isStreaming, preselectedFileIds }: ChatInputProps) {
   const [value, setValue] = useState("");
   const [attachedFile, setAttachedFile] = useState<{
     id: string; name: string; size: number; type: string;
     allFileIds?: string[];
     qualityIssues?: string[]; qualitySeverity?: string;
   } | null>(null);
+
+  // Pre-attach files selected from the Files page
+  useEffect(() => {
+    if (!preselectedFileIds || preselectedFileIds.length === 0 || attachedFile) return;
+    const ids = preselectedFileIds;
+    // Set immediately with placeholder, then load names
+    setAttachedFile({
+      id: ids[ids.length - 1],
+      allFileIds: ids.length > 1 ? ids : undefined,
+      name: ids.length > 1 ? `${ids.length} files selected` : "Selected file",
+      size: 0,
+      type: "file",
+    });
+    // Load file details to get real names
+    api.getFiles().then((files) => {
+      const selected = files.filter((f) => ids.includes(f.id));
+      if (selected.length > 0) {
+        const totalSize = selected.reduce((s, f) => s + f.sizeBytes, 0);
+        const ext = selected[0].filename.split(".").pop()?.toLowerCase() || "file";
+        setAttachedFile({
+          id: ids[ids.length - 1],
+          allFileIds: ids.length > 1 ? ids : undefined,
+          name: selected.length > 1
+            ? `${selected.length} files (${selected.map((f) => f.filename).join(", ")})`
+            : selected[0].filename,
+          size: totalSize,
+          type: ext,
+        });
+      }
+    }).catch(() => {});
+  }, [preselectedFileIds]); // eslint-disable-line react-hooks/exhaustive-deps
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStage, setUploadStage] = useState("");

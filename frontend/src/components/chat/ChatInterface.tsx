@@ -10,7 +10,7 @@ import { useChat } from "@/hooks/useChat";
 import { useConnectionsStore } from "@/store/connections";
 import * as api from "@/lib/api";
 
-export default function ChatInterface() {
+export default function ChatInterface({ preselectedFileIds }: { preselectedFileIds?: string[] }) {
   const navigate = useNavigate();
   const { messages, isStreaming, streamStatus, sendMessage, suggestions, activeConversationId } = useChat();
   const bottomRef = useRef<HTMLDivElement>(null);
@@ -121,7 +121,7 @@ export default function ChatInterface() {
       {/* Input */}
       <div className="border-t bg-card p-4">
         <div className="mx-auto max-w-4xl">
-          <ChatInput onSend={sendMessage} isStreaming={isStreaming} />
+          <ChatInput onSend={sendMessage} isStreaming={isStreaming} preselectedFileIds={preselectedFileIds} />
         </div>
       </div>
 

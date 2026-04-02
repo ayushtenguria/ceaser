@@ -25,6 +25,28 @@ _TIMEOUT_SECONDS = _sandbox_timeout()
 
 _PYTHON_EXECUTABLE = sys.executable
 
+def _sanitize_error(text: str) -> str:
+    """Strip signed URLs, tokens, and internal file paths from error text.
+
+    Prevents Supabase signed URLs and server-side paths from leaking to
+    the frontend or being stored in the database.
+    """
+    import re
+    # Strip full URLs (signed Supabase URLs, etc.)
+    text = re.sub(
+        r'https?://[^\s"\')\]]+',
+        "[STORAGE_URL]",
+        text,
+    )
+    # Strip token parameters
+    text = re.sub(r'token=[^\s&"\']+', "token=***", text)
+    # Strip absolute server paths
+    text = re.sub(r'/(?:Users|home|var|tmp|private)[^\s"\')\]:]+', "[PATH]", text)
+    # Strip ceaser:// refs (shouldn't appear in errors, but just in case)
+    text = re.sub(r'ceaser://[^\s"\')\]]+', "[FILE_REF]", text)
+    return text
+
+
 _BLOCKED_MODULES = frozenset(
     {
         "subprocess",
@@ -59,7 +81,12 @@ class ExecutionResult:
 
 
 def _build_runner_script(user_code: str, figure_path: str) -> str:
-    """Wrap user code with a plotly figure capture postfix.
+    """Wrap user code with runtime safety helpers and plotly figure capture.
+
+    The prefix injects:
+    - ``_col(df, name)`` — fuzzy column lookup that auto-corrects case
+      mismatches and common variations at runtime instead of crashing.
+    - ``_safe_numeric(df, col)`` — safe numeric conversion.
 
     Security is enforced by the subprocess boundary (timeout, no network in
     production via Docker ``--network none``).  We don't override ``__import__``
@@ -68,6 +95,53 @@ def _build_runner_script(user_code: str, figure_path: str) -> str:
     """
     prefix = textwrap.dedent("""\
         import json
+        import pandas as _pd_internal
+
+        def _col(df, name):
+            \"\"\"Find the best matching column name in a DataFrame.
+
+            Handles: case mismatches (Quantity→quantity), underscores vs spaces,
+            and partial matches (revenue→total_revenue).
+            Returns the actual column name or raises KeyError with helpful message.
+            \"\"\"
+            if name in df.columns:
+                return name
+            # Case-insensitive match
+            lower_map = {c.lower(): c for c in df.columns}
+            if name.lower() in lower_map:
+                return lower_map[name.lower()]
+            # Underscore/space normalization
+            norm = name.lower().replace(" ", "_").replace("-", "_")
+            norm_map = {c.lower().replace(" ", "_").replace("-", "_"): c for c in df.columns}
+            if norm in norm_map:
+                return norm_map[norm]
+            # Substring match — find columns that contain the target
+            matches = [c for c in df.columns if name.lower() in c.lower()]
+            if len(matches) == 1:
+                return matches[0]
+            # Reverse substring — target contains a column name
+            matches = [c for c in df.columns if c.lower() in name.lower()]
+            if len(matches) == 1:
+                return matches[0]
+            raise KeyError(
+                f"Column '{name}' not found. "
+                f"Available columns: {', '.join(df.columns.tolist()[:30])}"
+            )
+
+        def _safe_numeric(series):
+            \"\"\"Convert a series to numeric, coercing errors.\"\"\"
+            return _pd_internal.to_numeric(series, errors='coerce')
+
+        # Monkey-patch DataFrame.__getitem__ for fuzzy column access
+        _orig_getitem = _pd_internal.DataFrame.__getitem__
+        def _patched_getitem(self, key):
+            if isinstance(key, str) and key not in self.columns:
+                try:
+                    key = _col(self, key)
+                except KeyError:
+                    pass  # let pandas raise its own error with our enhanced message
+            return _orig_getitem(self, key)
+        _pd_internal.DataFrame.__getitem__ = _patched_getitem
 
     """)
 
@@ -152,7 +226,8 @@ async def execute_python(code: str) -> ExecutionResult:
             )
 
             result.stdout = stdout_bytes.decode(errors="replace").strip()
-            result.stderr = stderr_bytes.decode(errors="replace").strip()
+            raw_stderr = stderr_bytes.decode(errors="replace").strip()
+            result.stderr = _sanitize_error(raw_stderr)
 
             if proc.returncode != 0:
                 result.success = False
@@ -173,7 +248,7 @@ async def execute_python(code: str) -> ExecutionResult:
             logger.warning("Sandbox execution timed out for code snippet.")
         except Exception as exc:
             result.success = False
-            result.error = str(exc)
+            result.error = _sanitize_error(str(exc))
             logger.exception("Sandbox execution error.")
 
     return result

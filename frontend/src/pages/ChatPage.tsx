@@ -1,16 +1,20 @@
 import { useEffect } from "react";
-import { useParams } from "react-router-dom";
+import { useParams, useSearchParams } from "react-router-dom";
 import ChatInterface from "@/components/chat/ChatInterface";
 import { useChatStore } from "@/store/chat";
 import * as api from "@/lib/api";
 
 export default function ChatPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
+  const [searchParams] = useSearchParams();
   const {
     setActiveConversation,
     setMessages,
     setConversations,
   } = useChatStore();
+
+  // File IDs passed from the Files page via query params
+  const preselectedFileIds = searchParams.getAll("fileId");
 
   useEffect(() => {
     let cancelled = false;
@@ -65,7 +69,7 @@ export default function ChatPage() {
 
   return (
     <div className="h-full">
-      <ChatInterface />
+      <ChatInterface preselectedFileIds={preselectedFileIds} />
     </div>
   );
 }

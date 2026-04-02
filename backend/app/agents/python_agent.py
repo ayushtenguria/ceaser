@@ -173,15 +173,20 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
             for line in file_preamble.split("\n"):
                 stripped = line.strip()
                 if not stripped:
-                    if preamble_lines:
-                        break
-                    continue
+                    continue  # skip blank lines — don't break
                 if stripped.startswith(("import ", "from ")) or "= pd.read_parquet(" in stripped:
-                    preamble_lines.append(line)
+                    if stripped not in preamble_lines:
+                        preamble_lines.append(stripped)
                 elif "→" in stripped or "CROSS" in stripped or "RELATIONSHIP" in stripped:
                     break
+                elif stripped.startswith(("SELECTED", "AVAILABLE", "EXCEL", "FILE", "#")):
+                    break  # hit the next section header
                 else:
-                    break
+                    continue  # skip unrecognized lines instead of breaking
+
+    has_parquet = any("pd.read_parquet" in p for p in preamble_lines)
+    has_csv = any("pd.read_csv" in p for p in preamble_lines)
+    has_file_load = has_parquet or has_csv
 
     code_lines = raw_code.split("\n")
     filtered = []
@@ -189,11 +194,15 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
         stripped = line.strip()
         if stripped.startswith("import pandas") or stripped.startswith("import plotly"):
             continue
-        if stripped.startswith("df = pd.read_csv") and any("pd.read_csv" in p for p in preamble_lines):
+        # Filter out LLM-generated file reads when preamble already loads data
+        if has_file_load and (
+            "pd.read_csv(" in stripped
+            or "pd.read_excel(" in stripped
+            or "pd.read_parquet(" in stripped
+        ) and "ceaser://" not in stripped:
             continue
-        if stripped.startswith("data = ["):
-            if any("pd.read_csv" in p for p in preamble_lines):
-                continue
+        if stripped.startswith("data = [") and has_file_load:
+            continue
         filtered.append(line)
 
     final_code = "\n".join(preamble_lines) + "\n" + "\n".join(filtered)

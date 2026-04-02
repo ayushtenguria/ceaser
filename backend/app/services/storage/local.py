@@ -21,8 +21,17 @@ class LocalStorage(StorageBackend):
 
     def _full_path(self, remote_path: str) -> Path:
         if os.path.isabs(remote_path):
-            return Path(remote_path)
-        return self._root / remote_path
+            # Allow absolute paths only if they're under our root
+            resolved = Path(remote_path).resolve()
+            if not str(resolved).startswith(str(self._root.resolve())):
+                raise ValueError(f"Path outside storage root: {remote_path}")
+            return resolved
+        if ".." in remote_path:
+            raise ValueError(f"Path traversal not allowed: {remote_path}")
+        resolved = (self._root / remote_path).resolve()
+        if not str(resolved).startswith(str(self._root.resolve())):
+            raise ValueError(f"Path traversal detected: {remote_path}")
+        return resolved
 
     async def upload(self, data: bytes, remote_path: str) -> str:
         path = self._full_path(remote_path)

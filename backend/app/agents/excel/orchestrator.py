@@ -280,7 +280,7 @@ def _node_build_context(state: ExcelPipelineState) -> ExcelPipelineState:
         org_id = state.get("org_id", "default")
         parquet_paths = save_dataframes_to_parquet([wb_compat], org_id)
         excel_context = build_excel_context([wb_compat], rel_compat, parquet_paths)
-        code_preamble = generate_code_preamble(parquet_paths)
+        code_preamble = generate_code_preamble(parquet_paths, workbooks=[wb_compat])
 
         logger.info("Context: %d parquet files, %d char context", len(parquet_paths), len(excel_context))
 
