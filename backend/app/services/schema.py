@@ -139,11 +139,76 @@ async def introspect_schema(connection: DatabaseConnection) -> SchemaInfo:
     return await asyncio.to_thread(_introspect_schema_sync, connection)
 
 
+def _humanize_column_name(name: str) -> str | None:
+    """Generate a human-readable alias for a cryptic column name.
+
+    Returns None if the column name is already readable.
+    Examples:
+        rev_amt_q4_adj  → "Q4 Adjusted Revenue Amount"
+        cust_acq_dt_utc → "Customer Acquisition Date (UTC)"
+        ord_cnt         → "Order Count"
+        is_actv_flg     → "Is Active Flag"
+    """
+    # Skip already readable names (single word, or clean multi-word)
+    if len(name) <= 4 and "_" not in name:
+        return None
+
+    # Common abbreviation mapping
+    abbrevs = {
+        "amt": "amount", "qty": "quantity", "cnt": "count", "num": "number",
+        "dt": "date", "ts": "timestamp", "tm": "time",
+        "desc": "description", "nm": "name", "addr": "address",
+        "cust": "customer", "usr": "user", "emp": "employee", "mgr": "manager",
+        "org": "organization", "dept": "department", "div": "division",
+        "prod": "product", "cat": "category", "inv": "invoice", "ord": "order",
+        "txn": "transaction", "pmt": "payment", "acct": "account",
+        "rev": "revenue", "mrr": "MRR", "arr": "ARR",
+        "flg": "flag", "ind": "indicator", "sts": "status", "st": "status",
+        "pct": "percent", "avg": "average", "tot": "total", "max": "maximum",
+        "min": "minimum", "prev": "previous", "cur": "current", "ytd": "year-to-date",
+        "mtd": "month-to-date", "qtd": "quarter-to-date",
+        "q1": "Q1", "q2": "Q2", "q3": "Q3", "q4": "Q4",
+        "yy": "year", "mm": "month", "dd": "day",
+        "adj": "adjusted", "unadj": "unadjusted", "calc": "calculated",
+        "src": "source", "tgt": "target", "dst": "destination",
+        "actv": "active", "inactv": "inactive", "del": "deleted",
+        "id": "ID", "pk": "PK", "fk": "FK", "utc": "UTC",
+        "lbl": "label", "grp": "group", "lvl": "level", "typ": "type",
+        "seq": "sequence", "ref": "reference", "ext": "external",
+        "int": "internal", "pri": "primary", "sec": "secondary",
+    }
+
+    parts = name.lower().replace("-", "_").split("_")
+    expanded = []
+    any_expanded = False
+
+    for part in parts:
+        if part in abbrevs:
+            expanded.append(abbrevs[part])
+            any_expanded = True
+        elif part.startswith("is_") or part == "is":
+            expanded.append("Is")
+            any_expanded = True
+        else:
+            expanded.append(part)
+
+    if not any_expanded:
+        return None
+
+    result = " ".join(expanded).title()
+    # Fix known acronyms back to uppercase
+    for acr in ("Id", "Pk", "Fk", "Utc", "Mrr", "Arr", "Q1", "Q2", "Q3", "Q4"):
+        result = result.replace(acr, acr.upper() if len(acr) <= 3 else acr)
+
+    return result
+
+
 def format_schema_for_llm(schema: SchemaInfo) -> str:
     """Return a human-readable text representation of the schema.
 
     The output is designed to fit inside an LLM system prompt so the model
-    knows the available tables and columns.
+    knows the available tables and columns. Includes auto-generated
+    human-readable aliases for cryptic column names.
     """
     if not schema.tables:
         return "No tables found in the connected database."
@@ -152,11 +217,17 @@ def format_schema_for_llm(schema: SchemaInfo) -> str:
 
     for table in schema.tables:
         row_info = f"  (~{table.row_count:,} rows)" if table.row_count is not None else ""
-        lines.append(f"\nTable: {table.name}{row_info}")
+        table_alias = _humanize_column_name(table.name)
+        alias_hint = f"  (≈ {table_alias})" if table_alias else ""
+        lines.append(f"\nTable: {table.name}{row_info}{alias_hint}")
         lines.append("-" * 40)
 
         for col in table.columns:
             parts: list[str] = [f"  {col.name}: {col.data_type}"]
+            # Auto-alias for cryptic names
+            col_alias = _humanize_column_name(col.name)
+            if col_alias:
+                parts.append(f"(≈ {col_alias})")
             if col.primary_key:
                 parts.append("[PK]")
             if col.foreign_key:

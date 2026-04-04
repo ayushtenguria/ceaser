@@ -218,6 +218,36 @@ export async function deleteFile(id: string): Promise<void> {
 }
 
 
+// ── Feedback ──
+
+export async function submitFeedback(
+  messageId: string,
+  feedback: { rating: "up" | "down"; correctionNote?: string; category?: string },
+): Promise<any> {
+  const { data } = await api.post(`/messages/${messageId}/feedback`, feedback);
+  return data;
+}
+
+export async function getFeedback(messageId: string): Promise<any | null> {
+  try {
+    const { data } = await api.get(`/messages/${messageId}/feedback`);
+    return data;
+  } catch {
+    return null;
+  }
+}
+
+export async function deleteFeedback(messageId: string): Promise<void> {
+  await api.delete(`/messages/${messageId}/feedback`);
+}
+
+export async function getAccuracyStats(connectionId?: string): Promise<any> {
+  const params = connectionId ? { connection_id: connectionId } : {};
+  const { data } = await api.get("/messages/feedback/stats", { params });
+  return data;
+}
+
+
 export async function getReports(): Promise<any[]> {
   const { data } = await api.get("/reports");
   return data;

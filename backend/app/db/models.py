@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, JSON, String, Text, func
+from sqlalchemy import ForeignKey, Index, JSON, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -69,6 +69,7 @@ class DatabaseConnection(Base):
     organization_id: Mapped[str] = mapped_column(String(255), index=True)
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     schema_cache: Mapped[dict | None] = mapped_column(JSON, nullable=True)
+    metrics_scanned: Mapped[bool] = mapped_column(default=False)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
@@ -391,3 +392,119 @@ class NotebookCellResult(Base):
 
     execution_time_ms: Mapped[int] = mapped_column(default=0)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class MessageFeedback(Base):
+    """User feedback on assistant messages — thumbs up/down with optional correction.
+
+    Separate from Message to keep the hot table lean and support analytics
+    on feedback patterns per connection/org.
+    """
+
+    __tablename__ = "message_feedback"
+    __table_args__ = (
+        Index("ix_message_feedback_org", "organization_id"),
+        Index("ix_message_feedback_conn", "connection_id"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    message_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("messages.id", ondelete="CASCADE"), unique=True,
+    )
+    conversation_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("conversations.id", ondelete="CASCADE"),
+    )
+    user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    organization_id: Mapped[str] = mapped_column(String(255))
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("database_connections.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    rating: Mapped[str] = mapped_column(String(10))  # "up" or "down"
+    correction_note: Mapped[str | None] = mapped_column(Text, nullable=True)
+    category: Mapped[str | None] = mapped_column(String(50), nullable=True)
+    # "wrong_data", "wrong_join", "wrong_metric", "wrong_filter", "other"
+
+    # Snapshot for analytics (query + SQL at feedback time)
+    user_query: Mapped[str] = mapped_column(Text, default="")
+    sql_generated: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+
+class JoinRule(Base):
+    """Org-level join rules — override or supplement FK constraints.
+
+    Injected as MANDATORY JOIN RULES in the SQL agent prompt so the LLM
+    uses exact join paths instead of guessing.
+    """
+
+    __tablename__ = "join_rules"
+    __table_args__ = (
+        Index("ix_join_rules_org_conn", "organization_id", "connection_id"),
+        UniqueConstraint(
+            "connection_id", "source_table", "source_column",
+            "target_table", "target_column",
+            name="uq_join_rule_path",
+        ),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[str] = mapped_column(String(255))
+    connection_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("database_connections.id", ondelete="CASCADE"),
+    )
+
+    source_table: Mapped[str] = mapped_column(String(255))
+    source_column: Mapped[str] = mapped_column(String(255))
+    target_table: Mapped[str] = mapped_column(String(255))
+    target_column: Mapped[str] = mapped_column(String(255))
+    join_type: Mapped[str] = mapped_column(String(20), default="LEFT JOIN")
+
+    description: Mapped[str] = mapped_column(Text, default="")
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
+
+
+class VerifiedQuery(Base):
+    """Saved verified queries — reuse proven SQL patterns for similar questions.
+
+    When a user thumbs-up a query, the (question_pattern → SQL) mapping is
+    saved org-wide. Future similar questions skip the LLM pipeline and use
+    the verified SQL directly.
+    """
+
+    __tablename__ = "verified_queries"
+    __table_args__ = (
+        Index("ix_verified_queries_org_conn", "organization_id", "connection_id"),
+        Index("ix_verified_queries_active", "is_active"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    organization_id: Mapped[str] = mapped_column(String(255))
+    connection_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("database_connections.id", ondelete="CASCADE"),
+    )
+
+    original_question: Mapped[str] = mapped_column(Text)
+    question_pattern: Mapped[str] = mapped_column(Text)
+    """Normalized pattern for matching (lowercase, specifics replaced with placeholders)."""
+    sql_template: Mapped[str] = mapped_column(Text)
+    """The verified SQL query."""
+
+    verified_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
+    source_message_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True,
+    )
+
+    use_count: Mapped[int] = mapped_column(default=0)
+    last_used_at: Mapped[datetime | None] = mapped_column(nullable=True)
+    confidence: Mapped[float] = mapped_column(default=1.0)
+
+    is_active: Mapped[bool] = mapped_column(default=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())

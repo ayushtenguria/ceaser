@@ -228,6 +228,31 @@ async def _build_schema_context(
             if metric_lines:
                 parts.append("\n".join(metric_lines))
 
+    # ── Inject org-level join rules ──────────────────────────────────
+    if connection_id:
+        from app.db.models import JoinRule
+        jr_stmt = select(JoinRule).where(
+            JoinRule.connection_id == connection_id,
+            JoinRule.is_active == True,
+        )
+        if org_id:
+            jr_stmt = jr_stmt.where(JoinRule.organization_id == org_id)
+        jr_result = await db.execute(jr_stmt)
+        join_rules = list(jr_result.scalars().all())
+        if join_rules:
+            rule_lines = [
+                "\n\nMANDATORY JOIN RULES (use these EXACTLY — do NOT infer alternative joins for these table pairs)",
+                "=" * 70,
+            ]
+            for jr in join_rules:
+                rule_lines.append(
+                    f"  {jr.source_table}.{jr.source_column} → {jr.target_table}.{jr.target_column} "
+                    f"(use {jr.join_type})"
+                )
+                if jr.description:
+                    rule_lines.append(f"    Note: {jr.description}")
+            parts.append("\n".join(rule_lines))
+
     return "\n\n".join(parts) if parts else ""
 
 
@@ -580,6 +605,28 @@ async def chat(
     memory_context = format_memories_for_prompt(memories)
     if memory_context:
         schema_context = schema_context + "\n" + memory_context
+
+    # ── Inject disambiguation resolution if provided ───────────────
+    if body.disambiguation_choice:
+        clarifications = []
+        for term, chosen in body.disambiguation_choice.items():
+            clarifications.append(f'When I say "{term}", I mean {chosen}.')
+        schema_context += "\n\nUSER CLARIFICATION: " + " ".join(clarifications)
+
+        # Save as memory for future queries
+        try:
+            from app.services.memory import save_memory
+            for term, chosen in body.disambiguation_choice.items():
+                await save_memory(
+                    db, org_id=org_id,
+                    content=f'When user says "{term}", they mean {chosen}',
+                    memory_type="domain_term",
+                    user_id=user.id,
+                    source="disambiguation",
+                    confidence=0.95,
+                )
+        except Exception as exc:
+            logger.debug("Failed to save disambiguation memory: %s", exc)
 
     logger.info("Schema context length: %d chars, memories=%d, has_excel=%s",
                 len(schema_context), len(memories), "EXCEL" in schema_context or "DATAFRAME" in schema_context)

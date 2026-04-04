@@ -25,6 +25,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.analyst import run_analyst
 from app.agents.decomposer import decompose_query
+from app.agents.disambiguator import disambiguate
 from app.agents.executor import execute_code, execute_sql
 from app.agents.python_agent import generate_python
 from app.agents.python_repair import repair_python
@@ -222,6 +223,9 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
     async def repair_python_node(state: AgentState) -> AgentState:
         return await repair_python(state, _light)
 
+    async def disambiguator_node(state: AgentState) -> AgentState:
+        return disambiguate(state)
+
     async def respond_node(state: AgentState) -> AgentState:
         return await _respond(state, llm)
 
@@ -242,6 +246,7 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
     graph.add_node("verify_results", verify_node)
     graph.add_node("code_execute", code_execute_node)
     graph.add_node("repair_python", repair_python_node)
+    graph.add_node("disambiguator", disambiguator_node)
     graph.add_node("respond", respond_node)
     graph.add_node("repair_sql", repair_node)
     graph.add_node("analyst", analyst_node)
@@ -252,13 +257,25 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
         "router",
         _after_router,
         {
-            "sql": "sql_agent",
+            "sql": "disambiguator",       # → disambiguator first, then sql_agent
             "python": "python_agent",
-            "sql_then_viz": "sql_agent",
+            "sql_then_viz": "disambiguator",  # → disambiguator first
             "analyze": "analyst",
             "respond": "respond",
             "error": "respond",
         },
+    )
+
+    # Disambiguator: if ambiguous → stop (END), else → sql_agent
+    def _after_disambiguator(state: AgentState) -> str:
+        if state.get("disambiguation"):
+            return "respond"  # Pipeline stops — frontend shows disambiguation UI
+        return "sql_agent"
+
+    graph.add_conditional_edges(
+        "disambiguator",
+        _after_disambiguator,
+        {"respond": "respond", "sql_agent": "sql_agent"},
     )
 
     graph.add_edge("analyst", "respond")
@@ -388,8 +405,75 @@ async def _run_single_query(
     schema_context: str,
     history_messages: list,
     timeout_seconds: int = 60,
+    db: AsyncSession | None = None,
+    llm: BaseChatModel | None = None,
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Run a single query through the compiled graph and yield stream chunks."""
+
+    # ── Verified query fast-path ────────────────────────────────────
+    # If a matching verified query exists, skip the entire LLM pipeline
+    # and execute the proven SQL directly.
+    if db and connection_id:
+        try:
+            import uuid as _uuid
+            from app.services.verified_queries import find_matching_verified_query
+            verified = await find_matching_verified_query(
+                db, query, _uuid.UUID(connection_id),
+                org_id="",  # org_id is checked at the chat endpoint level
+            )
+            if verified:
+                yield {"type": "status", "content": "Using a verified query pattern"}
+                yield {"type": "sql", "content": verified.sql_template}
+                yield {"type": "verified", "content": str(verified.id)}
+
+                # Execute directly
+                from app.agents.executor import execute_sql
+                exec_state: AgentState = {
+                    "messages": [],
+                    "query": query,
+                    "connection_id": connection_id,
+                    "file_id": None,
+                    "schema_context": "",
+                    "sql_query": verified.sql_template,
+                    "code_block": None,
+                    "execution_result": None,
+                    "table_data": None,
+                    "plotly_figure": None,
+                    "error": None,
+                    "retry_count": 0,
+                    "next_action": "",
+                    "query_reasoning": f"Using verified query (used {verified.use_count} times)",
+                    "confidence": "high",
+                    "analysis_type": "",
+                }
+                result_state = await execute_sql(exec_state, db)
+
+                if result_state.get("table_data"):
+                    yield {"type": "table", "content": result_state["table_data"]}
+                    yield {"type": "confidence", "content": "high"}
+                    yield {"type": "reasoning", "content": f"Using a verified query pattern (used {verified.use_count} times successfully)"}
+
+                if result_state.get("error"):
+                    # Verified query failed — deactivate it and fall through to normal pipeline
+                    verified.is_active = False
+                    await db.flush()
+                    logger.warning("Verified query failed, deactivating: %s", verified.id)
+                    yield {"type": "status", "content": "Verified query outdated, regenerating..."}
+                else:
+                    # Generate response using LLM
+                    if llm:
+                        resp_state = await _respond(result_state, llm)
+                        for msg in resp_state.get("messages", []):
+                            if isinstance(msg, AIMessage):
+                                yield {"type": "text", "content": msg.content}
+                    else:
+                        yield {"type": "text", "content": result_state.get("execution_result", "")}
+                    await db.commit()
+                    return
+        except Exception as exc:
+            logger.debug("Verified query lookup skipped: %s", exc)
+
+    # ── Normal LangGraph pipeline ───────────────────────────────────
     messages = list(history_messages) + [HumanMessage(content=query)]
 
     initial_state: AgentState = {
@@ -406,6 +490,11 @@ async def _run_single_query(
         "error": None,
         "retry_count": 0,
         "next_action": "",
+        "query_reasoning": "",
+        "confidence": "",
+        "analysis_type": "",
+        "disambiguation": None,
+        "disambiguation_resolution": "",
     }
 
     import asyncio as _asyncio
@@ -425,10 +514,18 @@ async def _run_single_query(
                 action = node_state.get("next_action", "")
                 yield {"type": "status", "content": f"Decided to use: {action}"}
 
+            elif node_name == "disambiguator":
+                if node_state.get("disambiguation"):
+                    yield {"type": "disambiguation", "content": "", "data": node_state["disambiguation"]}
+                    return  # Stop pipeline — waiting for user input
+
             elif node_name == "sql_agent":
                 sql = node_state.get("sql_query")
                 if sql:
                     yield {"type": "sql", "content": sql}
+                reasoning = node_state.get("query_reasoning")
+                if reasoning:
+                    yield {"type": "reasoning", "content": reasoning}
 
             elif node_name == "validate_sql":
                 if node_state.get("error"):
@@ -443,6 +540,9 @@ async def _run_single_query(
             elif node_name == "verify_results":
                 if node_state.get("error"):
                     yield {"type": "status", "content": "Verifying results... re-trying for better accuracy"}
+                confidence = node_state.get("confidence")
+                if confidence:
+                    yield {"type": "confidence", "content": confidence}
 
             elif node_name == "repair_sql":
                 yield {"type": "status", "content": "Fixing query..."}
@@ -549,6 +649,7 @@ async def run_agent(
     if len(sub_queries) == 1:
         async for chunk in _run_single_query(
             compiled, query, connection_id, file_id, schema_context, history_messages,
+            db=db, llm=llm,
         ):
             if chunk.get("type") == "text":
                 all_texts.append(chunk.get("content", ""))
@@ -562,6 +663,7 @@ async def run_agent(
             sub_text = ""
             async for chunk in _run_single_query(
                 compiled, sub_q, connection_id, file_id, schema_context, history_messages,
+                db=db, llm=llm,
             ):
                 if chunk["type"] in ("table", "plotly", "sql", "code", "chart"):
                     yield chunk

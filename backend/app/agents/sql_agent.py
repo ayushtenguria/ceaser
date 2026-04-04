@@ -52,8 +52,13 @@ VISUALIZATION RULES:
 20. When the user asks for a bar chart, pie chart, or comparison, aggregation is fine \
     (GROUP BY, COUNT, SUM, AVG).
 
+MANDATORY JOIN RULES:
+19. When MANDATORY JOIN RULES are provided in the context, use them EXACTLY as specified. \
+    These override any inferred join paths from FK constraints or column name matching. \
+    Never guess an alternative join for tables covered by a mandatory join rule.
+
 SMART JOIN RULES (for multi-table analysis):
-19. When the question asks about "what are they selling" or "who are the customers", \
+20. When the question asks about "what are they selling" or "who are the customers", \
     ALWAYS JOIN across order_items → products → categories AND orders → customers to get \
     human-readable names. Never return just IDs when names/descriptions are available.
 20. For consulting-style questions (buying potential, cross-sell, lapsed accounts, retention), \
@@ -63,6 +68,23 @@ SMART JOIN RULES (for multi-table analysis):
     total_orders, total_spend, avg_order_value, last_order_date, categories_purchased.
 
 {schema_context}
+"""
+
+
+_REASONING_PROMPT = """\
+You generated this SQL query for the user's question. Now write a brief
+1-2 sentence explanation of WHY you chose these tables and joins.
+
+User question: {question}
+SQL query: {sql}
+
+Format your response as:
+REASONING: <your explanation>
+
+Example: "REASONING: Joined orders → customers on customer_id to get customer names,
+and grouped by region to show the geographic breakdown the user asked for."
+
+Be specific about which tables and join paths you chose and why. Keep it under 50 words.
 """
 
 
@@ -93,4 +115,26 @@ async def generate_sql(state: AgentState, llm: BaseChatModel) -> AgentState:
         raw_sql = "\n".join(lines).strip()
 
     logger.info("Generated SQL:\n%s", raw_sql)
-    return {**state, "sql_query": raw_sql}
+
+    # Generate reasoning trail (why these tables/joins were chosen)
+    reasoning = ""
+    if "JOIN" in raw_sql.upper() or "FROM" in raw_sql.upper():
+        try:
+            from langchain_core.messages import HumanMessage
+            reason_resp = await llm.ainvoke([
+                SystemMessage(content=_REASONING_PROMPT.format(
+                    question=state.get("query", ""),
+                    sql=raw_sql,
+                )),
+                HumanMessage(content="Explain your query reasoning briefly."),
+            ])
+            raw_reasoning = reason_resp.content.strip()  # type: ignore[union-attr]
+            if raw_reasoning.startswith("REASONING:"):
+                reasoning = raw_reasoning[len("REASONING:"):].strip()
+            else:
+                reasoning = raw_reasoning
+            logger.info("Query reasoning: %s", reasoning[:100])
+        except Exception as exc:
+            logger.debug("Reasoning generation skipped: %s", exc)
+
+    return {**state, "sql_query": raw_sql, "query_reasoning": reasoning}

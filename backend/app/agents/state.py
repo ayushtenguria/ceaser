@@ -31,3 +31,11 @@ class AgentState(TypedDict):
 
     retry_count: int
     next_action: str
+
+    # Trust & transparency
+    query_reasoning: str  # WHY specific tables/joins were chosen
+    confidence: str  # "high", "medium", "low"
+
+    # Disambiguation
+    disambiguation: dict  # disambiguation question + options (if ambiguous)
+    disambiguation_resolution: str  # user's chosen interpretation

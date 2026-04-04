@@ -95,6 +95,8 @@ export function useChat() {
         const plotlyFigures: PlotlyFigure[] = [];
         const tableDatas: TableData[] = [];
         let messageType: Message["messageType"] = "text";
+        let queryReasoning: string | undefined;
+        let confidence: string | undefined;
 
         for await (const chunk of stream) {
           switch (chunk.type) {
@@ -155,6 +157,27 @@ export function useChat() {
               }
               break;
             }
+            case "reasoning":
+              queryReasoning = chunk.content;
+              break;
+            case "confidence":
+              confidence = chunk.content;
+              break;
+            case "verified":
+              confidence = "high";
+              break;
+            case "disambiguation": {
+              const disambigData = chunk.data;
+              messageType = "text";
+              accumulatedContent = disambigData?.message || "I need clarification before proceeding.";
+              // Store disambiguation data on the message for the UI to render
+              updateMessage(currentConvId, assistantMessageId, {
+                content: accumulatedContent,
+                messageType: "text",
+                disambiguationData: disambigData,
+              });
+              break;
+            }
             case "status":
               setStreamStatus(chunk.content || "");
               break;
@@ -171,6 +194,8 @@ export function useChat() {
             tableData,
             plotlyFigures: plotlyFigures.length > 1 ? [...plotlyFigures] : undefined,
             tableDatas: tableDatas.length > 1 ? [...tableDatas] : undefined,
+            queryReasoning,
+            confidence,
             error: messageType === "error" ? accumulatedContent : undefined,
           });
         }

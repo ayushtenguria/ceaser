@@ -31,9 +31,11 @@ IMPORTANT:
   respond "correct" even if results are empty.
 - Only respond "retry" if the SQL logic itself is wrong for the question.
 
-Respond with EXACTLY one of:
-- "correct" — if the query logic properly addresses the question (even if results are empty/null)
-- "retry: <explanation>" — if the query logic is wrong, with a brief explanation
+Respond with EXACTLY one line in this format:
+- "correct | high" — exact column matches, clear join path, unambiguous intent
+- "correct | medium" — correct but used inferred joins or column aliases (≈ hints)
+- "correct | low" — plausible but ambiguous terms (e.g., "revenue" could mean multiple columns)
+- "retry: <explanation>" — if the query logic is wrong
 """
 
 
@@ -67,8 +69,15 @@ async def verify_results(state: AgentState, llm: BaseChatModel) -> AgentState:
     verdict: str = response.content.strip().lower()  # type: ignore[union-attr]
 
     if verdict.startswith("correct"):
-        logger.info("Verification passed.")
-        return state
+        # Parse confidence level: "correct | high" → "high"
+        confidence = "high"  # default
+        if "|" in verdict:
+            conf_part = verdict.split("|", 1)[1].strip()
+            if conf_part in ("high", "medium", "low"):
+                confidence = conf_part
+
+        logger.info("Verification passed (confidence: %s).", confidence)
+        return {**state, "confidence": confidence}
 
     if verdict.startswith("retry"):
         explanation = verdict.split(":", 1)[1].strip() if ":" in verdict else verdict
@@ -77,7 +86,8 @@ async def verify_results(state: AgentState, llm: BaseChatModel) -> AgentState:
             **state,
             "error": f"Result verification failed: {explanation}",
             "retry_count": state.get("retry_count", 0) + 1,
+            "confidence": "low",
         }
 
     logger.info("Verification ambiguous ('%s'), trusting results.", verdict[:50])
-    return state
+    return {**state, "confidence": "medium"}

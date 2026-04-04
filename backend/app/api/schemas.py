@@ -59,6 +59,8 @@ class ChatRequest(_CamelModel):
     file_id: uuid.UUID | None = None
     file_ids: list[uuid.UUID] | None = None
     model: str = Field(default="gemini", pattern="^(gemini|claude)$")
+    disambiguation_choice: dict[str, str] | None = None
+    """User's disambiguation resolution: {"revenue": "orders.total_amount"}"""
 
     @field_validator("message")
     @classmethod
@@ -217,6 +219,34 @@ class ReportResponse(BaseModel):
     organization_id: str
     created_at: datetime
     updated_at: datetime
+
+
+class FeedbackCreate(_CamelModel):
+    """Submit thumbs up/down on an assistant message."""
+    rating: str = Field(..., pattern=r"^(up|down)$")
+    correction_note: str | None = None
+    category: str | None = Field(None, pattern=r"^(wrong_data|wrong_join|wrong_metric|wrong_filter|other)?$")
+
+
+class FeedbackResponse(BaseModel):
+    """Public representation of message feedback."""
+    model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
+
+    id: uuid.UUID
+    message_id: uuid.UUID
+    rating: str
+    correction_note: str | None = None
+    category: str | None = None
+    created_at: datetime
+
+
+class AccuracyStats(BaseModel):
+    """Accuracy statistics for a connection or org."""
+    total_rated: int = 0
+    thumbs_up: int = 0
+    thumbs_down: int = 0
+    accuracy_pct: float = 0.0
+    by_category: dict[str, int] = {}
 
 
 class MetricCreate(_CamelModel):

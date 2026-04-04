@@ -72,6 +72,10 @@ export interface Message {
   tableData?: TableData;
   plotlyFigures?: PlotlyFigure[];
   tableDatas?: TableData[];
+  queryReasoning?: string;
+  confidence?: string;
+  feedback?: { rating: "up" | "down"; correctionNote?: string; category?: string };
+  disambiguationData?: any;
   error?: string;
   createdAt: string;
 }
@@ -128,6 +132,7 @@ export interface ChatRequest {
   fileId?: string;
   fileIds?: string[];
   model?: "gemini" | "claude";
+  disambiguationChoice?: Record<string, string>;
 }
 
 export interface StreamChunk {

@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import admin, auth, billing, chat, connections, files, memories, metrics, audit, notebooks, onboarding, reports
+from app.api import admin, auth, billing, chat, connections, feedback, files, join_rules, memories, metrics, audit, notebooks, onboarding, reports, verified_queries
 from app.core.config import get_settings
 from app.db.session import Base, engine
 
@@ -75,6 +75,9 @@ app.include_router(onboarding.router, prefix=_API_PREFIX)
 app.include_router(notebooks.router, prefix=_API_PREFIX)
 app.include_router(billing.router, prefix=_API_PREFIX)
 app.include_router(memories.router, prefix=_API_PREFIX)
+app.include_router(feedback.router, prefix=_API_PREFIX)
+app.include_router(verified_queries.router, prefix=_API_PREFIX)
+app.include_router(join_rules.router, prefix=_API_PREFIX)
 app.include_router(admin.router, prefix=_API_PREFIX)
 
 

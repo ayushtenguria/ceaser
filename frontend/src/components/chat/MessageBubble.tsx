@@ -1,4 +1,4 @@
-import { AlertCircle, Bot, Bookmark, ChevronRight, Copy, Check, Download, Maximize2, Table2, User } from "lucide-react";
+import { AlertCircle, Bot, Bookmark, ChevronRight, Copy, Check, Download, Info, Maximize2, Shield, ShieldCheck, ShieldAlert, Table2, ThumbsUp, ThumbsDown, User } from "lucide-react";
 import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
@@ -64,6 +64,19 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
         {/* SQL query block */}
         {message.sqlQuery && <SqlBlock sql={message.sqlQuery} />}
 
+        {/* Query reasoning trail */}
+        {message.queryReasoning && (
+          <div className="flex items-start gap-2 rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2 text-xs text-blue-300/80">
+            <Info className="mt-0.5 h-3.5 w-3.5 shrink-0 text-blue-400/60" />
+            <p>{message.queryReasoning}</p>
+          </div>
+        )}
+
+        {/* Confidence indicator */}
+        {message.confidence && (
+          <ConfidenceBadge level={message.confidence} />
+        )}
+
         {/* Code block */}
         {message.codeBlock && <CodeBlock code={message.codeBlock} />}
 
@@ -87,11 +100,14 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
           </div>
         )}
 
-        {/* Timestamp & Save */}
+        {/* Timestamp, Feedback & Save */}
         <div className="flex items-center gap-2 px-1">
           <span className="text-xs text-muted-foreground">
             {formatRelativeTime(message.createdAt)}
           </span>
+          {!isUser && !message.id.startsWith("temp-") && (
+            <FeedbackButtons messageId={message.id} existing={message.feedback} />
+          )}
           {!isUser && (message.tableData || message.plotlyFigure) && (
             <SaveReportButton message={message} />
           )}
@@ -249,5 +265,160 @@ function SaveReportButton({ message }: { message: Message }) {
       <Bookmark className="h-3 w-3" />
       {saving ? "Saving..." : "Save as Report"}
     </Button>
+  );
+}
+
+
+function FeedbackButtons({ messageId, existing }: {
+  messageId: string;
+  existing?: { rating: "up" | "down"; correctionNote?: string; category?: string };
+}) {
+  const [rating, setRating] = useState<"up" | "down" | null>(existing?.rating || null);
+  const [showForm, setShowForm] = useState(false);
+  const [note, setNote] = useState("");
+  const [category, setCategory] = useState("");
+  const [saving, setSaving] = useState(false);
+
+  const handleRate = useCallback(async (value: "up" | "down") => {
+    if (saving) return;
+
+    if (value === "down") {
+      setRating(value);
+      setShowForm(true);
+      return;
+    }
+
+    // Thumbs up — submit immediately
+    setSaving(true);
+    try {
+      await api.submitFeedback(messageId, { rating: value });
+      setRating(value);
+    } catch { /* ignore */ }
+    setSaving(false);
+  }, [messageId, saving]);
+
+  const handleSubmitDown = useCallback(async () => {
+    setSaving(true);
+    try {
+      await api.submitFeedback(messageId, {
+        rating: "down",
+        correctionNote: note || undefined,
+        category: category || undefined,
+      });
+      setShowForm(false);
+    } catch { /* ignore */ }
+    setSaving(false);
+  }, [messageId, note, category]);
+
+  if (rating === "up") {
+    return (
+      <span className="flex items-center gap-1 text-xs text-emerald-400">
+        <ThumbsUp className="h-3 w-3" /> Helpful
+      </span>
+    );
+  }
+
+  if (rating === "down" && !showForm) {
+    return (
+      <span className="flex items-center gap-1 text-xs text-red-400">
+        <ThumbsDown className="h-3 w-3" /> Reported
+      </span>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <div className="flex items-center gap-1">
+        <button
+          onClick={() => handleRate("up")}
+          className="rounded p-1 text-muted-foreground/50 hover:text-emerald-400 hover:bg-emerald-400/10 transition-colors"
+          title="Helpful"
+        >
+          <ThumbsUp className="h-3.5 w-3.5" />
+        </button>
+        <button
+          onClick={() => handleRate("down")}
+          className="rounded p-1 text-muted-foreground/50 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+          title="Wrong or unhelpful"
+        >
+          <ThumbsDown className="h-3.5 w-3.5" />
+        </button>
+      </div>
+
+      {showForm && (
+        <div className="flex flex-col gap-2 rounded-lg border bg-card px-3 py-2 text-xs">
+          <p className="font-medium text-muted-foreground">What went wrong?</p>
+          <select
+            value={category}
+            onChange={(e) => setCategory(e.target.value)}
+            className="rounded border bg-background px-2 py-1 text-xs"
+          >
+            <option value="">Select category...</option>
+            <option value="wrong_data">Wrong data / numbers</option>
+            <option value="wrong_join">Wrong table join</option>
+            <option value="wrong_metric">Wrong metric / calculation</option>
+            <option value="wrong_filter">Wrong filter / condition</option>
+            <option value="other">Other</option>
+          </select>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            placeholder="What was the correct answer? (optional)"
+            rows={2}
+            className="rounded border bg-background px-2 py-1 text-xs resize-none"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={handleSubmitDown}
+              disabled={saving}
+              className="rounded bg-red-500/20 px-2 py-1 text-red-400 hover:bg-red-500/30 transition-colors"
+            >
+              {saving ? "Sending..." : "Submit"}
+            </button>
+            <button
+              onClick={() => { setShowForm(false); setRating(null); }}
+              className="rounded px-2 py-1 text-muted-foreground hover:bg-muted transition-colors"
+            >
+              Cancel
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+
+function ConfidenceBadge({ level }: { level: string }) {
+  const config: Record<string, { icon: typeof ShieldCheck; color: string; label: string; hint: string }> = {
+    high: {
+      icon: ShieldCheck,
+      color: "text-emerald-400 border-emerald-500/20 bg-emerald-500/5",
+      label: "High confidence",
+      hint: "Exact column matches, clear join path",
+    },
+    medium: {
+      icon: Shield,
+      color: "text-amber-400 border-amber-500/20 bg-amber-500/5",
+      label: "Medium confidence",
+      hint: "Used inferred joins or column aliases — verify the results",
+    },
+    low: {
+      icon: ShieldAlert,
+      color: "text-red-400 border-red-500/20 bg-red-500/5",
+      label: "Low confidence",
+      hint: "Ambiguous terms or unclear join path — audit recommended",
+    },
+  };
+
+  const c = config[level] || config.medium;
+  const Icon = c.icon;
+
+  return (
+    <div className={cn("flex items-center gap-1.5 rounded-md border px-2 py-1 text-xs", c.color)}>
+      <Icon className="h-3.5 w-3.5" />
+      <span className="font-medium">{c.label}</span>
+      <span className="text-muted-foreground/70">— {c.hint}</span>
+    </div>
   );
 }

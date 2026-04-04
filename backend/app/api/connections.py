@@ -204,6 +204,90 @@ async def delete_connection(
     await db.delete(connection)
 
 
+@router.post("/{connection_id}/scan-metrics")
+async def scan_metrics(
+    connection_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> list[dict]:
+    """Scan schema for potential metric definitions.
+
+    Returns candidates with name, SQL expression, source table/column,
+    confidence, and ambiguity notes. Does NOT auto-create anything.
+    """
+    user = await require_permission(Permission.QUERY_DATA, current_user, db)
+    connection = await _load_connection(db, connection_id, user.id)
+
+    if not connection.schema_cache:
+        raise HTTPException(status_code=400, detail="Schema not cached. Refresh the connection first.")
+
+    from app.services.metric_scanner import scan_schema_for_metrics
+    candidates = scan_schema_for_metrics(connection.schema_cache)
+
+    connection.metrics_scanned = True
+    await db.commit()
+
+    return [
+        {
+            "name": c.name,
+            "description": c.description,
+            "sqlExpression": c.sql_expression,
+            "category": c.category,
+            "sourceTable": c.source_table,
+            "sourceColumn": c.source_column,
+            "confidence": c.confidence,
+            "ambiguityNote": c.ambiguity_note,
+        }
+        for c in candidates
+    ]
+
+
+@router.post("/{connection_id}/accept-metrics")
+async def accept_metrics(
+    connection_id: uuid.UUID,
+    body: dict,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> dict:
+    """Accept selected metric candidates and create locked MetricDefinitions.
+
+    Body: { "metrics": [{ "name", "description", "sqlExpression", "category", "isLocked" }] }
+    """
+    user = await require_permission(Permission.QUERY_DATA, current_user, db)
+    org_id = user.organization_id or ""
+    connection = await _load_connection(db, connection_id, user.id)
+
+    metrics_data = body.get("metrics", [])
+    if not metrics_data:
+        raise HTTPException(status_code=400, detail="No metrics provided.")
+
+    from app.db.models import MetricDefinition
+
+    created = 0
+    for m in metrics_data:
+        name = m.get("name", "").strip()
+        sql_expr = m.get("sqlExpression", "").strip()
+        if not name or not sql_expr:
+            continue
+
+        metric = MetricDefinition(
+            name=name,
+            description=m.get("description", ""),
+            sql_expression=sql_expr,
+            category=m.get("category", "general"),
+            connection_id=connection_id,
+            organization_id=org_id,
+            user_id=user.id,
+            is_locked=m.get("isLocked", True),
+        )
+        db.add(metric)
+        created += 1
+
+    await db.commit()
+    logger.info("Accepted %d metrics for connection %s", created, connection_id)
+    return {"created": created}
+
+
 async def _load_connection(
     db: DbSession,
     connection_id: uuid.UUID,
