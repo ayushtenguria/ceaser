@@ -96,3 +96,6 @@ watchfiles==1.1.1
 websockets==16.0
 xxhash==3.6.0
 zstandard==0.25.0
+
+# DuckDB — embedded SQL engine for fast parquet queries
+duckdb>=1.1

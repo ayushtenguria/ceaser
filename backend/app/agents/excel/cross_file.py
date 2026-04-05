@@ -67,18 +67,32 @@ def format_cross_file_context(relationships: list[dict]) -> str:
         return ""
 
     lines = [
-        "\nCROSS-FILE RELATIONSHIPS (use pd.merge to join these DataFrames):",
+        "\nCROSS-FILE RELATIONSHIPS (join these DataFrames):",
         "=" * 60,
+        "  For large files: use duckdb.sql() with JOIN across read_parquet() calls.",
+        "  For small files: use pd.merge().",
+        "",
     ]
     for rel in relationships:
         conf = rel.get("confidence", 0.7)
+        src_var = rel["source_var"]
+        tgt_var = rel["target_var"]
+        src_col = rel["source_col"]
+        tgt_col = rel["target_col"]
+
         lines.append(
-            f"  {rel['source_var']}.{rel['source_col']} → {rel['target_var']}.{rel['target_col']}"
+            f"  {src_var}.{src_col} → {tgt_var}.{tgt_col}"
             f"  ({conf:.0%} confidence)"
         )
+        # DuckDB join (preferred for large files)
         lines.append(
-            f"    Code: pd.merge({rel['source_var']}, {rel['target_var']}, "
-            f"on='{rel['source_col']}')"
+            f"    DuckDB: duckdb.sql(\"SELECT ... FROM read_parquet(_PARQUET_{src_var.upper()}) a "
+            f"JOIN read_parquet(_PARQUET_{tgt_var.upper()}) b ON a.{src_col} = b.{tgt_col}\").fetchdf()"
+        )
+        # pandas fallback
+        lines.append(
+            f"    pandas: pd.merge({src_var}, {tgt_var}, "
+            f"left_on='{src_col}', right_on='{tgt_col}')"
         )
 
     return "\n".join(lines)

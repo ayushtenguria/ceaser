@@ -143,6 +143,30 @@ def _build_runner_script(user_code: str, figure_path: str) -> str:
             return _orig_getitem(self, key)
         _pd_internal.DataFrame.__getitem__ = _patched_getitem
 
+        # DuckDB helper — SQL on parquet files without loading into memory
+        try:
+            import duckdb as _duckdb
+
+            def query_parquet(sql, parquet_path=None):
+                \"\"\"Run SQL directly on a parquet file using DuckDB.
+
+                Returns a pandas DataFrame with just the result — never loads
+                the full file into memory. 100x faster than pandas for
+                aggregations on large files.
+
+                Usage:
+                    result = query_parquet("SELECT region, SUM(rev) FROM data GROUP BY region", "ceaser://...")
+                    # Or reference the parquet path directly in SQL:
+                    result = query_parquet("SELECT * FROM read_parquet('ceaser://...') LIMIT 10")
+                \"\"\"
+                if parquet_path and 'read_parquet' not in sql:
+                    sql = sql.replace('data', f"read_parquet('{parquet_path}')", 1)
+                return _duckdb.sql(sql).fetchdf()
+
+        except ImportError:
+            def query_parquet(sql, parquet_path=None):
+                raise RuntimeError("DuckDB not available. Use pandas instead.")
+
     """)
 
     postfix = textwrap.dedent(f"""\

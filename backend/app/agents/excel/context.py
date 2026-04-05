@@ -102,10 +102,11 @@ def generate_code_preamble(
     - Auto type-conversion for numeric-looking string columns
     - Null-handling defaults
     """
-    lines = ["import pandas as pd", "import plotly.express as px", ""]
+    lines = ["import pandas as pd", "import numpy as np", "import plotly.express as px", ""]
 
     # Build a lookup: var_name -> sheet metadata (columns, types)
     sheet_meta: dict[str, Any] = {}
+    total_rows = 0
     if workbooks:
         for wb in workbooks:
             for sheet in wb.sheets:
@@ -115,10 +116,28 @@ def generate_code_preamble(
                     "types": sheet.column_types,
                     "row_count": sheet.row_count,
                 }
+                total_rows += sheet.row_count
+
+    # For large files (>100K rows), add DuckDB import and usage hint
+    use_duckdb = total_rows > 100_000
+    if use_duckdb:
+        lines.append("import duckdb")
+        lines.append(f"# NOTE: This file has {total_rows:,} rows — use duckdb.sql() for aggregations")
+        lines.append("# Example: result = duckdb.sql(\"SELECT col, SUM(val) FROM read_parquet('ceaser://...') GROUP BY col\").fetchdf()")
+        lines.append("")
 
     for var_name, remote_path in parquet_paths.items():
         safe_ref = f"{CEASER_PROTOCOL}{remote_path}"
-        lines.append(f'{var_name} = pd.read_parquet("{safe_ref}")')
+
+        row_count = sheet_meta.get(var_name, {}).get("row_count", 0)
+
+        if use_duckdb and row_count > 100_000:
+            # DuckDB path: define both a parquet ref constant AND a pandas load
+            # The LLM can choose: duckdb.sql() for aggregations, pd.read_parquet() for transforms
+            lines.append(f'_PARQUET_{var_name.upper()} = "{safe_ref}"')
+            lines.append(f'{var_name} = pd.read_parquet("{safe_ref}")  # WARNING: {row_count:,} rows — prefer duckdb.sql() for aggregations')
+        else:
+            lines.append(f'{var_name} = pd.read_parquet("{safe_ref}")')
 
         meta = sheet_meta.get(var_name)
         if meta:

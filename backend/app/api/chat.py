@@ -331,40 +331,17 @@ async def _build_multi_file_context(
 
 def _build_adaptive_history(
     prev_msgs: list,
-    max_chars: int = 12000,
+    max_chars: int = 4000,
+    current_question: str = "",
 ) -> list[dict[str, str]]:
-    """Build conversation history adaptively based on token budget.
+    """Build conversation history scored by relevance to the current question.
 
-    Instead of a fixed 10 messages, includes as many messages as fit
-    within the character budget. Prioritizes recent messages.
-    Short messages (corrections, follow-ups) are cheap; long messages
-    (with table summaries) cost more.
+    Uses compressed summaries when available (stored on Message.summary),
+    falls back to truncated raw content. Scores by keyword relevance +
+    recency + correction boost. Much smaller token budget than raw dumping.
     """
-    history: list[dict[str, str]] = []
-    total_chars = 0
-
-    for msg in reversed(prev_msgs[:-1]):
-        content = msg.content or ""
-
-        if msg.role == "assistant":
-            if msg.table_data:
-                cols = msg.table_data.get("columns", [])
-                rows = msg.table_data.get("rows", [])
-                total = msg.table_data.get("total_rows", len(rows))
-                content += f"\n(Data returned: {total} rows, columns: {', '.join(cols[:8])})"
-            if msg.plotly_figure:
-                content += "\n(A chart was generated)"
-
-        msg_chars = len(content)
-
-        if total_chars + msg_chars > max_chars:
-            break
-
-        total_chars += msg_chars
-        history.append({"role": msg.role, "content": content})
-
-    history.reverse()
-    return history
+    from app.services.conversation_memory import build_relevant_history
+    return build_relevant_history(prev_msgs, current_question, max_chars=max_chars)
 
 
 @router.get("/suggestions")
@@ -641,8 +618,10 @@ async def chat(
         )
         hist_result = await db.execute(hist_stmt)
         prev_msgs = list(hist_result.scalars().all())
-        history_messages = _build_adaptive_history(prev_msgs, max_chars=12000)
-        logger.info("Adaptive history: %d messages loaded (of %d total)", len(history_messages), len(prev_msgs))
+        history_messages = _build_adaptive_history(
+            prev_msgs, max_chars=4000, current_question=body.message,
+        )
+        logger.info("Relevant history: %d messages loaded (of %d total)", len(history_messages), len(prev_msgs))
 
     llm = get_llm(model=body.model, tier="heavy")
     llm_light = get_llm(tier="light")
@@ -706,6 +685,22 @@ async def chat(
         else:
             msg_type = "text"
 
+        # Generate compressed summaries for history injection
+        from app.services.conversation_memory import summarize_exchange
+        user_summary, assistant_summary = summarize_exchange(
+            user_message=body.message,
+            assistant_message=collected_text or collected_error or "",
+            sql_query=collected_sql,
+            code_block=collected_code,
+            table_data=collected_table,
+            error=collected_error,
+        )
+
+        # Update user message with summary
+        user_msg.summary = user_summary
+        from sqlalchemy.orm.attributes import flag_modified
+        flag_modified(user_msg, "summary")
+
         assistant_msg = Message(
             conversation_id=conversation_id,
             role="assistant",
@@ -716,6 +711,7 @@ async def chat(
             table_data=collected_table,
             plotly_figure=collected_plotly,
             error=collected_error,
+            summary=assistant_summary,
         )
         db.add(assistant_msg)
         await db.flush()

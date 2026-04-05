@@ -121,6 +121,8 @@ class Message(Base):
     plotly_figure: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     table_data: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    """Compressed ~50 token summary for history injection. Raw content stays for UI."""
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
     conversation: Mapped[Conversation] = relationship(back_populates="messages")
