@@ -1,4 +1,4 @@
-"""PostgreSQL connector using asyncpg."""
+"""PostgreSQL connector using asyncpg with connection pooling."""
 
 from __future__ import annotations
 
@@ -13,38 +13,51 @@ from app.services.encryption import decrypt_value
 
 logger = logging.getLogger(__name__)
 
+_QUERY_TIMEOUT_S = 60
+_MAX_ROWS = 5000
+_POOL_MIN = 1
+_POOL_MAX = 5
+
 
 class PostgresConnector(BaseConnector):
-    """Async PostgreSQL connector backed by a single ``asyncpg`` connection."""
+    """Async PostgreSQL connector backed by an ``asyncpg`` connection pool."""
 
     def __init__(self, connection: DatabaseConnection) -> None:
         self._meta = connection
         self._password = decrypt_value(connection.encrypted_password)
-        self._conn: asyncpg.Connection | None = None
-
+        self._pool: asyncpg.Pool | None = None
 
     async def connect(self) -> bool:
-        """Open an asyncpg connection to the target PostgreSQL database."""
+        """Create an asyncpg connection pool to the target PostgreSQL database."""
         try:
-            self._conn = await asyncpg.connect(
+            async def _init_conn(conn: asyncpg.Connection) -> None:
+                await conn.execute(f"SET statement_timeout = '{_QUERY_TIMEOUT_S * 1000}'")
+
+            self._pool = await asyncpg.create_pool(
                 host=self._meta.host,
                 port=self._meta.port,
                 user=self._meta.username,
                 password=self._password,
                 database=self._meta.database,
+                min_size=_POOL_MIN,
+                max_size=_POOL_MAX,
                 timeout=10,
+                command_timeout=_QUERY_TIMEOUT_S,
+                init=_init_conn,
             )
-            logger.info("Connected to PostgreSQL: %s", self._meta.name)
+            logger.info("Connected to PostgreSQL (pool %d-%d): %s",
+                        _POOL_MIN, _POOL_MAX, self._meta.name)
             return True
         except Exception as exc:
             logger.error("PostgreSQL connection failed: %s", exc)
             raise
 
-    async def execute_query(self, query: str) -> tuple[list[str], list[dict[str, Any]]]:
+    async def _execute_query_impl(self, query: str) -> tuple[list[str], list[dict[str, Any]]]:
         """Execute a read-only query and return ``(columns, rows)``."""
-        if self._conn is None:
+        if self._pool is None:
             await self.connect()
-        assert self._conn is not None
+        if self._pool is None:
+            raise RuntimeError("Failed to establish database connection.")
 
         stripped = query.strip().upper()
         if not stripped.startswith("SELECT") and not stripped.startswith("WITH"):
@@ -52,10 +65,11 @@ class PostgresConnector(BaseConnector):
                 f"Only SELECT/WITH queries are allowed. Received: {stripped[:30]}"
             )
 
-        async with self._conn.transaction(readonly=True):
-            stmt = await self._conn.prepare(query)
-            columns = [attr.name for attr in stmt.get_attributes()]
-            records = await stmt.fetch()
+        async with self._pool.acquire() as conn:
+            async with conn.transaction(readonly=True):
+                stmt = await conn.prepare(query)
+                columns = [attr.name for attr in stmt.get_attributes()]
+                records = await stmt.fetch(_MAX_ROWS)
 
         rows = [dict(record) for record in records]
         for row in rows:
@@ -67,9 +81,10 @@ class PostgresConnector(BaseConnector):
 
     async def get_schema(self) -> dict[str, Any]:
         """Introspect tables and columns via information_schema."""
-        if self._conn is None:
+        if self._pool is None:
             await self.connect()
-        assert self._conn is not None
+        if self._pool is None:
+            raise RuntimeError("Failed to establish database connection.")
 
         query = """
             SELECT table_name, column_name, data_type, is_nullable
@@ -77,7 +92,8 @@ class PostgresConnector(BaseConnector):
             WHERE table_schema = 'public'
             ORDER BY table_name, ordinal_position;
         """
-        records = await self._conn.fetch(query)
+        async with self._pool.acquire() as conn:
+            records = await conn.fetch(query)
 
         tables: dict[str, list[dict[str, Any]]] = {}
         for rec in records:
@@ -92,10 +108,10 @@ class PostgresConnector(BaseConnector):
         return {"tables": tables}
 
     async def disconnect(self) -> None:
-        """Close the asyncpg connection."""
-        if self._conn is not None:
-            await self._conn.close()
-            self._conn = None
+        """Close the connection pool."""
+        if self._pool is not None:
+            await self._pool.close()
+            self._pool = None
             logger.info("Disconnected from PostgreSQL: %s", self._meta.name)
 
     def get_connection_string(self) -> str:

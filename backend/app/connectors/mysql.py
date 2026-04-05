@@ -24,16 +24,25 @@ class MySQLConnector(BaseConnector):
         self._conn: pymysql.connections.Connection | None = None
 
 
+    _QUERY_TIMEOUT_S = 60
+    _MAX_ROWS = 5000
+
     def _connect_sync(self) -> pymysql.connections.Connection:
-        return pymysql.connect(
+        conn = pymysql.connect(
             host=self._meta.host,
             port=self._meta.port,
             user=self._meta.username,
             password=self._password,
             database=self._meta.database,
             connect_timeout=10,
+            read_timeout=self._QUERY_TIMEOUT_S,
+            write_timeout=10,
             cursorclass=pymysql.cursors.DictCursor,
         )
+        # Set query execution timeout at session level
+        with conn.cursor() as cur:
+            cur.execute(f"SET SESSION max_execution_time = {self._QUERY_TIMEOUT_S * 1000}")
+        return conn
 
     async def connect(self) -> bool:
         try:
@@ -44,10 +53,11 @@ class MySQLConnector(BaseConnector):
             logger.error("MySQL connection failed: %s", exc)
             raise
 
-    async def execute_query(self, query: str) -> tuple[list[str], list[dict[str, Any]]]:
+    async def _execute_query_impl(self, query: str) -> tuple[list[str], list[dict[str, Any]]]:
         if self._conn is None:
             await self.connect()
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Failed to establish database connection.")
 
         def _run() -> tuple[list[str], list[dict[str, Any]]]:
             stripped = query.strip().upper()
@@ -59,7 +69,7 @@ class MySQLConnector(BaseConnector):
             with self._conn.cursor() as cursor:  # type: ignore[union-attr]
                 cursor.execute("SET SESSION TRANSACTION READ ONLY")
                 cursor.execute(query)
-                rows: list[dict[str, Any]] = cursor.fetchall()
+                rows: list[dict[str, Any]] = cursor.fetchmany(self._MAX_ROWS)
                 columns = [desc[0] for desc in cursor.description] if cursor.description else []
 
                 for row in rows:
@@ -73,7 +83,8 @@ class MySQLConnector(BaseConnector):
     async def get_schema(self) -> dict[str, Any]:
         if self._conn is None:
             await self.connect()
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Failed to establish database connection.")
 
         def _introspect() -> dict[str, Any]:
             with self._conn.cursor() as cursor:  # type: ignore[union-attr]

@@ -59,10 +59,27 @@ def _build_sync_url(conn: DatabaseConnection) -> str:
     raise ValueError(f"Unsupported db_type for introspection: {db_type}")
 
 
+def _quote_ident(name: str) -> str:
+    """Safely quote a SQL identifier (table/column name).
+
+    Prevents SQL injection by escaping embedded double-quotes and wrapping
+    in double quotes. Only allows alphanumeric, underscore, and space chars.
+    """
+    # Reject names with dangerous characters
+    import re
+    if not re.match(r"^[\w\s.]+$", name):
+        raise ValueError(f"Invalid identifier: {name!r}")
+    return '"' + name.replace('"', '""') + '"'
+
+
 def _introspect_schema_sync(connection: DatabaseConnection) -> SchemaInfo:
     """Synchronous introspection — meant to be called via ``asyncio.to_thread``."""
     url = _build_sync_url(connection)
-    sync_engine = create_engine(url, pool_pre_ping=True)
+    sync_engine = create_engine(
+        url,
+        pool_pre_ping=True,
+        connect_args={"connect_timeout": 15} if "postgresql" in url else {},
+    )
 
     schema = SchemaInfo()
 
@@ -92,8 +109,12 @@ def _introspect_schema_sync(connection: DatabaseConnection) -> SchemaInfo:
 
             row_count: int | None = None
             try:
+                safe_table = _quote_ident(table_name)
                 with sync_engine.connect() as conn:
-                    result = conn.execute(text(f'SELECT COUNT(*) FROM "{table_name}"'))
+                    # Set statement timeout to prevent long-running COUNT(*) on huge tables
+                    if "postgresql" in url:
+                        conn.execute(text("SET statement_timeout = '10s'"))
+                    result = conn.execute(text(f"SELECT COUNT(*) FROM {safe_table}"))
                     row_count = result.scalar()
             except Exception:
                 logger.debug("Could not get row count for %s", table_name)
@@ -106,15 +127,19 @@ def _introspect_schema_sync(connection: DatabaseConnection) -> SchemaInfo:
                     continue
 
                 try:
+                    safe_table = _quote_ident(table_name)
+                    safe_col = _quote_ident(col_name)
                     with sync_engine.connect() as conn_:
+                        if "postgresql" in url:
+                            conn_.execute(text("SET statement_timeout = '5s'"))
                         count_result = conn_.execute(
-                            text(f'SELECT COUNT(DISTINCT "{col_name}") FROM "{table_name}"')
+                            text(f"SELECT COUNT(DISTINCT {safe_col}) FROM {safe_table}")
                         )
                         distinct_count = count_result.scalar()
 
                         if distinct_count is not None and distinct_count <= 25:
                             values_result = conn_.execute(
-                                text(f'SELECT DISTINCT "{col_name}" FROM "{table_name}" WHERE "{col_name}" IS NOT NULL ORDER BY "{col_name}" LIMIT 25')
+                                text(f"SELECT DISTINCT {safe_col} FROM {safe_table} WHERE {safe_col} IS NOT NULL ORDER BY {safe_col} LIMIT 25")
                             )
                             col_info.sample_values = [str(row[0]) for row in values_result]
                 except Exception:

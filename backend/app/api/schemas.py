@@ -127,10 +127,63 @@ class ConnectionCreate(_CamelModel):
     name: str = Field(..., min_length=1, max_length=255)
     db_type: str = Field(..., pattern="^(postgresql|mysql|sqlite|bigquery|snowflake)$")
     host: str = ""
-    port: int = 5432
+    port: int = Field(5432, ge=1, le=65535)
     database: str = Field(..., min_length=1)
     username: str = ""
     password: str = ""
+
+    @field_validator("host")
+    @classmethod
+    def validate_host(cls, v: str) -> str:
+        """Block connections to internal/private networks (SSRF prevention)."""
+        if not v:
+            return v
+
+        import ipaddress
+        import re
+
+        hostname = v.strip().lower()
+
+        # Block localhost variants
+        if hostname in ("localhost", "127.0.0.1", "0.0.0.0", "::1", "[::1]"):
+            raise ValueError("Connections to localhost are not allowed.")
+
+        # Block known metadata endpoints
+        if hostname.startswith("169.254.") or hostname == "metadata.google.internal":
+            raise ValueError("Connections to cloud metadata endpoints are not allowed.")
+
+        # Block internal hostnames
+        if hostname.endswith((".internal", ".local", ".localhost")):
+            raise ValueError("Connections to internal hostnames are not allowed.")
+
+        # Check if it's an IP address in a private range
+        try:
+            ip = ipaddress.ip_address(hostname)
+            if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved:
+                raise ValueError(
+                    f"Connections to private/reserved IP ranges are not allowed: {hostname}"
+                )
+        except ValueError as exc:
+            if "not allowed" in str(exc):
+                raise
+            # Not an IP address — it's a hostname, which is fine
+
+        # Basic hostname format validation
+        if not re.match(r"^[a-zA-Z0-9._-]+$", hostname):
+            raise ValueError(f"Invalid hostname format: {hostname}")
+
+        return v
+
+
+class ConnectionUpdate(_CamelModel):
+    """Partial update for an existing connection."""
+    name: str | None = Field(None, min_length=1, max_length=255)
+    host: str | None = None
+    port: int | None = Field(None, ge=1, le=65535)
+    database: str | None = None
+    username: str | None = None
+    password: str | None = None
+    ssl_mode: str | None = Field(None, pattern="^(disable|require|verify-ca|verify-full)?$")
 
 
 class ConnectionResponse(BaseModel):

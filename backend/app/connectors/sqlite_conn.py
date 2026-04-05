@@ -21,9 +21,11 @@ class SQLiteConnector(BaseConnector):
         self._db_path = connection.database
         self._conn: aiosqlite.Connection | None = None
 
+    _MAX_ROWS = 5000
+
     async def connect(self) -> bool:
         try:
-            self._conn = await aiosqlite.connect(self._db_path)
+            self._conn = await aiosqlite.connect(self._db_path, timeout=10)
             self._conn.row_factory = aiosqlite.Row
             logger.info("Connected to SQLite: %s", self._db_path)
             return True
@@ -31,10 +33,11 @@ class SQLiteConnector(BaseConnector):
             logger.error("SQLite connection failed: %s", exc)
             raise
 
-    async def execute_query(self, query: str) -> tuple[list[str], list[dict[str, Any]]]:
+    async def _execute_query_impl(self, query: str) -> tuple[list[str], list[dict[str, Any]]]:
         if self._conn is None:
             await self.connect()
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Failed to establish database connection.")
 
         stripped = query.strip().upper()
         if not stripped.startswith("SELECT") and not stripped.startswith("WITH"):
@@ -44,7 +47,7 @@ class SQLiteConnector(BaseConnector):
 
         async with self._conn.execute(query) as cursor:
             columns = [desc[0] for desc in cursor.description] if cursor.description else []
-            raw_rows = await cursor.fetchall()
+            raw_rows = await cursor.fetchmany(self._MAX_ROWS)
             rows = [dict(row) for row in raw_rows]
 
             for row in rows:
@@ -57,7 +60,8 @@ class SQLiteConnector(BaseConnector):
     async def get_schema(self) -> dict[str, Any]:
         if self._conn is None:
             await self.connect()
-        assert self._conn is not None
+        if self._conn is None:
+            raise RuntimeError("Failed to establish database connection.")
 
         tables: dict[str, list[dict[str, Any]]] = {}
 

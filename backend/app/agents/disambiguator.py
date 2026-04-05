@@ -112,13 +112,14 @@ def _find_column_matches(term: str, schema_context: str) -> list[dict[str, str]]
     current_table = ""
 
     for line in schema_context.split("\n"):
-        table_match = re.match(r"^Table:\s+(\w+)", line.strip())
+        stripped = line.strip()
+        table_match = re.match(r"^Table:\s+(\w+)", stripped)
         if table_match:
             current_table = table_match.group(1)
             continue
 
-        if current_table and line.strip().startswith(" "):
-            col_match = re.match(r"^\s+(\w+):\s+(\w+)", line.strip())
+        if current_table and stripped and not stripped.startswith(("-", "=")):
+            col_match = re.match(r"^(\w+):\s+(\w+)", stripped)
             if col_match:
                 col_name = col_match.group(1)
                 col_type = col_match.group(2)

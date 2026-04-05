@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from app.api.schemas import ConnectionCreate, ConnectionResponse, ConnectionTestResult
+from app.api.schemas import ConnectionCreate, ConnectionResponse, ConnectionTestResult, ConnectionUpdate
 from app.connectors.factory import get_connector
 from app.core.deps import CurrentUser, DbSession
 from app.core.permissions import Permission, require_permission
@@ -69,6 +69,17 @@ async def create_connection(
     db.add(connection)
     await db.flush()
     await db.refresh(connection)
+
+    from app.services.audit import log_action
+    await log_action(
+        db,
+        user_id=current_user.user_id,
+        action="create_connection",
+        resource_type="connection",
+        resource_id=str(connection.id),
+        details={"name": body.name, "db_type": body.db_type, "host": body.host},
+    )
+
     logger.info("Created connection '%s' (%s) for user %s", body.name, body.db_type, user.id)
     return connection
 
@@ -95,7 +106,7 @@ async def test_connection(
 ) -> ConnectionTestResult:
     """Test an existing connection by connecting and introspecting its schema."""
     user = await require_permission(Permission.MANAGE_CONNECTIONS, current_user, db)
-    connection = await _load_connection(db, connection_id, user.id)
+    connection = await _load_connection(db, connection_id, user.id, user.organization_id or "")
 
     try:
         schema = await introspect_schema(connection)
@@ -143,7 +154,23 @@ async def test_connection(
         connection.is_connected = False
         await db.flush()
         logger.warning("Connection test failed for %s: %s", connection_id, exc)
-        return ConnectionTestResult(success=False, message=str(exc))
+        # Sanitize error: don't expose internal DB details, versions, or paths
+        error_str = str(exc).lower()
+        if "password" in error_str or "authentication" in error_str:
+            safe_msg = "Authentication failed. Check your username and password."
+        elif "refused" in error_str or "could not connect" in error_str:
+            safe_msg = "Connection refused. Check the host, port, and ensure the database is reachable."
+        elif "timeout" in error_str:
+            safe_msg = "Connection timed out. The database may be unreachable or behind a firewall."
+        elif "does not exist" in error_str or "unknown database" in error_str:
+            safe_msg = "Database not found. Check the database name."
+        elif "ssl" in error_str or "certificate" in error_str:
+            safe_msg = "SSL/TLS error. Contact your database administrator."
+        elif "too many connections" in error_str:
+            safe_msg = "Too many connections to the database. Try again later."
+        else:
+            safe_msg = "Connection failed. Please verify your connection settings."
+        return ConnectionTestResult(success=False, message=safe_msg)
 
 
 @router.post("/{connection_id}/schema", response_model=ConnectionTestResult)
@@ -154,7 +181,7 @@ async def refresh_schema(
 ) -> ConnectionTestResult:
     """Re-introspect the schema for an existing connection and update the cache."""
     user = await require_permission(Permission.MANAGE_CONNECTIONS, current_user, db)
-    connection = await _load_connection(db, connection_id, user.id)
+    connection = await _load_connection(db, connection_id, user.id, user.organization_id or "")
 
     try:
         schema = await introspect_schema(connection)
@@ -192,6 +219,56 @@ async def refresh_schema(
         return ConnectionTestResult(success=False, message=str(exc))
 
 
+@router.patch("/{connection_id}", response_model=ConnectionResponse)
+async def update_connection(
+    connection_id: uuid.UUID,
+    body: ConnectionUpdate,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> DatabaseConnection:
+    """Update an existing connection's settings (host, port, credentials, etc.)."""
+    from app.api.schemas import ConnectionUpdate
+    user = await require_permission(Permission.MANAGE_CONNECTIONS, current_user, db)
+    connection = await _load_connection(db, connection_id, user.id, user.organization_id or "")
+
+    if body.name is not None:
+        connection.name = body.name
+    if body.host is not None:
+        # Re-validate host for SSRF
+        from app.api.schemas import ConnectionCreate
+        ConnectionCreate.validate_host(body.host)
+        connection.host = body.host
+    if body.port is not None:
+        connection.port = body.port
+    if body.database is not None:
+        connection.database = body.database
+    if body.username is not None:
+        connection.username = body.username
+    if body.password is not None:
+        connection.encrypted_password = encrypt_value(body.password)
+
+    # Mark as needing re-test after credential change
+    connection.is_connected = False
+
+    await db.flush()
+    await db.refresh(connection)
+
+    from app.services.audit import log_action
+    await log_action(
+        db,
+        user_id=current_user.user_id,
+        action="update_connection",
+        resource_type="connection",
+        resource_id=str(connection_id),
+        details={"fields_updated": [k for k, v in body.model_dump(exclude_none=True).items()]},
+    )
+
+    await db.commit()
+    await db.refresh(connection)
+    logger.info("Updated connection '%s' for user %s", connection.name, user.id)
+    return connection
+
+
 @router.delete("/{connection_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_connection(
     connection_id: uuid.UUID,
@@ -200,7 +277,18 @@ async def delete_connection(
 ) -> None:
     """Delete a database connection."""
     user = await require_permission(Permission.MANAGE_CONNECTIONS, current_user, db)
-    connection = await _load_connection(db, connection_id, user.id)
+    connection = await _load_connection(db, connection_id, user.id, user.organization_id or "")
+
+    from app.services.audit import log_action
+    await log_action(
+        db,
+        user_id=current_user.user_id,
+        action="delete_connection",
+        resource_type="connection",
+        resource_id=str(connection_id),
+        details={"name": connection.name, "db_type": connection.db_type},
+    )
+
     await db.delete(connection)
 
 
@@ -216,7 +304,7 @@ async def scan_metrics(
     confidence, and ambiguity notes. Does NOT auto-create anything.
     """
     user = await require_permission(Permission.QUERY_DATA, current_user, db)
-    connection = await _load_connection(db, connection_id, user.id)
+    connection = await _load_connection(db, connection_id, user.id, user.organization_id or "")
 
     if not connection.schema_cache:
         raise HTTPException(status_code=400, detail="Schema not cached. Refresh the connection first.")
@@ -255,7 +343,7 @@ async def accept_metrics(
     """
     user = await require_permission(Permission.QUERY_DATA, current_user, db)
     org_id = user.organization_id or ""
-    connection = await _load_connection(db, connection_id, user.id)
+    connection = await _load_connection(db, connection_id, user.id, user.organization_id or "")
 
     metrics_data = body.get("metrics", [])
     if not metrics_data:
@@ -292,12 +380,20 @@ async def _load_connection(
     db: DbSession,
     connection_id: uuid.UUID,
     user_id: uuid.UUID,
+    org_id: str = "",
 ) -> DatabaseConnection:
-    """Load a connection and verify ownership."""
-    stmt = select(DatabaseConnection).where(
+    """Load a connection and verify ownership + org isolation.
+
+    Both user_id AND organization_id are checked to prevent cross-tenant access.
+    """
+    filters = [
         DatabaseConnection.id == connection_id,
         DatabaseConnection.user_id == user_id,
-    )
+    ]
+    if org_id:
+        filters.append(DatabaseConnection.organization_id == org_id)
+
+    stmt = select(DatabaseConnection).where(*filters)
     result = await db.execute(stmt)
     connection = result.scalar_one_or_none()
     if connection is None:
