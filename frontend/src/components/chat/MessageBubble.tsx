@@ -1,4 +1,4 @@
-import { AlertCircle, Bot, Bookmark, ChevronRight, Copy, Check, Download, Info, Maximize2, Shield, ShieldCheck, ShieldAlert, Table2, ThumbsUp, ThumbsDown, User } from "lucide-react";
+import { AlertCircle, Bot, Bookmark, ChevronRight, Copy, Check, Download, Info, Maximize2, Minus, Shield, ShieldCheck, ShieldAlert, Table2, ThumbsUp, ThumbsDown, TrendingDown, TrendingUp, User } from "lucide-react";
 import { useState, useCallback } from "react";
 import ReactMarkdown from "react-markdown";
 import { Button } from "@/components/ui/button";
@@ -80,10 +80,13 @@ export default function MessageBubble({ message }: MessageBubbleProps) {
         {/* Code block */}
         {message.codeBlock && <CodeBlock code={message.codeBlock} />}
 
+        {/* KPI Metric Card — big number display for single-value results */}
+        {message.metricCard && <MetricCardDisplay metric={message.metricCard} />}
+
         {/* Table data — collapsible (multiple supported) */}
         {message.tableDatas && message.tableDatas.length > 1
           ? message.tableDatas.map((td, i) => <CollapsibleTable key={i} data={td} />)
-          : message.tableData && <CollapsibleTable data={message.tableData} />
+          : message.tableData && !message.metricCard && <CollapsibleTable data={message.tableData} />
         }
 
         {/* Charts (multiple supported) */}
@@ -383,6 +386,40 @@ function FeedbackButtons({ messageId, existing }: {
             </button>
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+
+function MetricCardDisplay({ metric }: { metric: NonNullable<Message["metricCard"]> }) {
+  const TrendIcon = metric.changeDirection === "up" ? TrendingUp
+    : metric.changeDirection === "down" ? TrendingDown : Minus;
+
+  const trendColor = metric.changeDirection === "up" ? "text-emerald-400"
+    : metric.changeDirection === "down" ? "text-red-400" : "text-muted-foreground";
+
+  const trendBg = metric.changeDirection === "up" ? "bg-emerald-500/10"
+    : metric.changeDirection === "down" ? "bg-red-500/10" : "bg-muted/50";
+
+  return (
+    <div className="rounded-xl border bg-card p-5">
+      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+        {metric.label}
+      </p>
+      <div className="mt-2 flex items-baseline gap-3">
+        <span className="text-3xl font-bold tracking-tight">{metric.formatted}</span>
+        {metric.changePct !== undefined && (
+          <span className={cn("flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-medium", trendBg, trendColor)}>
+            <TrendIcon className="h-3 w-3" />
+            {metric.changePct > 0 ? "+" : ""}{metric.changePct}%
+          </span>
+        )}
+      </div>
+      {metric.previousFormatted && (
+        <p className="mt-1 text-xs text-muted-foreground">
+          Previous: {metric.previousFormatted}
+        </p>
       )}
     </div>
   );

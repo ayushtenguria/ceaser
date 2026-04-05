@@ -224,6 +224,8 @@ class FileUploadResponse(BaseModel):
     size_bytes: int
     column_info: dict[str, Any] | None = None
     excel_metadata: dict[str, Any] | None = None
+    preview_data: dict[str, Any] | None = None
+    """First 50 rows + column stats for instant data preview. Not stored in DB."""
     created_at: datetime
 
 

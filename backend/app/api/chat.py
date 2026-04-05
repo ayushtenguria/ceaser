@@ -623,6 +623,18 @@ async def chat(
         )
         logger.info("Relevant history: %d messages loaded (of %d total)", len(history_messages), len(prev_msgs))
 
+    # ── Inject previous query results for follow-up reference ────────
+    if body.conversation_id:
+        try:
+            from app.services.result_store import load_conversation_results, build_result_context
+            prev_results = await load_conversation_results(db, str(conversation.id))
+            result_context = build_result_context(prev_results)
+            if result_context:
+                schema_context += result_context
+                logger.info("Injected %d previous results into context", len(prev_results))
+        except Exception as exc:
+            logger.debug("Result context loading skipped: %s", exc)
+
     llm = get_llm(model=body.model, tier="heavy")
     llm_light = get_llm(tier="light")
 
@@ -713,6 +725,19 @@ async def chat(
             error=collected_error,
             summary=assistant_summary,
         )
+        # Save intermediate result as parquet for follow-up queries
+        if collected_table and not collected_error:
+            try:
+                from app.services.result_store import save_query_result
+                result_ref = await save_query_result(
+                    collected_table, org_id, str(conversation_id), body.message,
+                )
+                if result_ref and assistant_msg.table_data:
+                    assistant_msg.table_data["_result_ref"] = result_ref
+                    flag_modified(assistant_msg, "table_data")
+            except Exception as exc:
+                logger.debug("Result persistence skipped: %s", exc)
+
         db.add(assistant_msg)
         await db.flush()
 

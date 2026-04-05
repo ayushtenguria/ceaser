@@ -166,6 +166,13 @@ export function useChat() {
             case "verified":
               confidence = "high";
               break;
+            case "metric_card": {
+              const metricData = chunk.data;
+              updateMessage(currentConvId, assistantMessageId, {
+                metricCard: metricData,
+              });
+              break;
+            }
             case "disambiguation": {
               const disambigData = chunk.data;
               messageType = "text";

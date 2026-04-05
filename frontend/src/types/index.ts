@@ -76,6 +76,16 @@ export interface Message {
   confidence?: string;
   feedback?: { rating: "up" | "down"; correctionNote?: string; category?: string };
   disambiguationData?: any;
+  metricCard?: {
+    value: number;
+    label: string;
+    formatted: string;
+    unit: string;
+    previousValue?: number;
+    previousFormatted?: string;
+    changePct?: number;
+    changeDirection?: "up" | "down" | "flat";
+  };
   error?: string;
   createdAt: string;
 }

@@ -22,6 +22,55 @@ router = APIRouter(prefix="/files", tags=["files"])
 _UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
 _MAX_FILE_SIZE = 100 * 1024 * 1024
 
+_PREVIEW_ROWS = 50
+
+def _generate_preview(file_path: str, file_type: str) -> dict | None:
+    """Generate a data preview with first N rows + column statistics.
+
+    Returns: {columns: [{name, dtype, null_count, unique_count, sample}], rows: [...], total_rows: N}
+    """
+    import pandas as pd
+
+    try:
+        if file_type in ("csv", "tsv"):
+            sep = "\t" if file_type == "tsv" else ","
+            df = pd.read_csv(file_path, sep=sep, nrows=_PREVIEW_ROWS + 1)
+        elif file_type in ("excel",):
+            df = pd.read_excel(file_path, nrows=_PREVIEW_ROWS + 1)
+        else:
+            return None
+    except Exception:
+        return None
+
+    if df.empty:
+        return None
+
+    # Column stats
+    col_stats = []
+    for col in df.columns:
+        col_stats.append({
+            "name": str(col),
+            "dtype": str(df[col].dtype),
+            "null_count": int(df[col].isna().sum()),
+            "unique_count": int(df[col].nunique()),
+            "sample": str(df[col].dropna().iloc[0]) if not df[col].dropna().empty else None,
+        })
+
+    # Rows as list of dicts (preview only)
+    preview_rows = df.head(_PREVIEW_ROWS).fillna("").to_dict(orient="records")
+    for row in preview_rows:
+        for k, v in row.items():
+            if not isinstance(v, (str, int, float, bool, type(None))):
+                row[k] = str(v)
+
+    return {
+        "columns": col_stats,
+        "rows": preview_rows,
+        "total_rows": len(df),
+        "preview_rows": min(len(df), _PREVIEW_ROWS),
+    }
+
+
 _ALLOWED_EXTENSIONS: dict[str, str] = {
     ".csv": "csv",
     ".xlsx": "excel",
@@ -167,7 +216,24 @@ async def upload_file(
     except Exception as exc:
         logger.warning("File graph build failed (non-blocking): %s", exc)
 
-    return upload
+    # Generate preview data (first 50 rows + column stats) for instant UI preview
+    preview_data = None
+    try:
+        preview_data = _generate_preview(parse_path, file_type)
+    except Exception as exc:
+        logger.debug("Preview generation skipped: %s", exc)
+
+    # Return as dict so preview_data (not a DB field) can be included
+    return {
+        "id": upload.id,
+        "filename": upload.filename,
+        "file_type": upload.file_type,
+        "size_bytes": upload.size_bytes,
+        "column_info": upload.column_info,
+        "excel_metadata": upload.excel_metadata,
+        "preview_data": preview_data,
+        "created_at": upload.created_at,
+    }
 
 
 @router.get("/", response_model=list[FileUploadResponse])
@@ -212,3 +278,41 @@ async def delete_file(
         logger.warning("Could not delete file from storage: %s", exc)
 
     await db.delete(upload)
+
+
+@router.get("/{file_id}/status")
+async def get_upload_status(
+    file_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
+) -> dict:
+    """Poll processing status for a file upload.
+
+    Returns stage, progress percentage, and message for progressive UI feedback.
+    """
+    await require_permission(Permission.VIEW_DATA, current_user, db)
+
+    from app.services.upload_tracker import get_progress
+
+    progress = get_progress(str(file_id))
+    if progress:
+        return progress.to_dict()
+
+    # Check if file exists in DB (already processed)
+    stmt = select(FileUpload).where(FileUpload.id == file_id)
+    result = await db.execute(stmt)
+    upload = result.scalar_one_or_none()
+
+    if upload:
+        return {
+            "fileId": str(file_id),
+            "filename": upload.filename,
+            "stage": "done",
+            "progressPct": 100,
+            "message": "Processing complete",
+            "completed": True,
+            "error": None,
+            "elapsedSeconds": 0,
+        }
+
+    raise HTTPException(status_code=404, detail="Upload not found.")

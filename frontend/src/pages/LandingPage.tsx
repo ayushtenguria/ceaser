@@ -43,16 +43,17 @@ export default function LandingPage() {
         <div className="relative mx-auto max-w-4xl text-center">
           <div className="mb-6 inline-flex items-center gap-2 rounded-full border bg-card px-4 py-1.5 text-sm">
             <Sparkles className="h-4 w-4 text-primary" />
-            <span>AI-Powered Data Analytics for B2B Teams</span>
+            <span>Smarter with every query — AI that learns your business</span>
           </div>
           <h1 className="mb-6 text-5xl font-bold leading-tight tracking-tight md:text-6xl">
-            Stop waiting for data.
+            Your data analyst that
             <br />
-            <span className="text-primary">Start asking questions.</span>
+            <span className="text-primary">never sleeps.</span>
           </h1>
           <p className="mx-auto mb-10 max-w-2xl text-lg text-muted-foreground">
-            Connect your database or upload Excel files. Ask questions in plain English.
-            Get instant charts, tables, and AI-powered insights — no SQL, no coding, no data analyst needed.
+            Connect databases, upload Excel files, or both. Ask questions in plain English.
+            Get verified answers with confidence scores — not hallucinations.
+            The AI remembers your corrections and gets more accurate with every query.
           </p>
           <div className="flex items-center justify-center gap-4">
             <Button size="lg" className="h-12 px-8 text-base" onClick={() => navigate("/sign-up")}>
@@ -81,22 +82,33 @@ export default function LandingPage() {
               <div className="space-y-4">
                 <div className="flex justify-end">
                   <div className="rounded-2xl bg-primary px-4 py-2 text-sm text-primary-foreground">
-                    Show me top 10 customers by revenue
+                    What's our MRR this month?
                   </div>
                 </div>
                 <div className="flex gap-3">
                   <Bot className="mt-1 h-6 w-6 shrink-0 text-primary" />
-                  <div className="rounded-2xl bg-secondary px-4 py-3 text-sm">
-                    Here are your top 10 customers by total revenue. Meridian Financial leads with $812K,
-                    followed by Citadel Defense at $737K...
-                  </div>
-                </div>
-                <div className="ml-9 grid grid-cols-3 gap-3">
-                  {["Meridian Financial — $812K", "Citadel Defense — $737K", "Quantum Mfg — $623K"].map((item) => (
-                    <div key={item} className="rounded-lg border bg-card p-3 text-xs">
-                      {item}
+                  <div className="space-y-3 flex-1">
+                    <div className="rounded-2xl bg-secondary px-4 py-3 text-sm">
+                      Monthly Recurring Revenue is up 12.7% from last month, driven by 34 new Enterprise accounts.
                     </div>
-                  ))}
+                    {/* Metric Card */}
+                    <div className="rounded-xl border bg-card p-5">
+                      <p className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Monthly Recurring Revenue</p>
+                      <div className="mt-2 flex items-baseline gap-3">
+                        <span className="text-3xl font-bold">$54,300</span>
+                        <span className="flex items-center gap-1 rounded-full bg-emerald-500/10 px-2 py-0.5 text-xs font-medium text-emerald-400">
+                          <ChevronRight className="h-3 w-3 rotate-[-45deg]" />+12.7%
+                        </span>
+                      </div>
+                      <p className="mt-1 text-xs text-muted-foreground">Previous: $48,200</p>
+                    </div>
+                    {/* Confidence badge */}
+                    <div className="flex items-center gap-1.5 rounded-md border border-emerald-500/20 bg-emerald-500/5 px-2 py-1 text-xs text-emerald-400">
+                      <Shield className="h-3.5 w-3.5" />
+                      <span className="font-medium">High confidence</span>
+                      <span className="text-muted-foreground/70">— Verified query pattern</span>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
@@ -128,49 +140,49 @@ export default function LandingPage() {
 
           <div className="grid gap-6 md:grid-cols-2 lg:grid-cols-3">
             <FeatureCard
-              icon={MessageSquare}
-              title="Natural Language Queries"
-              description="Ask questions in plain English. Our AI generates SQL or Python code, executes it, and returns results instantly."
-            />
-            <FeatureCard
-              icon={LineChart}
-              title="Smart Visualizations"
-              description="Auto-selects the right chart type — bar, line, scatter, pie, histogram — based on your data patterns."
+              icon={Shield}
+              title="Verified Answers, Not Guesses"
+              description="Every answer comes with a confidence score. High confidence? Trust it. Medium? Review the reasoning trail. The AI shows you WHY it chose those tables and joins."
             />
             <FeatureCard
               icon={Brain}
-              title="Data Analyst Agent"
-              description="Ask strategic questions like 'how to increase revenue' — the AI runs multiple analyses and gives data-backed recommendations."
-            />
-            <FeatureCard
-              icon={FileSpreadsheet}
-              title="Excel Intelligence"
-              description="Upload Excel files with multiple sheets. Auto-detects headers, relationships, data quality issues, and lets you query across sheets."
-            />
-            <FeatureCard
-              icon={Globe}
-              title="Cross-Database Queries"
-              description="Query across multiple databases simultaneously. Perfect for microservice architectures where data lives in different DBs."
-            />
-            <FeatureCard
-              icon={BookOpen}
-              title="Reusable Notebooks"
-              description="Save your analysis as a notebook. Run it again with different data — same analysis, fresh results, every time."
-            />
-            <FeatureCard
-              icon={FileText}
-              title="Automated Reports"
-              description="Generate professional PDF reports from any conversation. Executive summary, charts, tables, and recommendations — all automated."
+              title="Smarter With Every Query"
+              description="Thumbs-down a wrong answer and it never makes the same mistake again. The AI learns your corrections, business terms, and metric definitions — permanently."
             />
             <FeatureCard
               icon={Layers}
-              title="Semantic Layer"
-              description="Define business metrics once — 'Revenue means subscription MRR only.' The AI uses your exact definitions, consistently."
+              title="'Revenue' Means One Thing"
+              description="Define metrics once, lock them. When 3 tables have 'revenue', Ceaser asks which one you mean — then remembers forever. No more inconsistent answers."
             />
             <FeatureCard
-              icon={Shield}
-              title="Enterprise Security"
-              description="Read-only queries enforced at 3 layers. Encrypted credentials. SOC2-ready audit logs. Role-based access control."
+              icon={Zap}
+              title="10M Rows in 2 Seconds"
+              description="Powered by DuckDB under the hood. Queries run directly on parquet files — no loading into memory. Cross-file JOINs across uploads work instantly."
+            />
+            <FeatureCard
+              icon={MessageSquare}
+              title="Ask, Don't Code"
+              description="Natural language to SQL or Python. The AI auto-selects the right approach, validates the query, and self-corrects errors — up to 3 repair attempts before giving up."
+            />
+            <FeatureCard
+              icon={LineChart}
+              title="KPI Cards & Smart Charts"
+              description="Single-metric queries render as big number cards with trend arrows. Multi-value queries auto-select the right chart. No configuration needed."
+            />
+            <FeatureCard
+              icon={FileSpreadsheet}
+              title="Excel Files, Enterprise Scale"
+              description="Upload CRM exports with 200+ columns. The AI selects only relevant columns, auto-corrects column name mismatches at runtime, and handles dirty data gracefully."
+            />
+            <FeatureCard
+              icon={Globe}
+              title="Cross-Source Intelligence"
+              description="JOIN across databases, Excel files, and CSVs in one query. Upload your Salesforce export, connect your Postgres — query them together."
+            />
+            <FeatureCard
+              icon={BookOpen}
+              title="Notebooks & Reports"
+              description="Save analyses as reusable notebooks. Generate PDF reports from any conversation. Schedule daily refreshes. Share with your team."
             />
           </div>
         </div>
@@ -291,8 +303,8 @@ export default function LandingPage() {
               answer="PostgreSQL, MySQL, and SQLite today. BigQuery and Snowflake connectors are coming soon. You can also upload Excel (.xlsx) and CSV files directly."
             />
             <FaqItem
-              question="How accurate are the SQL queries?"
-              answer="Our 4-layer accuracy pipeline (semantic layer, SQL validation, result verification, and self-correcting repair agent) achieves 99%+ accuracy on production databases. You can always inspect the generated SQL."
+              question="How accurate are the answers? Can I trust them?"
+              answer="Every answer includes a confidence score (high/medium/low) and a reasoning trail showing WHY those tables and joins were chosen. Our 4-layer accuracy pipeline validates SQL before execution, verifies results after, and auto-repairs errors. Thumbs-up a correct answer and it becomes a verified pattern — reused instantly next time. Thumbs-down and the AI never makes that mistake again."
             />
             <FaqItem
               question="Is my data secure?"
@@ -303,8 +315,12 @@ export default function LandingPage() {
               answer="Yes. Business and Enterprise plans support cross-database queries — ask questions that span multiple databases and Ceaser joins the results automatically."
             />
             <FaqItem
-              question="What's the difference between Ceaser and ChatGPT?"
-              answer="ChatGPT can't connect to your database or execute queries. Ceaser connects directly to your data, runs real SQL/Python, and returns actual results from your database — not hallucinated answers."
+              question="What's the difference between Ceaser and ChatGPT / Julius?"
+              answer="ChatGPT can't connect to your database. Julius connects but lacks a semantic layer — 'revenue' means different things on different days. Ceaser lets you lock metric definitions, shows confidence scores on every answer, learns from your corrections, and handles 10M-row files via DuckDB without loading them into memory. Built for enterprise trust, not demo day."
+            />
+            <FaqItem
+              question="Can it handle large files? My CRM export is 500K rows."
+              answer="Yes. Ceaser uses DuckDB to query parquet files directly — no loading into memory. A GROUP BY on 10M rows takes 2 seconds. Cross-file JOINs across multiple uploads work the same way. Upload your 500K-row Salesforce export and start querying immediately."
             />
             <FaqItem
               question="Do I need to know SQL?"
@@ -317,9 +333,10 @@ export default function LandingPage() {
       {/* CTA */}
       <section className="py-24 px-6">
         <div className="mx-auto max-w-3xl text-center">
-          <h2 className="mb-4 text-3xl font-bold">Ready to talk to your data?</h2>
+          <h2 className="mb-4 text-3xl font-bold">Your next data analyst doesn't need a salary.</h2>
           <p className="mb-8 text-lg text-muted-foreground">
-            Join teams who replaced their $10K/month data analysts with instant AI-powered insights.
+            Answers in seconds, not days. Verified accuracy, not hallucinations.
+            Starts at $0. No credit card. No setup.
           </p>
           <Button size="lg" className="h-12 px-8 text-base" onClick={() => navigate("/sign-up")}>
             Start Free — No Credit Card Required

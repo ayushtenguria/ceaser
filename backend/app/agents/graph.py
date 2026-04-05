@@ -410,6 +410,28 @@ async def _run_single_query(
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Run a single query through the compiled graph and yield stream chunks."""
 
+    # ── Cache fast-path ─────────────────────────────────────────────
+    # If this exact question was asked recently on the same data, return cached result.
+    data_source_id = connection_id or file_id or ""
+    try:
+        from app.services.query_cache import get_query_cache
+        cache = get_query_cache()
+        cached = cache.get(data_source_id, query)
+        if cached:
+            yield {"type": "status", "content": "Using cached result"}
+            if cached.get("sql"):
+                yield {"type": "sql", "content": cached["sql"]}
+            if cached.get("table_data"):
+                yield {"type": "table", "content": cached["table_data"]}
+            if cached.get("plotly_figure"):
+                yield {"type": "plotly", "content": cached["plotly_figure"]}
+            if cached.get("text"):
+                yield {"type": "text", "content": cached["text"]}
+            yield {"type": "confidence", "content": "high"}
+            return
+    except Exception:
+        pass
+
     # ── Verified query fast-path ────────────────────────────────────
     # If a matching verified query exists, skip the entire LLM pipeline
     # and execute the proven SQL directly.
@@ -535,6 +557,11 @@ async def _run_single_query(
                 if node_state.get("error"):
                     yield {"type": "status", "content": f"SQL error, retrying... ({node_state.get('retry_count', 0)}/{_MAX_RETRIES})"}
                 elif node_state.get("table_data"):
+                    # Check if this is a single KPI metric (1 row, 1-2 values)
+                    from app.services.metric_card import detect_metric_card
+                    metric = detect_metric_card(node_state["table_data"])
+                    if metric:
+                        yield {"type": "metric_card", "content": "", "data": metric}
                     yield {"type": "table", "content": node_state["table_data"]}
 
             elif node_name == "verify_results":
@@ -575,6 +602,10 @@ async def _run_single_query(
                     if node_state.get("plotly_figure"):
                         yield {"type": "plotly", "content": node_state["plotly_figure"]}
                     if node_state.get("table_data") and node_state["table_data"] != initial_state.get("table_data"):
+                        from app.services.metric_card import detect_metric_card
+                        metric = detect_metric_card(node_state["table_data"])
+                        if metric:
+                            yield {"type": "metric_card", "content": "", "data": metric}
                         yield {"type": "table", "content": node_state["table_data"]}
 
             elif node_name == "respond":
@@ -592,6 +623,27 @@ async def _run_single_query(
             yield {"type": "error", "content": "The analysis encountered a technical issue. Try rephrasing your question or asking for a simpler analysis."}
         else:
             yield {"type": "error", "content": error}
+    elif final_state and not final_state.get("error"):
+        # Cache successful results for future identical queries
+        try:
+            from app.services.query_cache import get_query_cache
+            cache_entry: dict[str, Any] = {"_data_source_id": data_source_id}
+            if final_state.get("sql_query"):
+                cache_entry["sql"] = final_state["sql_query"]
+            if final_state.get("table_data"):
+                cache_entry["table_data"] = final_state["table_data"]
+            if final_state.get("plotly_figure"):
+                cache_entry["plotly_figure"] = final_state["plotly_figure"]
+            # Capture the response text from the last AIMessage
+            msgs = final_state.get("messages", [])
+            for msg in reversed(msgs):
+                if isinstance(msg, AIMessage):
+                    cache_entry["text"] = msg.content
+                    break
+            if cache_entry.get("table_data") or cache_entry.get("text"):
+                get_query_cache().put(data_source_id, query, cache_entry)
+        except Exception:
+            pass
 
 
 async def run_agent(
