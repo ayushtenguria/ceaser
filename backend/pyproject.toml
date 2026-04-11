@@ -44,6 +44,9 @@ dependencies = [
     "psycopg2-binary>=2.9.0",
     "pymysql>=1.1.0",
     "aiosqlite>=0.20.0",
+
+    # AWS (SQS enqueue for async file processing)
+    "boto3>=1.35.0",
 ]
 
 [project.optional-dependencies]

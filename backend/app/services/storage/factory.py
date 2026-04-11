@@ -21,7 +21,14 @@ def get_storage() -> StorageBackend:
     settings = get_settings()
     backend = settings.storage_backend.lower()
 
-    if backend == "supabase":
+    if backend == "s3":
+        from app.services.storage.s3 import S3Storage
+        _instance = S3Storage(
+            bucket=settings.parquet_s3_bucket or settings.supabase_bucket,
+            region=settings.aws_region,
+        )
+        logger.info("Storage: S3 (%s, %s)", settings.parquet_s3_bucket, settings.aws_region)
+    elif backend == "supabase":
         from app.services.storage.supabase import SupabaseStorage
         _instance = SupabaseStorage(
             url=settings.supabase_url,

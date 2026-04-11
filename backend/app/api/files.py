@@ -7,20 +7,27 @@ import os
 import uuid
 from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, UploadFile, status
+from fastapi import APIRouter, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
 
 from app.api.schemas import FileUploadResponse
+from app.core.config import get_settings
 from app.core.deps import CurrentUser, DbSession
 from app.core.permissions import Permission, require_permission
 from app.db.models import FileUpload, User
 from app.services.file_parser import parse_file
+from app.services.processing_queue import verify_signature
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/files", tags=["files"])
 
 _UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
-_MAX_FILE_SIZE = 100 * 1024 * 1024
+# Sanity cap at 5 GB. Below this, upload lands in disk and gets queued for async processing.
+# Inline processing (pandas/openpyxl) is only attempted below HEAVY_PROCESSING_THRESHOLD — above
+# that the file is saved but left in `processing=queued` state for a background/Lambda worker.
+_MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
+_HEAVY_PROCESSING_THRESHOLD = 50 * 1024 * 1024
+_UPLOAD_CHUNK = 1 * 1024 * 1024
 
 _PREVIEW_ROWS = 50
 
@@ -129,66 +136,115 @@ async def upload_file(
     from app.services.storage import get_storage
 
     clean_filename = Path(file.filename).name
-    safe_name = f"{uuid.uuid4().hex}_{clean_filename}"
     org_id = user.organization_id or "default"
-    remote_path = f"uploads/{org_id}/{user.id}/{safe_name}"
 
-    contents = await file.read()
-    if len(contents) > _MAX_FILE_SIZE:
-        raise HTTPException(status_code=400, detail="File exceeds 100 MB limit.")
+    # Pre-assign the file_id so we can encode it into the S3 key — the Lambda
+    # parses the file_id from the key when S3 notifies SQS of ObjectCreated.
+    file_id = uuid.uuid4()
+    remote_path = f"uploads/{org_id}/{file_id}/{clean_filename}"
+
+    # Stream the upload to a temp file on disk, aborting as soon as we exceed the cap.
+    # This prevents OOM on the 2 GB instance when users upload huge files.
+    import tempfile
+    _temp_dir = tempfile.mkdtemp(prefix="ceaser_upload_")
+    parse_path = str(Path(_temp_dir) / clean_filename)
+    total_bytes = 0
+    try:
+        with open(parse_path, "wb") as out:
+            while True:
+                chunk = await file.read(_UPLOAD_CHUNK)
+                if not chunk:
+                    break
+                total_bytes += len(chunk)
+                if total_bytes > _MAX_FILE_SIZE:
+                    import shutil
+                    shutil.rmtree(_temp_dir, ignore_errors=True)
+                    raise HTTPException(
+                        status_code=413,
+                        detail=(
+                            f"File exceeds {_MAX_FILE_SIZE // 1024 // 1024 // 1024} GB limit."
+                        ),
+                    )
+                out.write(chunk)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        import shutil
+        shutil.rmtree(_temp_dir, ignore_errors=True)
+        logger.exception("Upload stream failed: %s", exc)
+        raise HTTPException(status_code=500, detail="Upload failed.")
 
     storage = get_storage()
-    stored_path = await storage.upload(contents, remote_path)
-    logger.info("Saved uploaded file: %s (%d bytes)", stored_path, len(contents))
+    # S3 backend supports streaming upload from disk (no in-memory bytes).
+    # Other backends fall back to reading bytes.
+    if hasattr(storage, "upload_file"):
+        await storage.upload_file(parse_path, remote_path)
+    else:
+        with open(parse_path, "rb") as f:
+            contents = f.read()
+        await storage.upload(contents, remote_path)
+        del contents
+    logger.info("Uploaded %s (%d bytes) → %s", file.filename, total_bytes, remote_path)
 
-    local_path = await storage.download_url(remote_path)
-    dest_path = Path(local_path) if not local_path.startswith("http") else None
-
-    import tempfile
-    _temp_dir = None
-    parse_path = str(dest_path) if dest_path else ""
-    if not dest_path:
-        _temp_dir = tempfile.mkdtemp(prefix="ceaser_upload_")
-        parse_path = str(Path(_temp_dir) / safe_name)
-        Path(parse_path).write_bytes(contents)
+    # Files above the inline threshold are deferred to the Lambda pipeline
+    # which is triggered automatically by S3 ObjectCreated events → SQS → Lambda.
+    # No manual enqueue needed when storage_backend is s3.
+    use_async_pipeline = (
+        total_bytes > _HEAVY_PROCESSING_THRESHOLD
+        and get_settings().storage_backend.lower() == "s3"
+    )
+    skip_heavy = total_bytes > _HEAVY_PROCESSING_THRESHOLD
 
     column_info: dict | None = None
-    try:
-        _, column_info = parse_file(parse_path, file_type)
-    except Exception as exc:
-        logger.warning("Could not parse uploaded file: %s", exc)
+    if not skip_heavy:
+        try:
+            _, column_info = parse_file(parse_path, file_type)
+        except Exception as exc:
+            logger.warning("Could not parse uploaded file: %s", exc)
+    else:
+        column_info = {
+            "deferred": True,
+            "reason": "file_too_large_for_inline_processing",
+            "size_bytes": total_bytes,
+        }
 
     excel_context = None
     code_preamble = None
     parquet_paths_data = None
     excel_metadata = None
 
-    try:
-        from app.agents.excel.orchestrator import process_excel_upload
-        from app.core.deps import get_llm
-        llm = get_llm()
-        excel_result = await process_excel_upload(parse_path, llm, org_id=org_id)
-        excel_context = excel_result.get("excel_context")
-        code_preamble = excel_result.get("code_preamble")
-        parquet_paths_data = excel_result.get("parquet_paths")
+    if not skip_heavy:
+        try:
+            from app.agents.excel.orchestrator import process_excel_upload
+            from app.core.deps import get_llm
+            llm = get_llm()
+            excel_result = await process_excel_upload(parse_path, llm, org_id=org_id)
+            excel_context = excel_result.get("excel_context")
+            code_preamble = excel_result.get("code_preamble")
+            parquet_paths_data = excel_result.get("parquet_paths")
+            excel_metadata = {
+                "insight": excel_result.get("insight"),
+                "quality_report": excel_result.get("quality_report"),
+                "relationships": excel_result.get("relationships"),
+            }
+            logger.info("Excel processing complete for %s", file.filename)
+        except Exception as exc:
+            logger.warning("Excel processing failed (file still saved): %s", exc)
+    else:
         excel_metadata = {
-            "insight": excel_result.get("insight"),
-            "quality_report": excel_result.get("quality_report"),
-            "relationships": excel_result.get("relationships"),
+            "deferred": True,
+            "reason": "file_too_large_for_inline_processing",
         }
-        logger.info("Excel processing complete for %s", file.filename)
-    except Exception as exc:
-        logger.warning("Excel processing failed (file still saved): %s", exc)
-    finally:
-        if _temp_dir:
-            import shutil
-            shutil.rmtree(_temp_dir, ignore_errors=True)
+
+    import shutil
+    shutil.rmtree(_temp_dir, ignore_errors=True)
 
     upload = FileUpload(
+        id=file_id,
         filename=file.filename,
         file_type=file_type,
         file_path=remote_path,
-        size_bytes=len(contents),
+        size_bytes=total_bytes,
         organization_id=user.organization_id or current_user.org_id or "",
         user_id=user.id,
         column_info=column_info,
@@ -196,6 +252,7 @@ async def upload_file(
         code_preamble=code_preamble,
         parquet_paths=parquet_paths_data,
         excel_metadata=excel_metadata,
+        processing_status=("processing" if use_async_pipeline else "ready"),
     )
     db.add(upload)
     await db.flush()
@@ -216,12 +273,14 @@ async def upload_file(
     except Exception as exc:
         logger.warning("File graph build failed (non-blocking): %s", exc)
 
-    # Generate preview data (first 50 rows + column stats) for instant UI preview
+    # Generate preview data (first 50 rows + column stats) for instant UI preview.
+    # Skipped for files above the heavy-processing threshold OR when temp file is gone.
     preview_data = None
-    try:
-        preview_data = _generate_preview(parse_path, file_type)
-    except Exception as exc:
-        logger.debug("Preview generation skipped: %s", exc)
+    if not skip_heavy and Path(parse_path).exists():
+        try:
+            preview_data = _generate_preview(parse_path, file_type)
+        except Exception as exc:
+            logger.debug("Preview generation skipped: %s", exc)
 
     # Return as dict so preview_data (not a DB field) can be included
     return {
@@ -232,8 +291,49 @@ async def upload_file(
         "column_info": upload.column_info,
         "excel_metadata": upload.excel_metadata,
         "preview_data": preview_data,
+        "processing_status": upload.processing_status,
         "created_at": upload.created_at,
     }
+
+
+@router.post("/{file_id}/processed", include_in_schema=False)
+async def processed_callback(
+    file_id: uuid.UUID,
+    request: Request,
+    db: DbSession,
+) -> dict:
+    """Lambda → backend callback. Auth: HMAC-SHA256 of the raw body in X-Ceaser-Signature."""
+    body = await request.body()
+    sig = request.headers.get("X-Ceaser-Signature", "")
+    if not verify_signature(body, sig):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    import json
+    try:
+        payload = json.loads(body)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    stmt = select(FileUpload).where(FileUpload.id == file_id)
+    result = await db.execute(stmt)
+    upload = result.scalar_one_or_none()
+    if upload is None:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    status_val = payload.get("status", "ready")
+    upload.processing_status = status_val
+    if status_val == "failed":
+        upload.processing_error = payload.get("error", "unknown")
+    else:
+        ci = payload.get("column_info")
+        if ci:
+            upload.column_info = ci
+        pk = payload.get("parquet_s3_key")
+        if pk:
+            upload.parquet_s3_key = pk
+    await db.flush()
+    logger.info("File %s processed: status=%s", file_id, status_val)
+    return {"ok": True}
 
 
 @router.get("/", response_model=list[FileUploadResponse])

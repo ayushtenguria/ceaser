@@ -1,0 +1,47 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+
+region        = "us-east-1"
+instance_type = "t4g.small"
+
+domain_name = "yourdomain.com"
+subdomain   = "api"
+
+# Set true only if no Route53 hosted zone exists yet for domain_name.
+# If true, after apply, copy the `route53_nameservers` output to your registrar.
+create_route53_zone = false
+
+# cat ~/.ssh/id_ed25519.pub
+ssh_public_key = "ssh-ed25519 AAAA... you@laptop"
+
+# Lock this to your IP once set up: "$(curl -s ifconfig.me)/32"
+ssh_allowed_cidr = "0.0.0.0/0"
+
+# Public repo:  "https://github.com/you/ceaser.git"
+# Private repo: "https://<github-pat>@github.com/you/ceaser.git"
+git_repo_url = "https://github.com/you/ceaser.git"
+git_branch   = "main"
+
+# Backend env vars rendered into backend/.env on the instance.
+# DATABASE_URL and REDIS_URL are injected automatically — do not set here.
+env_vars = {
+  GEMINI_API_KEY        = "..."
+  GEMINI_MODEL          = "gemini-2.5-flash"
+  GEMINI_MODEL_LIGHT    = "gemini-2.0-flash-lite"
+
+  CLERK_PUBLISHABLE_KEY = "pk_live_..."
+  CLERK_SECRET_KEY      = "sk_live_..."
+  CLERK_JWKS_URL        = "https://xxx.clerk.accounts.dev/.well-known/jwks.json"
+
+  ENCRYPTION_KEY        = "generate-with: python -c 'from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())'"
+
+  CORS_ORIGINS          = "[\"https://app.yourdomain.com\"]"
+  DEV_MODE              = "false"
+
+  NEO4J_URI      = "neo4j+s://xxx.databases.neo4j.io"
+  NEO4J_USERNAME = "neo4j"
+  NEO4J_PASSWORD = "..."
+
+  SUPER_ADMIN_EMAILS = "[\"you@example.com\"]"
+
+  STORAGE_BACKEND = "local"
+}

@@ -226,6 +226,7 @@ class FileUploadResponse(BaseModel):
     excel_metadata: dict[str, Any] | None = None
     preview_data: dict[str, Any] | None = None
     """First 50 rows + column stats for instant data preview. Not stored in DB."""
+    processing_status: str = "ready"
     created_at: datetime
 
 

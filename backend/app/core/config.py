@@ -85,6 +85,13 @@ class Settings(BaseSettings):
     supabase_service_key: str = ""
     supabase_bucket: str = "ceaser-files"
 
+    # Async file-processing pipeline (Lambda via SQS). Leave empty to fall back
+    # to inline processing for small files only.
+    aws_region: str = "us-east-1"
+    sqs_queue_url: str = ""
+    hmac_shared_secret: str = ""
+    parquet_s3_bucket: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

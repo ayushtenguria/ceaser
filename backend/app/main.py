@@ -29,6 +29,20 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     os.makedirs("uploads", exist_ok=True)
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        # Idempotent column additions — create_all only adds new tables, not
+        # new columns on existing tables. These run on every startup but are
+        # no-ops once the columns exist.
+        from sqlalchemy import text
+        await conn.execute(text(
+            "ALTER TABLE file_uploads "
+            "ADD COLUMN IF NOT EXISTS processing_status VARCHAR(32) NOT NULL DEFAULT 'pending'"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS processing_error TEXT"
+        ))
+        await conn.execute(text(
+            "ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS parquet_s3_key TEXT"
+        ))
     logger.info("Database tables ensured.")
     try:
         from app.services.memory_graph import ensure_vector_index
