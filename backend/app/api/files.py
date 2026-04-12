@@ -22,11 +22,7 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/files", tags=["files"])
 
 _UPLOAD_DIR = Path(__file__).resolve().parent.parent.parent / "uploads"
-# Sanity cap at 5 GB. Below this, upload lands in disk and gets queued for async processing.
-# Inline processing (pandas/openpyxl) is only attempted below HEAVY_PROCESSING_THRESHOLD — above
-# that the file is saved but left in `processing=queued` state for a background/Lambda worker.
 _MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
-_HEAVY_PROCESSING_THRESHOLD = 50 * 1024 * 1024
 _UPLOAD_CHUNK = 1 * 1024 * 1024
 
 _PREVIEW_ROWS = 50
@@ -186,34 +182,25 @@ async def upload_file(
         del contents
     logger.info("Uploaded %s (%d bytes) → %s", file.filename, total_bytes, remote_path)
 
-    # Files above the inline threshold are deferred to the Lambda pipeline
-    # which is triggered automatically by S3 ObjectCreated events → SQS → Lambda.
-    # No manual enqueue needed when storage_backend is s3.
-    use_async_pipeline = (
-        total_bytes > _HEAVY_PROCESSING_THRESHOLD
-        and get_settings().storage_backend.lower() == "s3"
-    )
-    skip_heavy = total_bytes > _HEAVY_PROCESSING_THRESHOLD
+    # When S3 is the storage backend, ALL files go through the Lambda pipeline
+    # (S3 ObjectCreated → SQS → Lambda) for consistent processing. The upload
+    # endpoint only generates a lightweight preview for instant UI feedback.
+    # For non-S3 backends (local dev), we still process inline as a fallback.
+    use_lambda = get_settings().storage_backend.lower() == "s3"
 
     column_info: dict | None = None
-    if not skip_heavy:
-        try:
-            _, column_info = parse_file(parse_path, file_type)
-        except Exception as exc:
-            logger.warning("Could not parse uploaded file: %s", exc)
-    else:
-        column_info = {
-            "deferred": True,
-            "reason": "file_too_large_for_inline_processing",
-            "size_bytes": total_bytes,
-        }
-
     excel_context = None
     code_preamble = None
     parquet_paths_data = None
     excel_metadata = None
 
-    if not skip_heavy:
+    if not use_lambda:
+        # Local/dev fallback — process inline
+        try:
+            _, column_info = parse_file(parse_path, file_type)
+        except Exception as exc:
+            logger.warning("Could not parse uploaded file: %s", exc)
+
         try:
             from app.agents.excel.orchestrator import process_excel_upload
             from app.core.deps import get_llm
@@ -230,11 +217,14 @@ async def upload_file(
             logger.info("Excel processing complete for %s", file.filename)
         except Exception as exc:
             logger.warning("Excel processing failed (file still saved): %s", exc)
-    else:
-        excel_metadata = {
-            "deferred": True,
-            "reason": "file_too_large_for_inline_processing",
-        }
+
+    # Generate preview data (first 50 rows) for instant UI feedback regardless
+    # of pipeline path — this is lightweight and doesn't block the response.
+    preview_data = None
+    try:
+        preview_data = _generate_preview(parse_path, file_type)
+    except Exception as exc:
+        logger.debug("Preview generation skipped: %s", exc)
 
     import shutil
     shutil.rmtree(_temp_dir, ignore_errors=True)
@@ -252,37 +242,28 @@ async def upload_file(
         code_preamble=code_preamble,
         parquet_paths=parquet_paths_data,
         excel_metadata=excel_metadata,
-        processing_status=("processing" if use_async_pipeline else "ready"),
+        processing_status=("processing" if use_lambda else "ready"),
     )
     db.add(upload)
     await db.flush()
     await db.refresh(upload)
 
-    try:
-        from app.services.schema_graph import build_file_graph
-        await build_file_graph(
-            file_id=str(upload.id),
-            org_id=upload.organization_id,
-            filename=file.filename,
-            conversation_id=None,
-            uploaded_by=str(user.id),
-            column_info=column_info,
-            parquet_paths=parquet_paths_data,
-            row_count=column_info.get("row_count", 0) if column_info else 0,
-        )
-    except Exception as exc:
-        logger.warning("File graph build failed (non-blocking): %s", exc)
-
-    # Generate preview data (first 50 rows + column stats) for instant UI preview.
-    # Skipped for files above the heavy-processing threshold OR when temp file is gone.
-    preview_data = None
-    if not skip_heavy and Path(parse_path).exists():
+    if not use_lambda and column_info:
         try:
-            preview_data = _generate_preview(parse_path, file_type)
+            from app.services.schema_graph import build_file_graph
+            await build_file_graph(
+                file_id=str(upload.id),
+                org_id=upload.organization_id,
+                filename=file.filename,
+                conversation_id=None,
+                uploaded_by=str(user.id),
+                column_info=column_info,
+                parquet_paths=parquet_paths_data,
+                row_count=column_info.get("row_count", 0) if column_info else 0,
+            )
         except Exception as exc:
-            logger.debug("Preview generation skipped: %s", exc)
+            logger.warning("File graph build failed (non-blocking): %s", exc)
 
-    # Return as dict so preview_data (not a DB field) can be included
     return {
         "id": upload.id,
         "filename": upload.filename,
@@ -331,6 +312,38 @@ async def processed_callback(
         pk = payload.get("parquet_s3_key")
         if pk:
             upload.parquet_s3_key = pk
+            # Generate code_preamble using the ceaser:// protocol reference.
+            # These are resolved to real presigned URLs at sandbox execution time.
+            stem = Path(upload.filename).stem
+            safe_name = stem.replace(" ", "_").replace("-", "_").lower()
+            row_count = ci.get("row_count", 0) if ci else 0
+            lines = ["import pandas as pd", "import numpy as np", "import plotly.express as px", ""]
+            if row_count > 100_000:
+                lines.append("import duckdb")
+                lines.append(f"# NOTE: This file has {row_count:,} rows — use duckdb.sql() for aggregations")
+                lines.append("")
+                lines.append(f'{safe_name} = pd.read_parquet("ceaser://{pk}")  # WARNING: {row_count:,} rows — prefer duckdb.sql() for aggregations')
+            else:
+                lines.append(f'{safe_name} = pd.read_parquet("ceaser://{pk}")')
+            upload.code_preamble = "\n".join(lines)
+
+        # Build the file graph for Graph RAG
+        if ci:
+            try:
+                from app.services.schema_graph import build_file_graph
+                await build_file_graph(
+                    file_id=str(upload.id),
+                    org_id=upload.organization_id,
+                    filename=upload.filename,
+                    conversation_id=None,
+                    uploaded_by=str(upload.user_id),
+                    column_info=ci,
+                    parquet_paths=None,
+                    row_count=ci.get("row_count", 0) if ci else 0,
+                )
+            except Exception as exc:
+                logger.warning("File graph build failed (non-blocking): %s", exc)
+
     await db.flush()
     logger.info("File %s processed: status=%s", file_id, status_val)
     return {"ok": True}

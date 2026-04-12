@@ -101,7 +101,17 @@ def _column_info(df, total_rows: int, engine: str = "") -> dict[str, Any]:
         series = df[col]
         try:
             samples = series.dropna().unique()[:5].tolist()
-            sample_values = [v.item() if hasattr(v, "item") else v for v in samples]
+            safe = []
+            for v in samples:
+                if hasattr(v, "isoformat"):
+                    safe.append(v.isoformat())
+                elif hasattr(v, "item"):
+                    safe.append(v.item())
+                elif isinstance(v, (str, int, float, bool, type(None))):
+                    safe.append(v)
+                else:
+                    safe.append(str(v))
+            sample_values = safe
         except Exception:
             sample_values = []
         cols.append({

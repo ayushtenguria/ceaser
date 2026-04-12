@@ -63,9 +63,17 @@ def _extract_column_info(df: pd.DataFrame) -> dict[str, Any]:
         }
         try:
             samples = series.dropna().unique()[:5].tolist()
-            col_meta["sample_values"] = [
-                v.item() if hasattr(v, "item") else v for v in samples
-            ]
+            safe = []
+            for v in samples:
+                if hasattr(v, "isoformat"):
+                    safe.append(v.isoformat())
+                elif hasattr(v, "item"):
+                    safe.append(v.item())
+                elif isinstance(v, (str, int, float, bool, type(None))):
+                    safe.append(v)
+                else:
+                    safe.append(str(v))
+            col_meta["sample_values"] = safe
         except Exception:
             col_meta["sample_values"] = []
 

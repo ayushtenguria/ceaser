@@ -86,10 +86,15 @@ async def _verify_org_file(db: DbSession, file_id: uuid.UUID, org_id: str) -> Fi
 
 async def _verify_org_conversation(db: DbSession, conversation_id: uuid.UUID, org_id: str) -> Conversation:
     """Load a conversation and verify it belongs to a user in the given org."""
+    org_filter = (
+        User.organization_id.is_(None) | (User.organization_id == "")
+        if not org_id
+        else User.organization_id == org_id
+    )
     stmt = (
         select(Conversation)
         .join(User, Conversation.user_id == User.id)
-        .where(Conversation.id == conversation_id, User.organization_id == org_id)
+        .where(Conversation.id == conversation_id, org_filter)
     )
     result = await db.execute(stmt)
     conv = result.scalar_one_or_none()

@@ -154,10 +154,14 @@ resource "aws_lambda_function" "excel_processor" {
   memory_size   = 3008  # default account quota; request AWS Support increase for up to 10240
   architectures = ["arm64"]
 
+  ephemeral_storage {
+    size = 4096 # /tmp — need room for source file + parquet output + temp buffers
+  }
+
   environment {
     variables = {
       PARQUET_BUCKET       = aws_s3_bucket.uploads.bucket
-      BACKEND_CALLBACK_URL = "https://${local.api_fqdn}"
+      BACKEND_CALLBACK_URL = "https://${local.api_fqdn}/api/v1"
       HMAC_SHARED_SECRET   = random_password.hmac_secret.result
     }
   }
