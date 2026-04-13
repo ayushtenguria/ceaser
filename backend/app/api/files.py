@@ -238,8 +238,27 @@ async def upload_file(
 
     shutil.rmtree(_temp_dir, ignore_errors=True)
 
-    # File is immediately ready — column_info gives the agent enough context
-    # to answer questions. Lambda enriches with parquet in the background.
+    # Generate code_preamble from the raw uploaded file so the agent knows
+    # how to load it. When Lambda finishes parquet conversion, the callback
+    # updates code_preamble to use the parquet path instead.
+    if not code_preamble:
+        stem = Path(file.filename).stem
+        safe_name = stem.replace(" ", "_").replace("-", "_").lower()
+        row_count = column_info.get("row_count", 0) if column_info else 0
+        lines = [
+            "import pandas as pd",
+            "import numpy as np",
+            "import plotly.express as px",
+            "",
+        ]
+        if row_count > 100_000:
+            lines.append("import duckdb")
+            lines.append(f"# NOTE: {row_count:,} rows — use duckdb.sql() for aggregations")
+            lines.append("")
+        read_fn = "pd.read_csv" if file_type == "csv" else "pd.read_excel"
+        lines.append(f'{safe_name} = {read_fn}("ceaser://{remote_path}")')
+        code_preamble = "\n".join(lines)
+
     upload = FileUpload(
         id=file_id,
         filename=file.filename,
