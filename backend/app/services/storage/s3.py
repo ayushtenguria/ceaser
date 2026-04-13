@@ -66,11 +66,15 @@ class S3Storage(StorageBackend):
 
     async def download_url(self, remote_path: str) -> str:
         import asyncio
+        from urllib.parse import quote
 
+        # URL-encode the key (spaces → %20) while preserving path separators.
+        # Boto3 presigned URLs need the encoded key to produce valid HTTP URLs.
+        encoded_key = quote(remote_path, safe="/")
         url = await asyncio.to_thread(
             self._client.generate_presigned_url,
             "get_object",
-            Params={"Bucket": self._bucket, "Key": remote_path},
+            Params={"Bucket": self._bucket, "Key": encoded_key},
             ExpiresIn=_SIGNED_URL_EXPIRY,
         )
         return url

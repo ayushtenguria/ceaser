@@ -134,12 +134,13 @@ async def upload_file(
     from app.services.storage import get_storage
 
     clean_filename = Path(file.filename).name
-    org_id = user.organization_id or "default"
+    db_org_id = user.organization_id or current_user.org_id or ""
+    storage_org_id = db_org_id or "default"  # S3 paths can't have empty segments
 
     # Pre-assign the file_id so we can encode it into the S3 key — the Lambda
     # parses the file_id from the key when S3 notifies SQS of ObjectCreated.
     file_id = uuid.uuid4()
-    remote_path = f"uploads/{org_id}/{file_id}/{clean_filename}"
+    remote_path = f"uploads/{storage_org_id}/{file_id}/{clean_filename}"
 
     # Stream the upload to a temp file on disk, aborting as soon as we exceed the cap.
     # This prevents OOM on the 2 GB instance when users upload huge files.
@@ -215,7 +216,7 @@ async def upload_file(
             from app.core.deps import get_llm
 
             llm = get_llm()
-            excel_result = await process_excel_upload(parse_path, llm, org_id=org_id)
+            excel_result = await process_excel_upload(parse_path, llm, org_id=db_org_id)
             excel_context = excel_result.get("excel_context")
             code_preamble = excel_result.get("code_preamble")
             parquet_paths_data = excel_result.get("parquet_paths")
@@ -265,7 +266,7 @@ async def upload_file(
         file_type=file_type,
         file_path=remote_path,
         size_bytes=total_bytes,
-        organization_id=user.organization_id or current_user.org_id or "",
+        organization_id=db_org_id,
         user_id=user.id,
         column_info=column_info,
         excel_context=excel_context,
@@ -401,11 +402,12 @@ async def processed_callback(
 async def list_files(current_user: CurrentUser, db: DbSession) -> list[FileUpload]:
     """List all files uploaded by the current user."""
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
-    stmt = (
-        select(FileUpload)
-        .where(FileUpload.organization_id == (user.organization_id or current_user.org_id or ""))
-        .order_by(FileUpload.created_at.desc())
-    )
+    org_id = user.organization_id or current_user.org_id or ""
+    if org_id:
+        org_filter = FileUpload.organization_id == org_id
+    else:
+        org_filter = (FileUpload.organization_id == "") | (FileUpload.organization_id.is_(None))
+    stmt = select(FileUpload).where(org_filter).order_by(FileUpload.created_at.desc())
     result = await db.execute(stmt)
     return list(result.scalars().all())
 

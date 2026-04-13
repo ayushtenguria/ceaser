@@ -141,7 +141,7 @@ def _build_runner_script(user_code: str, figure_path: str) -> str:
             _fig_clean = _decode_bdata(_fig_dict)
             with open({figure_path!r}, "w") as _f:
                 _json.dump(_fig_clean, _f, default=str)
-        except NameError:
+        except (NameError, AttributeError, TypeError):
             pass
     """)
 

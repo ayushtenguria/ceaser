@@ -195,7 +195,7 @@ async def resolve_ceaser_refs(code: str) -> str:
 
     storage = get_storage()
 
-    pattern = re.compile(r'ceaser://([^\s"\']+)')
+    pattern = re.compile(r'ceaser://([^"\']+)')
     matches = pattern.findall(code)
 
     if not matches:

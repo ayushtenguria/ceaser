@@ -193,7 +193,11 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
                 stripped = line.strip()
                 if not stripped:
                     continue  # skip blank lines — don't break
-                if stripped.startswith(("import ", "from ")) or "= pd.read_parquet(" in stripped:
+                if (
+                    stripped.startswith(("import ", "from "))
+                    or "= pd.read_" in stripped
+                    or stripped.startswith("#")
+                ):
                     if stripped not in preamble_lines:
                         preamble_lines.append(stripped)
                 elif "→" in stripped or "CROSS" in stripped or "RELATIONSHIP" in stripped:
