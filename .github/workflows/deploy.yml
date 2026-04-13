@@ -38,7 +38,7 @@ jobs:
           SSH_USER: ${{ secrets.DEPLOY_USER || 'ubuntu' }}
         run: |
           ssh -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" \
-            'sudo /opt/ceaser/deploy.sh'
+            'cd /opt/ceaser && sudo git fetch origin main && sudo git reset --hard origin/main && sudo /opt/ceaser/deploy.sh'
 
       - name: Health check
         env:
