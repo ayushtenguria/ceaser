@@ -37,8 +37,22 @@ jobs:
           SSH_HOST: ${{ secrets.DEPLOY_HOST }}
           SSH_USER: ${{ secrets.DEPLOY_USER || 'ubuntu' }}
         run: |
-          ssh -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" \
-            'cd /opt/ceaser && sudo git fetch origin main && sudo git reset --hard origin/main && sudo /opt/ceaser/deploy.sh'
+          ssh -o StrictHostKeyChecking=yes "$SSH_USER@$SSH_HOST" bash -s <<'REMOTE'
+            # Find the repo dir — deploy.sh is a symlink or uses a known path
+            REPO_DIR=$(grep -oP 'cd\s+\K\S+' /opt/ceaser/deploy.sh 2>/dev/null | head -1)
+            if [ -z "$REPO_DIR" ]; then
+              # Fallback: search common locations
+              for d in /home/ubuntu/ceaser /srv/ceaser /opt/ceaser/repo; do
+                [ -d "$d/.git" ] && REPO_DIR="$d" && break
+              done
+            fi
+            if [ -n "$REPO_DIR" ] && [ -d "$REPO_DIR/.git" ]; then
+              cd "$REPO_DIR"
+              sudo git fetch origin main
+              sudo git reset --hard origin/main
+            fi
+            sudo /opt/ceaser/deploy.sh
+          REMOTE
 
       - name: Health check
         env:
