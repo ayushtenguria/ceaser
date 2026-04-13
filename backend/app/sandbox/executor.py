@@ -1,4 +1,8 @@
-"""Sandboxed Python code execution via subprocess with timeout."""
+"""Sandboxed Python code execution — Lambda or local subprocess.
+
+When SANDBOX_LAMBDA_FUNCTION is configured, code is executed on AWS Lambda
+(up to 10GB RAM). Otherwise falls back to a local subprocess on EC2.
+"""
 
 from __future__ import annotations
 
@@ -30,48 +34,18 @@ _PYTHON_EXECUTABLE = sys.executable
 
 
 def _sanitize_error(text: str) -> str:
-    """Strip signed URLs, tokens, and internal file paths from error text.
-
-    Prevents Supabase signed URLs and server-side paths from leaking to
-    the frontend or being stored in the database.
-    """
+    """Strip signed URLs, tokens, and internal file paths from error text."""
     import re
 
-    # Strip full URLs (signed Supabase URLs, etc.)
     text = re.sub(
         r'https?://[^\s"\')\]]+',
         "[STORAGE_URL]",
         text,
     )
-    # Strip token parameters
     text = re.sub(r'token=[^\s&"\']+', "token=***", text)
-    # Strip absolute server paths
     text = re.sub(r'/(?:Users|home|var|tmp|private)[^\s"\')\]:]+', "[PATH]", text)
-    # Strip ceaser:// refs (shouldn't appear in errors, but just in case)
     text = re.sub(r'ceaser://[^\s"\')\]]+', "[FILE_REF]", text)
     return text
-
-
-_BLOCKED_MODULES = frozenset(
-    {
-        "subprocess",
-        "shutil",
-        "socket",
-        "http",
-        "urllib",
-        "requests",
-        "httpx",
-        "aiohttp",
-        "ftplib",
-        "smtplib",
-        "telnetlib",
-        "xmlrpc",
-        "ctypes",
-        "multiprocessing",
-        "webbrowser",
-        "antigravity",
-    }
-)
 
 
 @dataclass
@@ -86,45 +60,24 @@ class ExecutionResult:
 
 
 def _build_runner_script(user_code: str, figure_path: str) -> str:
-    """Wrap user code with runtime safety helpers and plotly figure capture.
-
-    The prefix injects:
-    - ``_col(df, name)`` — fuzzy column lookup that auto-corrects case
-      mismatches and common variations at runtime instead of crashing.
-    - ``_safe_numeric(df, col)`` — safe numeric conversion.
-
-    Security is enforced by the subprocess boundary (timeout, no network in
-    production via Docker ``--network none``).  We don't override ``__import__``
-    because pandas/numpy/plotly depend on dozens of internal stdlib modules
-    (ctypes, os, _io, etc.) that cannot be individually allowlisted.
-    """
+    """Wrap user code with runtime safety helpers and plotly figure capture."""
     prefix = textwrap.dedent("""\
         import json
         import pandas as _pd_internal
 
         def _col(df, name):
-            \"\"\"Find the best matching column name in a DataFrame.
-
-            Handles: case mismatches (Quantity→quantity), underscores vs spaces,
-            and partial matches (revenue→total_revenue).
-            Returns the actual column name or raises KeyError with helpful message.
-            \"\"\"
             if name in df.columns:
                 return name
-            # Case-insensitive match
             lower_map = {c.lower(): c for c in df.columns}
             if name.lower() in lower_map:
                 return lower_map[name.lower()]
-            # Underscore/space normalization
             norm = name.lower().replace(" ", "_").replace("-", "_")
             norm_map = {c.lower().replace(" ", "_").replace("-", "_"): c for c in df.columns}
             if norm in norm_map:
                 return norm_map[norm]
-            # Substring match — find columns that contain the target
             matches = [c for c in df.columns if name.lower() in c.lower()]
             if len(matches) == 1:
                 return matches[0]
-            # Reverse substring — target contains a column name
             matches = [c for c in df.columns if c.lower() in name.lower()]
             if len(matches) == 1:
                 return matches[0]
@@ -134,36 +87,22 @@ def _build_runner_script(user_code: str, figure_path: str) -> str:
             )
 
         def _safe_numeric(series):
-            \"\"\"Convert a series to numeric, coercing errors.\"\"\"
             return _pd_internal.to_numeric(series, errors='coerce')
 
-        # Monkey-patch DataFrame.__getitem__ for fuzzy column access
         _orig_getitem = _pd_internal.DataFrame.__getitem__
         def _patched_getitem(self, key):
             if isinstance(key, str) and key not in self.columns:
                 try:
                     key = _col(self, key)
                 except KeyError:
-                    pass  # let pandas raise its own error with our enhanced message
+                    pass
             return _orig_getitem(self, key)
         _pd_internal.DataFrame.__getitem__ = _patched_getitem
 
-        # DuckDB helper — SQL on parquet files without loading into memory
         try:
             import duckdb as _duckdb
 
             def query_parquet(sql, parquet_path=None):
-                \"\"\"Run SQL directly on a parquet file using DuckDB.
-
-                Returns a pandas DataFrame with just the result — never loads
-                the full file into memory. 100x faster than pandas for
-                aggregations on large files.
-
-                Usage:
-                    result = query_parquet("SELECT region, SUM(rev) FROM data GROUP BY region", "ceaser://...")
-                    # Or reference the parquet path directly in SQL:
-                    result = query_parquet("SELECT * FROM read_parquet('ceaser://...') LIMIT 10")
-                \"\"\"
                 if parquet_path and 'read_parquet' not in sql:
                     sql = sql.replace('data', f"read_parquet('{parquet_path}')", 1)
                 return _duckdb.sql(sql).fetchdf()
@@ -184,7 +123,6 @@ def _build_runner_script(user_code: str, figure_path: str) -> str:
             import numpy as _np
 
             def _decode_bdata(obj):
-                \"\"\"Convert plotly binary arrays to plain lists for frontend.\"\"\"
                 if isinstance(obj, dict):
                     if 'bdata' in obj and 'dtype' in obj:
                         dt = _np.dtype(obj['dtype'])
@@ -210,35 +148,65 @@ def _build_runner_script(user_code: str, figure_path: str) -> str:
     return prefix + user_code + "\n" + postfix
 
 
-async def execute_python(code: str) -> ExecutionResult:
-    """Execute *code* in an isolated subprocess, returning captured output.
+async def _execute_via_lambda(code: str, timeout: int) -> ExecutionResult:
+    """Invoke the sandbox Lambda function synchronously."""
+    from app.core.config import get_settings
 
-    * ``ceaser://`` file references are resolved to real URLs/paths server-side
-      before execution. The resolved code is never stored or returned.
-    * Stdout and stderr are captured.
-    * If the code defines a variable ``fig`` that is a Plotly figure, it is
-      serialised to JSON and included in the result.
-    * The process is killed after ``_TIMEOUT_SECONDS``.
-    """
+    settings = get_settings()
     result = ExecutionResult()
 
-    # Resolve ceaser:// aliases to real storage URLs (signed URLs for Supabase,
-    # local paths for filesystem). This happens ONLY here — the resolved code
-    # is written to a temp file and deleted after execution.
-    resolved_code = code
-    if "ceaser://" in code:
-        try:
-            from app.agents.excel.context import resolve_ceaser_refs
+    try:
+        import boto3
 
-            resolved_code = await resolve_ceaser_refs(code)
-        except Exception as exc:
-            logger.warning("Failed to resolve ceaser:// refs: %s", exc)
+        client = boto3.client("lambda", region_name=settings.aws_region)
+
+        payload = json.dumps({"code": code, "timeout": timeout})
+
+        response = await asyncio.to_thread(
+            client.invoke,
+            FunctionName=settings.sandbox_lambda_function,
+            InvocationType="RequestResponse",
+            Payload=payload.encode(),
+        )
+
+        response_payload = json.loads(response["Payload"].read().decode())
+
+        # Check for Lambda-level errors (not code execution errors)
+        if "errorMessage" in response_payload:
+            result.success = False
+            result.error = _sanitize_error(response_payload["errorMessage"])
+            return result
+
+        result.success = response_payload.get("success", False)
+        result.stdout = response_payload.get("stdout", "")
+        result.stderr = response_payload.get("stderr", "")
+        result.plotly_figure = response_payload.get("plotly_figure")
+        result.error = response_payload.get("error")
+
+        logger.info(
+            "Lambda sandbox: success=%s stdout=%d chars figure=%s",
+            result.success,
+            len(result.stdout),
+            result.plotly_figure is not None,
+        )
+
+    except Exception as exc:
+        result.success = False
+        result.error = _sanitize_error(f"Lambda invocation failed: {exc}")
+        logger.exception("Lambda sandbox invocation error")
+
+    return result
+
+
+async def _execute_via_subprocess(code: str, timeout: int) -> ExecutionResult:
+    """Execute code in a local subprocess (EC2 fallback)."""
+    result = ExecutionResult()
 
     with tempfile.TemporaryDirectory() as tmp_dir:
         script_path = Path(tmp_dir) / "runner.py"
         figure_path = Path(tmp_dir) / "figure.json"
 
-        runner = _build_runner_script(resolved_code, str(figure_path))
+        runner = _build_runner_script(code, str(figure_path))
         script_path.write_text(runner)
 
         try:
@@ -252,7 +220,7 @@ async def execute_python(code: str) -> ExecutionResult:
 
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
                 proc.communicate(),
-                timeout=_TIMEOUT_SECONDS,
+                timeout=timeout,
             )
 
             result.stdout = stdout_bytes.decode(errors="replace").strip()
@@ -263,7 +231,6 @@ async def execute_python(code: str) -> ExecutionResult:
                 result.success = False
                 result.error = result.stderr or f"Process exited with code {proc.returncode}"
 
-            # Read plotly figure if the user code produced one.
             if figure_path.exists():
                 try:
                     fig_data = json.loads(figure_path.read_text())
@@ -274,7 +241,7 @@ async def execute_python(code: str) -> ExecutionResult:
         except TimeoutError:
             proc.kill()  # type: ignore[union-attr]
             result.success = False
-            result.error = f"Execution timed out after {_TIMEOUT_SECONDS}s."
+            result.error = f"Execution timed out after {timeout}s."
             logger.warning("Sandbox execution timed out for code snippet.")
         except Exception as exc:
             result.success = False
@@ -282,3 +249,34 @@ async def execute_python(code: str) -> ExecutionResult:
             logger.exception("Sandbox execution error.")
 
     return result
+
+
+async def execute_python(code: str) -> ExecutionResult:
+    """Execute Python code in a sandbox — Lambda if configured, else subprocess.
+
+    * ``ceaser://`` file references are resolved to real URLs/paths server-side
+      before execution. The resolved code is never stored or returned.
+    * Stdout and stderr are captured.
+    * If the code defines a variable ``fig`` (Plotly figure), it is serialised
+      to JSON and included in the result.
+    """
+    # Resolve ceaser:// aliases to real storage URLs before execution
+    resolved_code = code
+    if "ceaser://" in code:
+        try:
+            from app.agents.excel.context import resolve_ceaser_refs
+
+            resolved_code = await resolve_ceaser_refs(code)
+        except Exception as exc:
+            logger.warning("Failed to resolve ceaser:// refs: %s", exc)
+
+    # Route to Lambda or local subprocess
+    from app.core.config import get_settings
+
+    settings = get_settings()
+
+    if settings.sandbox_lambda_function:
+        logger.info("Executing code via Lambda: %s", settings.sandbox_lambda_function)
+        return await _execute_via_lambda(resolved_code, timeout=_TIMEOUT_SECONDS)
+    else:
+        return await _execute_via_subprocess(resolved_code, timeout=_TIMEOUT_SECONDS)

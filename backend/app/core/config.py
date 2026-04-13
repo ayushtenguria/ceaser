@@ -92,6 +92,11 @@ class Settings(BaseSettings):
     hmac_shared_secret: str = ""
     parquet_s3_bucket: str = ""
 
+    # Sandbox execution via Lambda. When set, Python code execution is offloaded
+    # to this Lambda function instead of running as a subprocess on EC2.
+    # Set to the Lambda function name (e.g. "ceaser-sandbox-executor").
+    sandbox_lambda_function: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

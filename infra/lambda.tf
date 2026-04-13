@@ -182,4 +182,82 @@ resource "aws_lambda_event_source_mapping" "excel_processing" {
   function_response_types            = ["ReportBatchItemFailures"]
 }
 
-# (EC2 no longer needs SQS:SendMessage — S3 fires events automatically.)
+# ─── Sandbox Executor Lambda ────────────────────────────────────────────────
+# Runs Python code (pandas/plotly) for chat queries, offloading heavy compute
+# from EC2 (2GB) to Lambda (up to 10GB).
+
+resource "aws_ecr_repository" "sandbox_executor" {
+  name                 = "${var.project_name}-sandbox-executor"
+  image_tag_mutability = "MUTABLE"
+  force_delete         = true
+
+  image_scanning_configuration {
+    scan_on_push = false
+  }
+}
+
+resource "aws_ecr_lifecycle_policy" "sandbox_executor" {
+  repository = aws_ecr_repository.sandbox_executor.name
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1
+      description  = "Keep last 5 images"
+      selection = {
+        tagStatus   = "any"
+        countType   = "imageCountMoreThan"
+        countNumber = 5
+      }
+      action = { type = "expire" }
+    }]
+  })
+}
+
+variable "sandbox_lambda_image_tag" {
+  type        = string
+  default     = "latest"
+  description = "Tag of the sandbox_executor image in ECR"
+}
+
+resource "aws_lambda_function" "sandbox_executor" {
+  count         = var.deploy_lambda ? 1 : 0
+  function_name = "${var.project_name}-sandbox-executor"
+  role          = aws_iam_role.lambda_exec.arn
+  package_type  = "Image"
+  image_uri     = "${aws_ecr_repository.sandbox_executor.repository_url}:${var.sandbox_lambda_image_tag}"
+  timeout       = 120
+  memory_size   = 3008
+  architectures = ["arm64"]
+
+  ephemeral_storage {
+    size = 2048
+  }
+
+  environment {
+    variables = {
+      # Sandbox Lambda needs S3 access to read data files via presigned URLs.
+      # No callback URL needed — results returned synchronously.
+      PARQUET_BUCKET = aws_s3_bucket.uploads.bucket
+    }
+  }
+
+  lifecycle {
+    ignore_changes = [image_uri]
+  }
+
+  depends_on = [aws_iam_role_policy.lambda_exec]
+}
+
+# Grant EC2 permission to invoke the sandbox Lambda
+resource "aws_iam_role_policy" "ec2_invoke_sandbox" {
+  count = var.deploy_lambda ? 1 : 0
+  name  = "${var.project_name}-ec2-invoke-sandbox"
+  role  = aws_iam_role.ec2.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "lambda:InvokeFunction"
+      Resource = aws_lambda_function.sandbox_executor[0].arn
+    }]
+  })
+}

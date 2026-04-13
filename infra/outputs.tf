@@ -31,6 +31,14 @@ output "lambda_function_name" {
   value = try(aws_lambda_function.excel_processor[0].function_name, null)
 }
 
+output "sandbox_lambda_function_name" {
+  value = try(aws_lambda_function.sandbox_executor[0].function_name, null)
+}
+
+output "ecr_sandbox_executor_url" {
+  value = aws_ecr_repository.sandbox_executor.repository_url
+}
+
 output "route53_nameservers" {
   description = "Set these at your registrar if create_route53_zone=true"
   value       = var.manage_dns_in_route53 && var.create_route53_zone ? aws_route53_zone.main[0].name_servers : null
