@@ -634,7 +634,16 @@ async def chat(
                 if upload and upload.code_preamble:
                     for line in upload.code_preamble.split("\n"):
                         stripped = line.strip()
-                        if "= pd.read_parquet(" in stripped and stripped not in preamble_lines:
+                        if (
+                            stripped
+                            and stripped not in preamble_lines
+                            and (
+                                "= pd.read_" in stripped
+                                or "import " in stripped
+                                or "duckdb" in stripped
+                                or stripped.startswith("#")
+                            )
+                        ):
                             preamble_lines.append(stripped)
             if len(preamble_lines) > 3:  # more than just the imports
                 unified_preamble = "\n".join(preamble_lines)
