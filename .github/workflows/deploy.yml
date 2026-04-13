@@ -51,6 +51,11 @@ jobs:
               sudo git fetch origin main
               sudo git reset --hard origin/main
             fi
+            # Ensure sandbox Lambda env var is set
+            ENV_FILE="${REPO_DIR:-/opt/ceaser/repo}/backend/.env"
+            if [ -f "$ENV_FILE" ] && ! grep -q 'SANDBOX_LAMBDA_FUNCTION' "$ENV_FILE"; then
+              echo 'SANDBOX_LAMBDA_FUNCTION=ceaser-sandbox-executor' | sudo tee -a "$ENV_FILE" > /dev/null
+            fi
             sudo /opt/ceaser/deploy.sh
           REMOTE
 
