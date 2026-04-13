@@ -16,7 +16,7 @@ _SUPPORTED_EXTENSIONS: dict[str, str] = {
     ".xls": "excel",
 }
 
-_MAX_ROWS_FOR_SUMMARY = 500_000
+_MAX_ROWS_FOR_SUMMARY = 1_000  # Keep lightweight — only need column metadata
 
 
 def parse_file(file_path: str, file_type: str) -> tuple[pd.DataFrame, dict[str, Any]]:

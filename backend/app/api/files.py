@@ -185,11 +185,13 @@ async def upload_file(
         del contents
     logger.info("Uploaded %s (%d bytes) → %s", file.filename, total_bytes, remote_path)
 
-    # File processing is offloaded to Lambda (S3 ObjectCreated → SQS → Lambda).
-    # The upload endpoint only generates a lightweight preview for instant UI
-    # feedback. Lambda handles the heavy work: full parsing, column extraction,
-    # excel context, code preamble, and parquet conversion.
-    # For non-S3 backends (local dev), process inline as fallback.
+    # ── Lightweight inline parse (safe on 2GB RAM for any file size) ──
+    # Always extract column metadata from a small sample (first 1000 rows)
+    # so the file is immediately usable for chat. This takes <1s even for
+    # 500MB files because pandas only reads the first N rows.
+    #
+    # For S3 backends, Lambda also runs in the background for parquet
+    # conversion. For local dev, the full excel orchestrator runs inline.
     from app.core.config import get_settings
 
     use_lambda = get_settings().storage_backend.lower() == "s3"
@@ -200,13 +202,14 @@ async def upload_file(
     parquet_paths_data = None
     excel_metadata = None
 
-    if not use_lambda:
-        # Local dev fallback — process inline
-        try:
-            _, column_info = parse_file(parse_path, file_type)
-        except Exception as exc:
-            logger.warning("Could not parse uploaded file: %s", exc)
+    # Lightweight column parse — always runs, safe for any file size
+    try:
+        _, column_info = parse_file(parse_path, file_type)
+    except Exception as exc:
+        logger.warning("Could not parse uploaded file: %s", exc)
 
+    if not use_lambda:
+        # Local dev: run full orchestrator inline (no Lambda available)
         try:
             from app.agents.excel.orchestrator import process_excel_upload
             from app.core.deps import get_llm
@@ -235,6 +238,8 @@ async def upload_file(
 
     shutil.rmtree(_temp_dir, ignore_errors=True)
 
+    # File is immediately ready — column_info gives the agent enough context
+    # to answer questions. Lambda enriches with parquet in the background.
     upload = FileUpload(
         id=file_id,
         filename=file.filename,
@@ -248,13 +253,13 @@ async def upload_file(
         code_preamble=code_preamble,
         parquet_paths=parquet_paths_data,
         excel_metadata=excel_metadata,
-        processing_status="processing" if use_lambda else "ready",
+        processing_status="ready",
     )
     db.add(upload)
     await db.flush()
     await db.refresh(upload)
 
-    if not use_lambda and column_info:
+    if column_info:
         try:
             from app.services.schema_graph import build_file_graph
 
