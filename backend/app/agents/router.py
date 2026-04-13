@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import logging
 
-from langchain_core.messages import SystemMessage
 from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import SystemMessage
 
 from app.agents.state import AgentState
 
@@ -48,19 +48,54 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
     has_file = bool(state.get("file_id"))
     has_file_context = any(
         marker in schema_context
-        for marker in ("EXCEL DATA CONTEXT", "FILE DATA SUMMARY", "AVAILABLE DATAFRAMES", "CODE PREAMBLE")
+        for marker in (
+            "EXCEL DATA CONTEXT",
+            "FILE DATA SUMMARY",
+            "AVAILABLE DATAFRAMES",
+            "CODE PREAMBLE",
+        )
     )
 
     has_data = has_connection or has_file or has_file_context
 
     if not has_data:
         data_keywords = (
-            "revenue", "sales", "customer", "employee", "ticket", "order",
-            "report", "top", "total", "average", "count", "how many",
-            "show me", "list", "find", "query", "data", "table", "department",
-            "product", "pipeline", "churn", "mrr", "arr", "deal",
-            "plot", "chart", "graph", "visuali", "trend", "what", "which",
-            "analyze", "about", "summary", "describe",
+            "revenue",
+            "sales",
+            "customer",
+            "employee",
+            "ticket",
+            "order",
+            "report",
+            "top",
+            "total",
+            "average",
+            "count",
+            "how many",
+            "show me",
+            "list",
+            "find",
+            "query",
+            "data",
+            "table",
+            "department",
+            "product",
+            "pipeline",
+            "churn",
+            "mrr",
+            "arr",
+            "deal",
+            "plot",
+            "chart",
+            "graph",
+            "visuali",
+            "trend",
+            "what",
+            "which",
+            "analyze",
+            "about",
+            "summary",
+            "describe",
         )
         if any(kw in query.lower() for kw in data_keywords):
             return {
@@ -72,10 +107,23 @@ async def route_query(state: AgentState, llm: BaseChatModel) -> AgentState:
 
     if not has_connection and (has_file or has_file_context):
         strategic_keywords = (
-            "insight", "recommend", "strategy", "potential", "should we",
-            "how can we", "improve", "cross-sell", "upsell", "lapsed",
-            "retention", "churn", "demand driver", "buying behav",
-            "what are the top", "ceo should know", "full potential",
+            "insight",
+            "recommend",
+            "strategy",
+            "potential",
+            "should we",
+            "how can we",
+            "improve",
+            "cross-sell",
+            "upsell",
+            "lapsed",
+            "retention",
+            "churn",
+            "demand driver",
+            "buying behav",
+            "what are the top",
+            "ceo should know",
+            "full potential",
         )
         query_lower = query.lower()
         is_complex = (

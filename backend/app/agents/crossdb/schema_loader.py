@@ -9,13 +9,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import DatabaseConnection
-from app.services.schema import introspect_schema, format_schema_for_llm, SchemaInfo
+from app.services.schema import SchemaInfo, format_schema_for_llm, introspect_schema
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class DbSchemaEntry:
     """Schema for one data source (database OR file)."""
+
     connection_id: str
     connection_name: str
     db_type: str
@@ -40,6 +40,7 @@ class DbSchemaEntry:
 @dataclass
 class MultiDbSchema:
     """Combined schema across all connections."""
+
     entries: list[DbSchemaEntry] = field(default_factory=list)
     combined_context: str = ""
     total_tables: int = 0
@@ -98,7 +99,8 @@ async def load_all_schemas(
         )
         try:
             if conn.schema_cache:
-                from app.services.schema import SchemaInfo, TableInfo, ColumnInfo
+                from app.services.schema import ColumnInfo, SchemaInfo, TableInfo
+
                 tables = []
                 for t in conn.schema_cache.get("tables", []):
                     cols = [
@@ -112,7 +114,9 @@ async def load_all_schemas(
                         )
                         for c in t.get("columns", [])
                     ]
-                    tables.append(TableInfo(name=t["name"], columns=cols, row_count=t.get("row_count")))
+                    tables.append(
+                        TableInfo(name=t["name"], columns=cols, row_count=t.get("row_count"))
+                    )
                 entry.schema = SchemaInfo(tables=tables)
             else:
                 entry.schema = await asyncio.wait_for(
@@ -125,7 +129,7 @@ async def load_all_schemas(
                 entry.schema_text = format_schema_for_llm(entry.schema)
                 entry.is_available = True
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             entry.is_available = False
             entry.error = f"Connection timed out after {timeout_per_db}s"
             logger.warning("Schema load timeout for %s", conn.name)
@@ -144,6 +148,7 @@ async def load_all_schemas(
 
     if file_ids:
         from app.db.models import FileUpload
+
         for fid in file_ids:
             try:
                 stmt = select(FileUpload).where(FileUpload.id == uuid.UUID(fid))
@@ -172,7 +177,10 @@ async def load_all_schemas(
 
     logger.info(
         "Loaded %d sources (%d DB + %d files), %d total tables",
-        result.total_connections, len(connection_ids), len(file_ids or []), result.total_tables,
+        result.total_connections,
+        len(connection_ids),
+        len(file_ids or []),
+        result.total_tables,
     )
     return result
 
@@ -198,7 +206,7 @@ def _build_combined_context(entries: list[DbSchemaEntry]) -> str:
         if entry.source_type == "file":
             lines.append(f"\nFILE: {entry.connection_name} ({entry.db_type})")
             lines.append(f"Source ID: {entry.connection_id}")
-            lines.append(f"Query method: Python/pandas (NOT SQL)")
+            lines.append("Query method: Python/pandas (NOT SQL)")
             lines.append("-" * 40)
             if entry.excel_context:
                 lines.append(entry.excel_context[:2000])
@@ -206,7 +214,7 @@ def _build_combined_context(entries: list[DbSchemaEntry]) -> str:
 
         lines.append(f"\nDATABASE: {entry.connection_name} ({entry.db_type})")
         lines.append(f"Connection ID: {entry.connection_id}")
-        lines.append(f"Query method: SQL")
+        lines.append("Query method: SQL")
         lines.append("-" * 40)
 
         if entry.schema:

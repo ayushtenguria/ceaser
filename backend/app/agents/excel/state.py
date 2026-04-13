@@ -2,10 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
 from typing import Any, TypedDict
-
-import pandas as pd
 
 
 class ExcelPipelineState(TypedDict, total=False):

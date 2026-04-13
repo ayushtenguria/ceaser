@@ -14,9 +14,24 @@ _provider_instance: IPaymentProvider | None = None
 
 PLAN_LIMITS = {
     "free": {"max_queries_per_day": 50, "max_connections": 1, "max_reports": 5, "max_seats": 5},
-    "starter": {"max_queries_per_day": 100, "max_connections": 3, "max_reports": 30, "max_seats": 3},
-    "business": {"max_queries_per_day": 500, "max_connections": 10, "max_reports": -1, "max_seats": 10},
-    "enterprise": {"max_queries_per_day": -1, "max_connections": -1, "max_reports": -1, "max_seats": -1},
+    "starter": {
+        "max_queries_per_day": 100,
+        "max_connections": 3,
+        "max_reports": 30,
+        "max_seats": 3,
+    },
+    "business": {
+        "max_queries_per_day": 500,
+        "max_connections": 10,
+        "max_reports": -1,
+        "max_seats": 10,
+    },
+    "enterprise": {
+        "max_queries_per_day": -1,
+        "max_connections": -1,
+        "max_reports": -1,
+        "max_seats": -1,
+    },
 }
 
 
@@ -48,6 +63,7 @@ def get_payment_provider() -> IPaymentProvider | None:
 
     if provider_name == PaymentProvider.STRIPE:
         from app.payments.providers.stripe_provider import StripeProvider
+
         price_map = _parse_plan_map(getattr(settings, "stripe_price_map", ""))
         _provider_instance = StripeProvider(
             secret_key=settings.stripe_secret_key,
@@ -57,6 +73,7 @@ def get_payment_provider() -> IPaymentProvider | None:
 
     elif provider_name == PaymentProvider.RAZORPAY:
         from app.payments.providers.razorpay_provider import RazorpayProvider
+
         plan_map = _parse_plan_map(getattr(settings, "razorpay_plan_map", ""))
         _provider_instance = RazorpayProvider(
             key_id=settings.razorpay_key_id,
@@ -67,6 +84,7 @@ def get_payment_provider() -> IPaymentProvider | None:
 
     elif provider_name == PaymentProvider.CASHFREE:
         from app.payments.providers.cashfree_provider import CashfreeProvider
+
         plan_map = _parse_plan_map(getattr(settings, "cashfree_plan_map", ""))
         _provider_instance = CashfreeProvider(
             app_id=settings.cashfree_app_id,
@@ -77,7 +95,9 @@ def get_payment_provider() -> IPaymentProvider | None:
         )
 
     else:
-        raise ValueError(f"Unknown payment provider: {provider_name}. Supported: stripe, razorpay, cashfree")
+        raise ValueError(
+            f"Unknown payment provider: {provider_name}. Supported: stripe, razorpay, cashfree"
+        )
 
     logger.info("Payment provider initialized: %s", provider_name)
     return _provider_instance

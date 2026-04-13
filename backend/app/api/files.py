@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-import os
 import uuid
 from pathlib import Path
 
@@ -26,6 +25,7 @@ _MAX_FILE_SIZE = 5 * 1024 * 1024 * 1024
 _UPLOAD_CHUNK = 1 * 1024 * 1024
 
 _PREVIEW_ROWS = 50
+
 
 def _generate_preview(file_path: str, file_type: str) -> dict | None:
     """Generate a data preview with first N rows + column statistics.
@@ -51,13 +51,15 @@ def _generate_preview(file_path: str, file_type: str) -> dict | None:
     # Column stats
     col_stats = []
     for col in df.columns:
-        col_stats.append({
-            "name": str(col),
-            "dtype": str(df[col].dtype),
-            "null_count": int(df[col].isna().sum()),
-            "unique_count": int(df[col].nunique()),
-            "sample": str(df[col].dropna().iloc[0]) if not df[col].dropna().empty else None,
-        })
+        col_stats.append(
+            {
+                "name": str(col),
+                "dtype": str(df[col].dtype),
+                "null_count": int(df[col].isna().sum()),
+                "unique_count": int(df[col].nunique()),
+                "sample": str(df[col].dropna().iloc[0]) if not df[col].dropna().empty else None,
+            }
+        )
 
     # Rows as list of dicts (preview only)
     preview_rows = df.head(_PREVIEW_ROWS).fillna("").to_dict(orient="records")
@@ -88,6 +90,7 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
     user = result.scalar_one_or_none()
     if user is None:
         from app.core.config import get_settings
+
         if get_settings().dev_mode and clerk_id == "dev_user":
             user = User(
                 clerk_id="dev_user",
@@ -142,6 +145,7 @@ async def upload_file(
     # Stream the upload to a temp file on disk, aborting as soon as we exceed the cap.
     # This prevents OOM on the 2 GB instance when users upload huge files.
     import tempfile
+
     _temp_dir = tempfile.mkdtemp(prefix="ceaser_upload_")
     parse_path = str(Path(_temp_dir) / clean_filename)
     total_bytes = 0
@@ -154,18 +158,18 @@ async def upload_file(
                 total_bytes += len(chunk)
                 if total_bytes > _MAX_FILE_SIZE:
                     import shutil
+
                     shutil.rmtree(_temp_dir, ignore_errors=True)
                     raise HTTPException(
                         status_code=413,
-                        detail=(
-                            f"File exceeds {_MAX_FILE_SIZE // 1024 // 1024 // 1024} GB limit."
-                        ),
+                        detail=(f"File exceeds {_MAX_FILE_SIZE // 1024 // 1024 // 1024} GB limit."),
                     )
                 out.write(chunk)
     except HTTPException:
         raise
     except Exception as exc:
         import shutil
+
         shutil.rmtree(_temp_dir, ignore_errors=True)
         logger.exception("Upload stream failed: %s", exc)
         raise HTTPException(status_code=500, detail="Upload failed.")
@@ -204,6 +208,7 @@ async def upload_file(
         try:
             from app.agents.excel.orchestrator import process_excel_upload
             from app.core.deps import get_llm
+
             llm = get_llm()
             excel_result = await process_excel_upload(parse_path, llm, org_id=org_id)
             excel_context = excel_result.get("excel_context")
@@ -227,6 +232,7 @@ async def upload_file(
         logger.debug("Preview generation skipped: %s", exc)
 
     import shutil
+
     shutil.rmtree(_temp_dir, ignore_errors=True)
 
     upload = FileUpload(
@@ -251,6 +257,7 @@ async def upload_file(
     if not use_lambda and column_info:
         try:
             from app.services.schema_graph import build_file_graph
+
             await build_file_graph(
                 file_id=str(upload.id),
                 org_id=upload.organization_id,
@@ -290,6 +297,7 @@ async def processed_callback(
         raise HTTPException(status_code=401, detail="Invalid signature")
 
     import json
+
     try:
         payload = json.loads(body)
     except Exception:
@@ -320,9 +328,13 @@ async def processed_callback(
             lines = ["import pandas as pd", "import numpy as np", "import plotly.express as px", ""]
             if row_count > 100_000:
                 lines.append("import duckdb")
-                lines.append(f"# NOTE: This file has {row_count:,} rows — use duckdb.sql() for aggregations")
+                lines.append(
+                    f"# NOTE: This file has {row_count:,} rows — use duckdb.sql() for aggregations"
+                )
                 lines.append("")
-                lines.append(f'{safe_name} = pd.read_parquet("ceaser://{pk}")  # WARNING: {row_count:,} rows — prefer duckdb.sql() for aggregations')
+                lines.append(
+                    f'{safe_name} = pd.read_parquet("ceaser://{pk}")  # WARNING: {row_count:,} rows — prefer duckdb.sql() for aggregations'
+                )
             else:
                 lines.append(f'{safe_name} = pd.read_parquet("ceaser://{pk}")')
             upload.code_preamble = "\n".join(lines)
@@ -331,6 +343,7 @@ async def processed_callback(
         if ci:
             try:
                 from app.services.schema_graph import build_file_graph
+
                 await build_file_graph(
                     file_id=str(upload.id),
                     org_id=upload.organization_id,
@@ -377,6 +390,7 @@ async def delete_file(
         raise HTTPException(status_code=404, detail="File not found.")
 
     from app.services.storage import get_storage
+
     try:
         storage = get_storage()
         await storage.delete(upload.file_path)

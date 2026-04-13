@@ -13,7 +13,6 @@ Examples that trigger metric card:
 from __future__ import annotations
 
 import logging
-import re
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -130,7 +129,9 @@ def _build_card(
         card["previous_value"] = previous
         card["previous_formatted"] = _format_value(previous, unit)
         card["change_pct"] = round(change_pct, 1)
-        card["change_direction"] = "up" if change_pct > 0.5 else ("down" if change_pct < -0.5 else "flat")
+        card["change_direction"] = (
+            "up" if change_pct > 0.5 else ("down" if change_pct < -0.5 else "flat")
+        )
 
     return card
 
@@ -139,19 +140,55 @@ def _detect_unit(label: str, value: float) -> str:
     """Detect the unit type from the column label."""
     label_lower = label.lower()
 
-    currency_words = ("revenue", "amount", "sales", "price", "cost", "mrr", "arr",
-                      "profit", "margin", "value", "spend", "budget", "payment",
-                      "income", "fee", "total_amount", "avg_order")
+    currency_words = (
+        "revenue",
+        "amount",
+        "sales",
+        "price",
+        "cost",
+        "mrr",
+        "arr",
+        "profit",
+        "margin",
+        "value",
+        "spend",
+        "budget",
+        "payment",
+        "income",
+        "fee",
+        "total_amount",
+        "avg_order",
+    )
     if any(w in label_lower for w in currency_words):
         return "currency"
 
-    pct_words = ("rate", "pct", "percent", "ratio", "conversion", "churn",
-                 "retention", "ctr", "bounce")
+    pct_words = (
+        "rate",
+        "pct",
+        "percent",
+        "ratio",
+        "conversion",
+        "churn",
+        "retention",
+        "ctr",
+        "bounce",
+    )
     if any(w in label_lower for w in pct_words):
         return "percentage"
 
-    count_words = ("count", "total", "num", "number", "qty", "quantity",
-                   "users", "customers", "orders", "tickets", "items")
+    count_words = (
+        "count",
+        "total",
+        "num",
+        "number",
+        "qty",
+        "quantity",
+        "users",
+        "customers",
+        "orders",
+        "tickets",
+        "items",
+    )
     if any(w in label_lower for w in count_words):
         return "count"
 

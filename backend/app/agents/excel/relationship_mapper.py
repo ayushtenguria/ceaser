@@ -7,12 +7,12 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 import pandas as pd
 
-from app.agents.excel.sheet_extractor import ExtractedSheet
 from app.agents.excel.formula_extractor import FormulaExtractionResult
+from app.agents.excel.sheet_extractor import ExtractedSheet
 
 logger = logging.getLogger(__name__)
 
@@ -23,6 +23,7 @@ _MIN_OVERLAP = 0.3
 @dataclass
 class Relationship:
     """A discovered relationship between two sheets."""
+
     source_sheet: str
     source_column: str
     target_sheet: str
@@ -57,15 +58,22 @@ def map_relationships(
     return rels
 
 
-def _from_formulas(sheets: list[ExtractedSheet], formulas: FormulaExtractionResult) -> list[Relationship]:
+def _from_formulas(
+    sheets: list[ExtractedSheet], formulas: FormulaExtractionResult
+) -> list[Relationship]:
     """Relationships from formula cross-references."""
     rels = []
     for src, tgt in formulas.cross_sheet_references:
-        rels.append(Relationship(
-            source_sheet=src, source_column="(formula)",
-            target_sheet=tgt, target_column="(formula)",
-            confidence=0.9, method="formula_ref",
-        ))
+        rels.append(
+            Relationship(
+                source_sheet=src,
+                source_column="(formula)",
+                target_sheet=tgt,
+                target_column="(formula)",
+                confidence=0.9,
+                method="formula_ref",
+            )
+        )
     return rels
 
 
@@ -87,12 +95,17 @@ def _from_names(sheets: list[ExtractedSheet]) -> list[Relationship]:
         parent = sorted_occs[0]
         for child in sorted_occs[1:]:
             if parent[0] != child[0]:
-                rels.append(Relationship(
-                    source_sheet=child[0], source_column=_find_col(sheets, child[0], norm),
-                    target_sheet=parent[0], target_column=_find_col(sheets, parent[0], norm),
-                    confidence=0.85, method="name_match",
-                    rel_type="one_to_one" if child[1] else "many_to_one",
-                ))
+                rels.append(
+                    Relationship(
+                        source_sheet=child[0],
+                        source_column=_find_col(sheets, child[0], norm),
+                        target_sheet=parent[0],
+                        target_column=_find_col(sheets, parent[0], norm),
+                        confidence=0.85,
+                        method="name_match",
+                        rel_type="one_to_one" if child[1] else "many_to_one",
+                    )
+                )
     return rels
 
 
@@ -110,11 +123,16 @@ def _from_id_patterns(sheets: list[ExtractedSheet]) -> list[Relationship]:
                         target = sheet_map[variant]
                         id_cols = [c for c in target.df.columns if c in ("id", f"{variant}_id")]
                         if id_cols:
-                            rels.append(Relationship(
-                                source_sheet=sheet.name, source_column=col,
-                                target_sheet=target.name, target_column=id_cols[0],
-                                confidence=0.8, method="id_pattern",
-                            ))
+                            rels.append(
+                                Relationship(
+                                    source_sheet=sheet.name,
+                                    source_column=col,
+                                    target_sheet=target.name,
+                                    target_column=id_cols[0],
+                                    confidence=0.8,
+                                    method="id_pattern",
+                                )
+                            )
     return rels
 
 
@@ -122,7 +140,7 @@ def _from_value_overlap(sheets: list[ExtractedSheet], existing: set) -> list[Rel
     """Relationships from value overlap analysis."""
     rels = []
     for i, sa in enumerate(sheets):
-        for sb in sheets[i+1:]:
+        for sb in sheets[i + 1 :]:
             for ca in sa.df.columns:
                 for cb in sb.df.columns:
                     if (sa.name, ca, sb.name, cb) in existing:
@@ -132,11 +150,16 @@ def _from_value_overlap(sheets: list[ExtractedSheet], existing: set) -> list[Rel
 
                     score = _overlap_score(sa.df[ca], sb.df[cb])
                     if score >= _MIN_OVERLAP:
-                        rels.append(Relationship(
-                            source_sheet=sa.name, source_column=ca,
-                            target_sheet=sb.name, target_column=cb,
-                            confidence=min(score, 0.75), method="value_overlap",
-                        ))
+                        rels.append(
+                            Relationship(
+                                source_sheet=sa.name,
+                                source_column=ca,
+                                target_sheet=sb.name,
+                                target_column=cb,
+                                confidence=min(score, 0.75),
+                                method="value_overlap",
+                            )
+                        )
     return rels
 
 
@@ -157,7 +180,7 @@ def _overlap_score(a: pd.Series, b: pd.Series) -> float:
 def _dtypes_ok(a, b) -> bool:
     a_num = pd.api.types.is_numeric_dtype(a)
     b_num = pd.api.types.is_numeric_dtype(b)
-    return (a_num == b_num)
+    return a_num == b_num
 
 
 def _find_col(sheets: list[ExtractedSheet], sheet_name: str, norm: str) -> str:

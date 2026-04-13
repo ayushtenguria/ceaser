@@ -5,8 +5,8 @@ Not distributed — for single-server deployments. Use Redis for multi-server.
 
 from __future__ import annotations
 
-import time
 import logging
+import time
 from collections import defaultdict
 
 from fastapi import HTTPException, status
@@ -44,7 +44,7 @@ def check_rate_limit(
     if len(_requests[key]) >= max_requests:
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-            detail=f"Too many requests. Please wait before trying again.",
+            detail="Too many requests. Please wait before trying again.",
         )
 
     _requests[key].append(now)

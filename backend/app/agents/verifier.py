@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.state import AgentState
 
@@ -56,13 +55,15 @@ async def verify_results(state: AgentState, llm: BaseChatModel) -> AgentState:
 
     messages = [
         SystemMessage(content=_VERIFY_PROMPT),
-        HumanMessage(content=(
-            f"User question: {query}\n\n"
-            f"SQL query executed:\n{sql_query}\n\n"
-            f"Result columns: {columns}\n"
-            f"Total rows: {total}\n"
-            f"Result preview (first 10 rows):\n{preview}"
-        )),
+        HumanMessage(
+            content=(
+                f"User question: {query}\n\n"
+                f"SQL query executed:\n{sql_query}\n\n"
+                f"Result columns: {columns}\n"
+                f"Total rows: {total}\n"
+                f"Result preview (first 10 rows):\n{preview}"
+            )
+        ),
     ]
 
     response = await llm.ainvoke(messages)

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.state import AgentState
 
@@ -64,9 +64,14 @@ async def repair_sql(state: AgentState, llm: BaseChatModel) -> AgentState:
     logger.info("Repair agent: fixing SQL error: %s", error[:100])
 
     messages = [
-        SystemMessage(content=_REPAIR_PROMPT.format(
-            sql=sql, error=error, dialect=dialect, schema=schema[:3000],
-        )),
+        SystemMessage(
+            content=_REPAIR_PROMPT.format(
+                sql=sql,
+                error=error,
+                dialect=dialect,
+                schema=schema[:3000],
+            )
+        ),
         HumanMessage(content=f"Fix this SQL query. The error was: {error}"),
     ]
 

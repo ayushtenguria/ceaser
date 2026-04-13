@@ -15,7 +15,7 @@ import uuid
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import select, update
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import VerifiedQuery
@@ -25,17 +25,75 @@ logger = logging.getLogger(__name__)
 _SIMILARITY_THRESHOLD = 0.80
 
 # Stop words to remove during normalization
-_STOP_WORDS = frozenset({
-    "the", "a", "an", "is", "are", "was", "were", "be", "been",
-    "have", "has", "had", "do", "does", "did", "will", "would",
-    "can", "could", "should", "may", "might", "must",
-    "i", "me", "my", "we", "our", "you", "your",
-    "show", "me", "give", "tell", "find", "get", "list", "display",
-    "please", "also", "just", "like", "want", "need",
-    "what", "which", "who", "how", "when", "where", "why",
-    "in", "on", "at", "to", "for", "of", "with", "by", "from",
-    "and", "or", "but", "not", "no",
-})
+_STOP_WORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "can",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "i",
+        "me",
+        "my",
+        "we",
+        "our",
+        "you",
+        "your",
+        "show",
+        "me",
+        "give",
+        "tell",
+        "find",
+        "get",
+        "list",
+        "display",
+        "please",
+        "also",
+        "just",
+        "like",
+        "want",
+        "need",
+        "what",
+        "which",
+        "who",
+        "how",
+        "when",
+        "where",
+        "why",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "and",
+        "or",
+        "but",
+        "not",
+        "no",
+    }
+)
 
 
 def normalize_question(question: str) -> str:
@@ -126,7 +184,9 @@ async def find_matching_verified_query(
     if best_score >= threshold and best_match:
         logger.info(
             "Verified query match: score=%.2f pattern='%s' → '%s'",
-            best_score, normalized[:50], best_match.question_pattern[:50],
+            best_score,
+            normalized[:50],
+            best_match.question_pattern[:50],
         )
         # Update usage stats
         best_match.use_count += 1

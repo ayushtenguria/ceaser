@@ -4,14 +4,14 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.core.deps import CurrentUser, DbSession
 from app.core.permissions import get_user_with_role
-from app.db.models import OrganizationPlan, Subscription, Payment
-from app.payments.base import PaymentEvent, PaymentProvider
+from app.db.models import OrganizationPlan, Payment, Subscription
+from app.payments.base import PaymentEvent
 from app.payments.service import PLAN_LIMITS, get_payment_provider
 
 logger = logging.getLogger(__name__)
@@ -36,7 +36,9 @@ async def create_checkout(
     user = await get_user_with_role(db, current_user.user_id)
     org_id = user.organization_id or ""
     if not org_id:
-        raise HTTPException(status_code=400, detail="No organization found. Please set up your org first.")
+        raise HTTPException(
+            status_code=400, detail="No organization found. Please set up your org first."
+        )
 
     success_url = request.get("successUrl", "")
     cancel_url = request.get("cancelUrl", "")
@@ -70,12 +72,14 @@ async def handle_webhook(provider_name: str, request: Request, db: DbSession) ->
         raise HTTPException(status_code=501, detail="Payment not configured")
 
     from app.core.config import get_settings
+
     settings = get_settings()
     configured_provider = settings.payment_provider.lower()
     if provider_name.lower() != configured_provider:
         logger.warning(
             "Webhook received for %s but configured provider is %s",
-            provider_name, configured_provider,
+            provider_name,
+            configured_provider,
         )
         raise HTTPException(status_code=404, detail="Unknown provider")
 
@@ -90,7 +94,9 @@ async def handle_webhook(provider_name: str, request: Request, db: DbSession) ->
 
     logger.info(
         "Webhook event: type=%s provider=%s sub_id=%s",
-        event.event_type, event.provider, event.provider_subscription_id,
+        event.event_type,
+        event.provider,
+        event.provider_subscription_id,
     )
 
     if event.event_type == "payment.success":

@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
-
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -16,6 +15,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class UploadInsight:
     """Summary generated after Excel upload."""
+
     file_count: int = 0
     total_sheets: int = 0
     total_rows: int = 0
@@ -75,18 +75,23 @@ async def generate_upload_insight(
 
     insight.quality_warnings = quality_report.summary_items[:5]
 
-    summary_text = "\n".join([
-        f"Files: {', '.join(wb.file_name for wb in workbooks)}",
-        f"Sheets: {', '.join(insight.sheet_summaries)}",
-        f"Relationships: {', '.join(insight.relationships_found) or 'None found'}",
-    ])
+    summary_text = "\n".join(
+        [
+            f"Files: {', '.join(wb.file_name for wb in workbooks)}",
+            f"Sheets: {', '.join(insight.sheet_summaries)}",
+            f"Relationships: {', '.join(insight.relationships_found) or 'None found'}",
+        ]
+    )
 
     quality_text = "\n".join(quality_report.summary_items[:5]) or "No issues found"
 
     try:
         import json
+
         messages = [
-            SystemMessage(content=_INSIGHT_PROMPT.format(summary=summary_text, quality=quality_text)),
+            SystemMessage(
+                content=_INSIGHT_PROMPT.format(summary=summary_text, quality=quality_text)
+            ),
             HumanMessage(content="Generate the insight."),
         ]
         response = await llm.ainvoke(messages)

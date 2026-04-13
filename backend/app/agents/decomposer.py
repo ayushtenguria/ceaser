@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -75,8 +74,12 @@ async def decompose_query(
     bullet_count = query.count("\n-") + query.count("\n•") + query.count("\n*")
     question_marks = query.count("?")
     if bullet_count >= 3 or question_marks >= 3 or len(query) > 500:
-        logger.info("Long/complex query detected (%d bullets, %d questions, %d chars) — skipping decomposition",
-                    bullet_count, question_marks, len(query))
+        logger.info(
+            "Long/complex query detected (%d bullets, %d questions, %d chars) — skipping decomposition",
+            bullet_count,
+            question_marks,
+            len(query),
+        )
         return [query]
 
     messages = [

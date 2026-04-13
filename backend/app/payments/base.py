@@ -24,6 +24,7 @@ class SubscriptionStatus(str, Enum):
 @dataclass
 class CheckoutResult:
     """Returned by create_checkout — contains the URL/session for redirect."""
+
     checkout_url: str
     session_id: str
     provider: str
@@ -32,6 +33,7 @@ class CheckoutResult:
 @dataclass
 class PaymentEvent:
     """Normalized webhook event from any provider."""
+
     event_type: str
     provider: str
     provider_subscription_id: str | None
@@ -45,6 +47,7 @@ class PaymentEvent:
 @dataclass
 class SubscriptionInfo:
     """Current subscription state from a provider."""
+
     provider_subscription_id: str
     status: str
     plan_name: str

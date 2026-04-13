@@ -14,8 +14,7 @@ from __future__ import annotations
 import logging
 import math
 import uuid
-from datetime import datetime, timedelta
-from typing import Any
+from datetime import datetime
 
 from app.services.schema_graph import get_graph_driver
 
@@ -34,12 +33,15 @@ async def _get_embedding(text: str) -> list[float]:
     global _embedder
     if _embedder is None:
         import asyncio
+
         from sentence_transformers import SentenceTransformer
+
         _embedder = SentenceTransformer("all-MiniLM-L6-v2")
         logger.info("Loaded local embedding model: all-MiniLM-L6-v2 (384 dim)")
 
     try:
         import asyncio
+
         loop = asyncio.get_event_loop()
         result = await loop.run_in_executor(None, _embedder.encode, text)
         return result.tolist()
@@ -70,7 +72,8 @@ async def save_memory_to_graph(
         embedding = await _get_embedding(content)
 
         async with driver.session() as session:
-            await session.run("""
+            await session.run(
+                """
                 CREATE (m:Memory {
                     id: $id, org_id: $org_id, user_id: $user_id,
                     memory_type: $mtype, content: $content,
@@ -80,29 +83,46 @@ async def save_memory_to_graph(
                     created_at: datetime(), last_accessed: datetime(),
                     source_conversation_id: $conv_id
                 })
-            """, id=memory_id, org_id=org_id, user_id=user_id or "",
-                mtype=memory_type, content=content, source=source,
-                confidence=confidence, embedding=embedding,
-                conv_id=source_conversation_id or "")
+            """,
+                id=memory_id,
+                org_id=org_id,
+                user_id=user_id or "",
+                mtype=memory_type,
+                content=content,
+                source=source,
+                confidence=confidence,
+                embedding=embedding,
+                conv_id=source_conversation_id or "",
+            )
 
             # Link to related tables (from schema graph)
             if related_tables:
                 for table_name in related_tables:
-                    await session.run("""
+                    await session.run(
+                        """
                         MATCH (m:Memory {id: $mem_id})
                         MATCH (t:Table {name: $table, org_id: $org_id})
                         MERGE (m)-[:ABOUT]->(t)
-                    """, mem_id=memory_id, table=table_name, org_id=org_id)
+                    """,
+                        mem_id=memory_id,
+                        table=table_name,
+                        org_id=org_id,
+                    )
 
             # Link to related columns
             if related_columns:
                 for col in related_columns:
-                    await session.run("""
+                    await session.run(
+                        """
                         MATCH (m:Memory {id: $mem_id})
                         MATCH (t:Table {name: $table, org_id: $org_id})-[:HAS_COLUMN]->(c:Column {name: $col})
                         MERGE (m)-[:ABOUT]->(c)
-                    """, mem_id=memory_id, table=col.get("table", ""),
-                        col=col.get("column", ""), org_id=org_id)
+                    """,
+                        mem_id=memory_id,
+                        table=col.get("table", ""),
+                        col=col.get("column", ""),
+                        org_id=org_id,
+                    )
 
             # Check for conflicts with existing memories
             await _detect_conflicts(session, memory_id, org_id, memory_type, content)
@@ -115,30 +135,45 @@ async def save_memory_to_graph(
         return False
 
 
-async def _detect_conflicts(session, new_memory_id: str, org_id: str, memory_type: str, content: str):
+async def _detect_conflicts(
+    session, new_memory_id: str, org_id: str, memory_type: str, content: str
+):
     """Find existing memories that might conflict with the new one."""
     try:
         keywords = [w.lower() for w in content.split() if len(w) > 3][:5]
         if not keywords:
             return
 
-        result = await session.run("""
+        result = await session.run(
+            """
             MATCH (existing:Memory {org_id: $org_id, memory_type: $mtype, is_active: true})
             WHERE existing.id <> $new_id
               AND ANY(kw IN $keywords WHERE toLower(existing.content) CONTAINS kw)
             RETURN existing.id AS id, existing.content AS content
             LIMIT 5
-        """, org_id=org_id, mtype=memory_type, new_id=new_memory_id, keywords=keywords)
+        """,
+            org_id=org_id,
+            mtype=memory_type,
+            new_id=new_memory_id,
+            keywords=keywords,
+        )
 
         records = [r.data() async for r in result]
         for record in records:
-            await session.run("""
+            await session.run(
+                """
                 MATCH (new:Memory {id: $new_id})
                 MATCH (old:Memory {id: $old_id})
                 MERGE (new)-[:POTENTIALLY_CONFLICTS {detected_at: datetime()}]->(old)
-            """, new_id=new_memory_id, old_id=record["id"])
-            logger.info("Potential conflict: new '%s' vs existing '%s'",
-                        content[:40], record["content"][:40])
+            """,
+                new_id=new_memory_id,
+                old_id=record["id"],
+            )
+            logger.info(
+                "Potential conflict: new '%s' vs existing '%s'",
+                content[:40],
+                record["content"][:40],
+            )
 
     except Exception as exc:
         logger.debug("Conflict detection failed: %s", exc)
@@ -147,6 +182,7 @@ async def _detect_conflicts(session, new_memory_id: str, org_id: str, memory_typ
 # ---------------------------------------------------------------------------
 # Hybrid retrieval — graph + vector
 # ---------------------------------------------------------------------------
+
 
 async def retrieve_memories(
     question: str,
@@ -189,7 +225,8 @@ async def _retrieve_by_graph(driver, question: str, org_id: str, user_id: str | 
         return []
 
     async with driver.session() as session:
-        result = await session.run("""
+        result = await session.run(
+            """
             MATCH (m:Memory {org_id: $org_id, is_active: true})
             WHERE (m.user_id = '' OR m.user_id = $user_id)
               AND ANY(kw IN $keywords WHERE toLower(m.content) CONTAINS kw)
@@ -200,18 +237,25 @@ async def _retrieve_by_graph(driver, question: str, org_id: str, user_id: str | 
                    'graph' AS source
             ORDER BY m.confidence DESC
             LIMIT 15
-        """, org_id=org_id, user_id=user_id or "", keywords=keywords)
+        """,
+            org_id=org_id,
+            user_id=user_id or "",
+            keywords=keywords,
+        )
 
         return [r.data() async for r in result]
 
 
-async def _retrieve_by_vector(driver, question: str, org_id: str, user_id: str | None) -> list[dict]:
+async def _retrieve_by_vector(
+    driver, question: str, org_id: str, user_id: str | None
+) -> list[dict]:
     """Vector semantic search using Neo4j vector index."""
     embedding = await _get_embedding(question)
 
     async with driver.session() as session:
         try:
-            result = await session.run("""
+            result = await session.run(
+                """
                 CALL db.index.vector.queryNodes('memory_embedding_index', 10, $embedding)
                 YIELD node, score
                 WHERE node.org_id = $org_id AND node.is_active = true
@@ -223,7 +267,11 @@ async def _retrieve_by_vector(driver, question: str, org_id: str, user_id: str |
                        score AS vector_score, 'vector' AS source
                 ORDER BY score DESC
                 LIMIT 10
-            """, embedding=embedding, org_id=org_id, user_id=user_id or "")
+            """,
+                embedding=embedding,
+                org_id=org_id,
+                user_id=user_id or "",
+            )
 
             return [r.data() async for r in result]
 
@@ -252,7 +300,7 @@ def _merge_and_score(graph_results: list[dict], vector_results: list[dict]) -> l
         days_old = 0
         if created:
             try:
-                if hasattr(created, 'to_native'):
+                if hasattr(created, "to_native"):
                     created = created.to_native()
                 if isinstance(created, datetime):
                     days_old = (datetime.utcnow() - created.replace(tzinfo=None)).days
@@ -284,11 +332,14 @@ async def _resolve_conflicts(driver, memories: list[dict]) -> list[dict]:
     try:
         mem_ids = [m["id"] for m in memories if m.get("id")]
         async with driver.session() as session:
-            result = await session.run("""
+            result = await session.run(
+                """
                 MATCH (a:Memory)-[:POTENTIALLY_CONFLICTS]-(b:Memory)
                 WHERE a.id IN $ids AND b.id IN $ids
                 RETURN a.id AS id_a, b.id AS id_b
-            """, ids=mem_ids)
+            """,
+                ids=mem_ids,
+            )
 
             conflicts = [r.data() async for r in result]
 
@@ -319,6 +370,7 @@ async def _resolve_conflicts(driver, memories: list[dict]) -> list[dict]:
 # ---------------------------------------------------------------------------
 # Memory formatting for prompt injection
 # ---------------------------------------------------------------------------
+
 
 def format_memories_for_prompt(memories: list[dict]) -> str:
     """Format retrieved memories for LLM prompt injection."""
@@ -359,12 +411,15 @@ async def update_memory_access(memory_ids: list[str]):
 
     try:
         async with driver.session() as session:
-            await session.run("""
+            await session.run(
+                """
                 MATCH (m:Memory)
                 WHERE m.id IN $ids
                 SET m.access_count = m.access_count + 1,
                     m.last_accessed = datetime()
-            """, ids=memory_ids)
+            """,
+                ids=memory_ids,
+            )
     except Exception as exc:
         logger.debug("Memory access update failed: %s", exc)
 
@@ -372,6 +427,7 @@ async def update_memory_access(memory_ids: list[str]):
 # ---------------------------------------------------------------------------
 # Vector index setup (run once)
 # ---------------------------------------------------------------------------
+
 
 async def ensure_vector_index():
     """Create the vector index in Neo4j if it doesn't exist."""
@@ -399,6 +455,7 @@ async def ensure_vector_index():
 # Consolidation (merge related memories)
 # ---------------------------------------------------------------------------
 
+
 async def consolidate_memories(org_id: str, llm=None) -> int:
     """Merge related memories into consolidated facts. Run weekly."""
     driver = get_graph_driver()
@@ -407,7 +464,8 @@ async def consolidate_memories(org_id: str, llm=None) -> int:
 
     try:
         async with driver.session() as session:
-            result = await session.run("""
+            result = await session.run(
+                """
                 MATCH (m1:Memory {org_id: $org_id, is_active: true, is_consolidated: false})
                 MATCH (m2:Memory {org_id: $org_id, is_active: true, is_consolidated: false})
                 WHERE m1.id < m2.id AND m1.memory_type = m2.memory_type
@@ -417,7 +475,9 @@ async def consolidate_memories(org_id: str, llm=None) -> int:
                        m2.id AS id2, m2.content AS content2,
                        m1.memory_type AS type
                 LIMIT 20
-            """, org_id=org_id)
+            """,
+                org_id=org_id,
+            )
 
             groups = [r.data() async for r in result]
 
@@ -435,10 +495,14 @@ async def consolidate_memories(org_id: str, llm=None) -> int:
                 f"Fact 2: {group['content2']}\n"
                 f"Return ONLY the merged fact, nothing else."
             )
-            response = await llm.ainvoke([
-                SystemMessage(content="You merge related facts into single concise statements."),
-                HumanMessage(content=merge_prompt),
-            ])
+            response = await llm.ainvoke(
+                [
+                    SystemMessage(
+                        content="You merge related facts into single concise statements."
+                    ),
+                    HumanMessage(content=merge_prompt),
+                ]
+            )
             merged_content = response.content.strip()
 
             # Create consolidated memory
@@ -446,7 +510,8 @@ async def consolidate_memories(org_id: str, llm=None) -> int:
             embedding = await _get_embedding(merged_content)
 
             async with driver.session() as session:
-                await session.run("""
+                await session.run(
+                    """
                     CREATE (m:Memory {
                         id: $id, org_id: $org_id, user_id: '',
                         memory_type: $type, content: $content,
@@ -455,18 +520,28 @@ async def consolidate_memories(org_id: str, llm=None) -> int:
                         access_count: 0, is_active: true, is_consolidated: true,
                         created_at: datetime(), last_accessed: datetime()
                     })
-                """, id=new_id, org_id=org_id, type=group["type"],
-                    content=merged_content, embedding=embedding)
+                """,
+                    id=new_id,
+                    org_id=org_id,
+                    type=group["type"],
+                    content=merged_content,
+                    embedding=embedding,
+                )
 
                 # Link consolidation
-                await session.run("""
+                await session.run(
+                    """
                     MATCH (new:Memory {id: $new_id})
                     MATCH (old1:Memory {id: $id1})
                     MATCH (old2:Memory {id: $id2})
                     CREATE (new)-[:CONSOLIDATES]->(old1)
                     CREATE (new)-[:CONSOLIDATES]->(old2)
                     SET old1.is_active = false, old2.is_active = false
-                """, new_id=new_id, id1=group["id1"], id2=group["id2"])
+                """,
+                    new_id=new_id,
+                    id1=group["id1"],
+                    id2=group["id2"],
+                )
 
             consolidated += 1
 

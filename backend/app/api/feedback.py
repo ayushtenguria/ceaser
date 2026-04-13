@@ -10,10 +10,10 @@ from __future__ import annotations
 
 import logging
 import uuid
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import func as sa_func, select
+from sqlalchemy import func as sa_func
+from sqlalchemy import select
 
 from app.api.schemas import AccuracyStats, FeedbackCreate, FeedbackResponse
 from app.core.deps import CurrentUser, DbSession
@@ -108,27 +108,44 @@ async def submit_feedback(
     # Side effects
     if body.rating == "down":
         await _create_correction_memory(
-            db, org_id, user.id, message.conversation_id,
-            user_query, message.sql_query, body.correction_note, body.category,
+            db,
+            org_id,
+            user.id,
+            message.conversation_id,
+            user_query,
+            message.sql_query,
+            body.correction_note,
+            body.category,
         )
 
     if body.rating == "up" and message.sql_query and conversation and conversation.connection_id:
         await _create_verified_query(
-            db, org_id, conversation.connection_id, user.id,
-            user_query, message.sql_query, message_id,
+            db,
+            org_id,
+            conversation.connection_id,
+            user.id,
+            user_query,
+            message.sql_query,
+            message_id,
         )
 
     # Deactivate verified query on thumbs-down if one exists
     if body.rating == "down" and message.sql_query:
         await _deactivate_matching_verified_query(
-            db, org_id, user_query,
+            db,
+            org_id,
+            user_query,
         )
 
     await db.commit()
     await db.refresh(feedback)
 
-    logger.info("Feedback submitted: message=%s rating=%s category=%s",
-                message_id, body.rating, body.category)
+    logger.info(
+        "Feedback submitted: message=%s rating=%s category=%s",
+        message_id,
+        body.rating,
+        body.category,
+    )
     return feedback
 
 
@@ -244,6 +261,7 @@ async def _create_correction_memory(
 
     try:
         from app.services.memory import save_memory
+
         await save_memory(
             db,
             org_id=org_id,
@@ -311,6 +329,7 @@ async def _deactivate_matching_verified_query(
     pattern = _normalize_question(user_query)
 
     from app.db.models import VerifiedQuery
+
     stmt = select(VerifiedQuery).where(
         VerifiedQuery.organization_id == org_id,
         VerifiedQuery.question_pattern == pattern,
@@ -331,6 +350,7 @@ def _normalize_question(question: str) -> str:
     - Replace with placeholders
     """
     import re
+
     pattern = question.lower().strip()
     # Replace dates
     pattern = re.sub(r"\b\d{4}[-/]\d{1,2}[-/]\d{1,2}\b", "{date}", pattern)

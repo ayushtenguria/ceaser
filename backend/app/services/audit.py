@@ -24,6 +24,7 @@ async def log_action(
 ) -> None:
     """Record an audit log entry."""
     from sqlalchemy import select
+
     from app.db.models import User
 
     resolved_user_id = None

@@ -75,17 +75,21 @@ async def describe_edge_case_with_llm(
         from langchain_core.messages import HumanMessage, SystemMessage
 
         messages = [
-            SystemMessage(content=(
-                "You are a data engineering assistant. A novel edge case was encountered "
-                "while processing an Excel/CSV file. Describe what happened and suggest "
-                "how to handle it in the future. Be concise (2-3 sentences)."
-            )),
-            HumanMessage(content=(
-                f"File: {file_name}\n"
-                f"Sheet: {sheet_name}\n"
-                f"Error: {error}\n"
-                f"Context: {json.dumps(context, default=str)[:500]}"
-            )),
+            SystemMessage(
+                content=(
+                    "You are a data engineering assistant. A novel edge case was encountered "
+                    "while processing an Excel/CSV file. Describe what happened and suggest "
+                    "how to handle it in the future. Be concise (2-3 sentences)."
+                )
+            ),
+            HumanMessage(
+                content=(
+                    f"File: {file_name}\n"
+                    f"Sheet: {sheet_name}\n"
+                    f"Error: {error}\n"
+                    f"Context: {json.dumps(context, default=str)[:500]}"
+                )
+            ),
         ]
 
         response = await llm.ainvoke(messages)
@@ -113,7 +117,7 @@ def get_recent_edge_cases(limit: int = 50) -> list[dict]:
 
     entries = []
     try:
-        with open(_EDGE_CASE_LOG, "r") as f:
+        with open(_EDGE_CASE_LOG) as f:
             for line in f:
                 line = line.strip()
                 if line:

@@ -86,9 +86,6 @@ def remove_tracking(file_id: str) -> None:
 def _cleanup() -> None:
     """Remove stale entries older than TTL."""
     now = time.monotonic()
-    stale = [
-        fid for fid, p in _active.items()
-        if now - p.started_at > _TTL_SECONDS
-    ]
+    stale = [fid for fid, p in _active.items() if now - p.started_at > _TTL_SECONDS]
     for fid in stale:
         del _active[fid]

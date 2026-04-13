@@ -9,7 +9,6 @@ from __future__ import annotations
 import json
 import logging
 from dataclasses import dataclass, field
-from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -22,6 +21,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SubQuery:
     """A query to run against one specific data source."""
+
     connection_id: str
     connection_name: str
     sql: str
@@ -35,6 +35,7 @@ class SubQuery:
 @dataclass
 class JoinStep:
     """How to join two intermediate results."""
+
     left_alias: str
     right_alias: str
     left_on: str
@@ -45,6 +46,7 @@ class JoinStep:
 @dataclass
 class CrossDbQueryPlan:
     """Complete plan for a cross-database query."""
+
     queries: list[SubQuery] = field(default_factory=list)
     joins: list[JoinStep] = field(default_factory=list)
     post_join_operations: str = ""
@@ -107,10 +109,12 @@ async def plan_cross_db_query(
 ) -> CrossDbQueryPlan:
     """Plan how to answer a question using multiple databases."""
     messages = [
-        SystemMessage(content=_PLAN_PROMPT.format(
-            question=question,
-            schema=multi_schema.combined_context[:6000],
-        )),
+        SystemMessage(
+            content=_PLAN_PROMPT.format(
+                question=question,
+                schema=multi_schema.combined_context[:6000],
+            )
+        ),
         HumanMessage(content=question),
     ]
 
@@ -139,26 +143,32 @@ async def plan_cross_db_query(
                 logger.warning("Cross-DB planner produced non-SELECT: %s", sql[:50])
                 continue
 
-            plan.queries.append(SubQuery(
-                connection_id=q.get("connection_id", ""),
-                connection_name=q.get("connection_name", ""),
-                sql=sql,
-                purpose=q.get("purpose", ""),
-                result_alias=q.get("result_alias", f"df_{len(plan.queries)}"),
-            ))
+            plan.queries.append(
+                SubQuery(
+                    connection_id=q.get("connection_id", ""),
+                    connection_name=q.get("connection_name", ""),
+                    sql=sql,
+                    purpose=q.get("purpose", ""),
+                    result_alias=q.get("result_alias", f"df_{len(plan.queries)}"),
+                )
+            )
 
         for j in data.get("joins", []):
-            plan.joins.append(JoinStep(
-                left_alias=j.get("left_alias", ""),
-                right_alias=j.get("right_alias", ""),
-                left_on=j.get("left_on", ""),
-                right_on=j.get("right_on", ""),
-                how=j.get("how", "left"),
-            ))
+            plan.joins.append(
+                JoinStep(
+                    left_alias=j.get("left_alias", ""),
+                    right_alias=j.get("right_alias", ""),
+                    left_on=j.get("left_on", ""),
+                    right_on=j.get("right_on", ""),
+                    how=j.get("how", "left"),
+                )
+            )
 
         logger.info(
             "Cross-DB plan: %d queries, %d joins, single_db=%s",
-            len(plan.queries), len(plan.joins), plan.is_single_db,
+            len(plan.queries),
+            len(plan.joins),
+            plan.is_single_db,
         )
         return plan
 

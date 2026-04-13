@@ -34,6 +34,7 @@ class QueryCache:
     def _make_key(self, data_source_id: str, question: str) -> str:
         """Create a cache key from data source + normalized question."""
         from app.services.verified_queries import normalize_question
+
         normalized = normalize_question(question)
         raw = f"{data_source_id}:{normalized}"
         return hashlib.md5(raw.encode()).hexdigest()
@@ -109,9 +110,7 @@ class QueryCache:
             "max_size": self._max_size,
             "hits": self._hits,
             "misses": self._misses,
-            "hit_rate_pct": round(
-                self._hits / max(self._hits + self._misses, 1) * 100, 1
-            ),
+            "hit_rate_pct": round(self._hits / max(self._hits + self._misses, 1) * 100, 1),
         }
 
 

@@ -9,7 +9,7 @@ from __future__ import annotations
 import logging
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 
 from app.agents.state import AgentState
 
@@ -65,11 +65,13 @@ async def repair_python(state: AgentState, llm: BaseChatModel) -> AgentState:
     logger.info("Python repair agent: fixing error: %s", error[:150])
 
     messages = [
-        SystemMessage(content=_REPAIR_PROMPT.format(
-            code=code,
-            error=error,
-            schema=schema[:4000],
-        )),
+        SystemMessage(
+            content=_REPAIR_PROMPT.format(
+                code=code,
+                error=error,
+                schema=schema[:4000],
+            )
+        ),
         HumanMessage(content=f"Fix this Python code. The error was: {error}"),
     ]
 
@@ -87,8 +89,7 @@ async def repair_python(state: AgentState, llm: BaseChatModel) -> AgentState:
         logger.warning("Python repair agent produced too-short code, keeping original")
         return state
 
-    logger.info("Python repair agent: fixed code (%d chars → %d chars)",
-                len(code), len(fixed_code))
+    logger.info("Python repair agent: fixed code (%d chars → %d chars)", len(code), len(fixed_code))
     return {
         **state,
         "code_block": fixed_code,

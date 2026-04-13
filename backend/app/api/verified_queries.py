@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
-from app.api.schemas import to_camel, _CamelModel
+from app.api.schemas import _CamelModel, to_camel
 from app.core.deps import CurrentUser, DbSession
 from app.core.permissions import Permission, require_permission
 from app.db.models import VerifiedQuery
@@ -52,9 +52,13 @@ async def list_verified_queries(
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
     org_id = user.organization_id or ""
 
-    stmt = select(VerifiedQuery).where(
-        VerifiedQuery.organization_id == org_id,
-    ).order_by(VerifiedQuery.use_count.desc())
+    stmt = (
+        select(VerifiedQuery)
+        .where(
+            VerifiedQuery.organization_id == org_id,
+        )
+        .order_by(VerifiedQuery.use_count.desc())
+    )
 
     if connection_id:
         stmt = stmt.where(VerifiedQuery.connection_id == connection_id)
@@ -74,8 +78,10 @@ async def create_verified_query(
     org_id = user.organization_id or ""
 
     from app.services.verified_queries import create_verified_query as _create
+
     vq = await _create(
-        db, org_id=org_id,
+        db,
+        org_id=org_id,
         connection_id=body.connection_id,
         question=body.original_question,
         sql=body.sql_template,

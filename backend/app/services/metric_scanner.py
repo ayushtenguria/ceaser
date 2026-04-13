@@ -9,7 +9,7 @@ from __future__ import annotations
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -18,6 +18,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class MetricCandidate:
     """A proposed metric definition discovered from the schema."""
+
     name: str
     description: str
     sql_expression: str
@@ -31,44 +32,76 @@ class MetricCandidate:
 # Pattern rules: (column_name_regex, metric_name_template, sql_template, category, confidence)
 _PATTERNS: list[tuple[re.Pattern, str, str, str, float]] = [
     # Revenue / sales
-    (re.compile(r"(revenue|total_amount|gross_amount|net_amount|sales_amount|order_total|order_amount)", re.I),
-     "Total {col_title}", "SUM({table}.{col})", "revenue", 0.9),
-
+    (
+        re.compile(
+            r"(revenue|total_amount|gross_amount|net_amount|sales_amount|order_total|order_amount)",
+            re.I,
+        ),
+        "Total {col_title}",
+        "SUM({table}.{col})",
+        "revenue",
+        0.9,
+    ),
     # MRR / ARR
-    (re.compile(r"\b(mrr|arr|monthly_recurring|annual_recurring)\b", re.I),
-     "{col_upper}", "SUM({table}.{col})", "revenue", 0.95),
-
+    (
+        re.compile(r"\b(mrr|arr|monthly_recurring|annual_recurring)\b", re.I),
+        "{col_upper}",
+        "SUM({table}.{col})",
+        "revenue",
+        0.95,
+    ),
     # Count / quantity
-    (re.compile(r"(quantity|qty|count|num_|number_of)", re.I),
-     "Total {col_title}", "SUM({table}.{col})", "operations", 0.8),
-
+    (
+        re.compile(r"(quantity|qty|count|num_|number_of)", re.I),
+        "Total {col_title}",
+        "SUM({table}.{col})",
+        "operations",
+        0.8,
+    ),
     # Price / cost / rate
-    (re.compile(r"(price|cost|rate|fee|charge|unit_price|unit_cost)", re.I),
-     "Average {col_title}", "AVG({table}.{col})", "pricing", 0.75),
-
+    (
+        re.compile(r"(price|cost|rate|fee|charge|unit_price|unit_cost)", re.I),
+        "Average {col_title}",
+        "AVG({table}.{col})",
+        "pricing",
+        0.75,
+    ),
     # Discount
-    (re.compile(r"(discount|rebate|markdown|allowance)", re.I),
-     "Average {col_title}", "AVG({table}.{col})", "pricing", 0.7),
-
+    (
+        re.compile(r"(discount|rebate|markdown|allowance)", re.I),
+        "Average {col_title}",
+        "AVG({table}.{col})",
+        "pricing",
+        0.7,
+    ),
     # Margin / profit
-    (re.compile(r"(margin|profit|markup|gross_profit|net_profit)", re.I),
-     "Total {col_title}", "SUM({table}.{col})", "financial", 0.85),
-
+    (
+        re.compile(r"(margin|profit|markup|gross_profit|net_profit)", re.I),
+        "Total {col_title}",
+        "SUM({table}.{col})",
+        "financial",
+        0.85,
+    ),
     # Score / rating
-    (re.compile(r"(score|rating|nps|csat|health_score|lead_score)", re.I),
-     "Average {col_title}", "AVG({table}.{col})", "metrics", 0.8),
+    (
+        re.compile(r"(score|rating|nps|csat|health_score|lead_score)", re.I),
+        "Average {col_title}",
+        "AVG({table}.{col})",
+        "metrics",
+        0.8,
+    ),
 ]
 
 # Table-level patterns for COUNT metrics
 _TABLE_COUNT_PATTERNS: list[tuple[re.Pattern, str, float]] = [
-    (re.compile(r"(order|transaction|deal|sale|purchase)", re.I),
-     "Total {table_title}s", 0.85),
-    (re.compile(r"(customer|client|account|user|contact|lead)", re.I),
-     "Total {table_title}s", 0.85),
-    (re.compile(r"(ticket|issue|case|incident|support)", re.I),
-     "Total {table_title}s", 0.8),
-    (re.compile(r"(invoice|payment|refund)", re.I),
-     "Total {table_title}s", 0.8),
+    (re.compile(r"(order|transaction|deal|sale|purchase)", re.I), "Total {table_title}s", 0.85),
+    (
+        re.compile(r"(customer|client|account|user|contact|lead)", re.I),
+        "Total {table_title}s",
+        0.85,
+    ),
+    (re.compile(r"(ticket|issue|case|incident|support)", re.I), "Total {table_title}s", 0.8),
+    (re.compile(r"(invoice|payment|refund)", re.I), "Total {table_title}s", 0.8),
 ]
 
 
@@ -103,9 +136,19 @@ def scan_schema_for_metrics(
             col_type = col.get("data_type", "").lower()
 
             # Only numeric columns for aggregation metrics
-            is_numeric = any(t in col_type for t in (
-                "int", "float", "numeric", "decimal", "double", "money", "real", "bigint",
-            ))
+            is_numeric = any(
+                t in col_type
+                for t in (
+                    "int",
+                    "float",
+                    "numeric",
+                    "decimal",
+                    "double",
+                    "money",
+                    "real",
+                    "bigint",
+                )
+            )
             if not is_numeric:
                 continue
 
@@ -123,15 +166,17 @@ def scan_schema_for_metrics(
                     pattern_matches.setdefault(key, []).append((table_name, col_name))
 
                     if name not in seen_names:
-                        candidates.append(MetricCandidate(
-                            name=name,
-                            description=f"{name} from {table_name}.{col_name}",
-                            sql_expression=sql,
-                            category=category,
-                            source_table=table_name,
-                            source_column=col_name,
-                            confidence=confidence,
-                        ))
+                        candidates.append(
+                            MetricCandidate(
+                                name=name,
+                                description=f"{name} from {table_name}.{col_name}",
+                                sql_expression=sql,
+                                category=category,
+                                source_table=table_name,
+                                source_column=col_name,
+                                confidence=confidence,
+                            )
+                        )
                         seen_names.add(name)
                     break  # One match per column
 
@@ -142,15 +187,17 @@ def scan_schema_for_metrics(
                 name = name_tmpl.format(table_title=table_title)
 
                 if name not in seen_names:
-                    candidates.append(MetricCandidate(
-                        name=name,
-                        description=f"Count of rows in {table_name}",
-                        sql_expression=f"COUNT(*) FROM {table_name}",
-                        category="operations",
-                        source_table=table_name,
-                        source_column="*",
-                        confidence=confidence,
-                    ))
+                    candidates.append(
+                        MetricCandidate(
+                            name=name,
+                            description=f"Count of rows in {table_name}",
+                            sql_expression=f"COUNT(*) FROM {table_name}",
+                            category="operations",
+                            source_table=table_name,
+                            source_column="*",
+                            confidence=confidence,
+                        )
+                    )
                     seen_names.add(name)
 
     # Add ambiguity notes

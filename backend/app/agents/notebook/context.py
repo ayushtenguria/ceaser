@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import json
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Any
 
 logger = logging.getLogger(__name__)
@@ -17,6 +17,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class CellOutput:
     """Output from a completed cell."""
+
     cell_id: str
     cell_type: str
     variable_name: str
@@ -61,7 +62,7 @@ class NotebookContext:
         safe_label = label.lower().replace(" ", "_").replace("-", "_")
         self._user_inputs[safe_label] = value
         self._variables[safe_label] = value
-        self._code_preamble_lines.append(f'{safe_label} = {json.dumps(value)}')
+        self._code_preamble_lines.append(f"{safe_label} = {json.dumps(value)}")
 
     def add_file(self, cell_id: str, var_name: str, parquet_path: str, info: dict) -> None:
         """Register a DataFrame loaded from a file cell."""
@@ -105,7 +106,9 @@ class NotebookContext:
             for var, info in self._dataframes.items():
                 cols = info.get("columns", [])
                 rows = info.get("rows", "?")
-                parts.append(f"  {var}: {rows} rows, columns: {', '.join(str(c) for c in cols[:15])}")
+                parts.append(
+                    f"  {var}: {rows} rows, columns: {', '.join(str(c) for c in cols[:15])}"
+                )
 
         if self._user_inputs:
             parts.append("\nUSER INPUTS:")

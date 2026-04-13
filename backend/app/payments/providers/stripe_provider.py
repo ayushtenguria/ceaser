@@ -90,7 +90,8 @@ class StripeProvider(IPaymentProvider):
                         break
 
             normalized_type = (
-                "subscription.cancelled" if obj.get("status") == "canceled"
+                "subscription.cancelled"
+                if obj.get("status") == "canceled"
                 else "subscription.updated"
             )
             return PaymentEvent(

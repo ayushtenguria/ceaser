@@ -14,7 +14,7 @@ import logging
 import uuid
 from datetime import datetime, timedelta
 
-from sqlalchemy import select, update, func
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AgentMemory
@@ -40,6 +40,7 @@ async def load_memories(
     """
     try:
         from app.services.memory_graph import retrieve_memories, update_memory_access
+
         memories = await retrieve_memories(
             question=question,
             org_id=org_id,
@@ -117,6 +118,7 @@ def format_memories_for_prompt(memories: list[dict]) -> str:
 
     try:
         from app.services.memory_graph import format_memories_for_prompt as graph_format
+
         return graph_format(memories)
     except ImportError:
         pass
@@ -193,6 +195,7 @@ async def save_memory(
 
     try:
         from app.services.memory_graph import save_memory_to_graph
+
         await save_memory_to_graph(
             memory_id=str(memory.id),
             org_id=org_id,

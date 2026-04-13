@@ -37,11 +37,7 @@ router = APIRouter(prefix="/notebooks", tags=["notebooks"])
 
 async def _load_notebook(db: DbSession, notebook_id: uuid.UUID, user: User) -> Notebook:
     """Load notebook with cells, verifying org access."""
-    stmt = (
-        select(Notebook)
-        .options(selectinload(Notebook.cells))
-        .where(Notebook.id == notebook_id)
-    )
+    stmt = select(Notebook).options(selectinload(Notebook.cells)).where(Notebook.id == notebook_id)
     result = await db.execute(stmt)
     notebook = result.scalar_one_or_none()
     if notebook is None:
@@ -54,11 +50,14 @@ async def _load_notebook(db: DbSession, notebook_id: uuid.UUID, user: User) -> N
 
 @router.post("/", response_model=NotebookResponse, status_code=status.HTTP_201_CREATED)
 async def create_notebook(
-    body: NotebookCreate, current_user: CurrentUser, db: DbSession,
+    body: NotebookCreate,
+    current_user: CurrentUser,
+    db: DbSession,
 ) -> Notebook:
     """Create a new notebook with optional initial cells."""
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
-    from app.core.features import check_feature, Feature
+    from app.core.features import Feature, check_feature
+
     await check_feature(Feature.NOTEBOOKS, db, user.organization_id or "")
 
     notebook = Notebook(
@@ -124,7 +123,9 @@ async def list_templates(current_user: CurrentUser, db: DbSession) -> list[Noteb
 
 @router.get("/{notebook_id}", response_model=NotebookResponse)
 async def get_notebook(
-    notebook_id: uuid.UUID, current_user: CurrentUser, db: DbSession,
+    notebook_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
 ) -> Notebook:
     """Get a notebook with all cells."""
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
@@ -133,7 +134,10 @@ async def get_notebook(
 
 @router.patch("/{notebook_id}", response_model=NotebookResponse)
 async def update_notebook(
-    notebook_id: uuid.UUID, body: NotebookUpdate, current_user: CurrentUser, db: DbSession,
+    notebook_id: uuid.UUID,
+    body: NotebookUpdate,
+    current_user: CurrentUser,
+    db: DbSession,
 ) -> Notebook:
     """Update notebook metadata."""
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
@@ -159,7 +163,9 @@ async def update_notebook(
 
 @router.delete("/{notebook_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_notebook(
-    notebook_id: uuid.UUID, current_user: CurrentUser, db: DbSession,
+    notebook_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
 ) -> None:
     """Delete a notebook and all its cells/runs."""
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
@@ -169,7 +175,10 @@ async def delete_notebook(
 
 @router.post("/{notebook_id}/cells", response_model=NotebookResponse)
 async def add_cell(
-    notebook_id: uuid.UUID, body: NotebookCellCreate, current_user: CurrentUser, db: DbSession,
+    notebook_id: uuid.UUID,
+    body: NotebookCellCreate,
+    current_user: CurrentUser,
+    db: DbSession,
 ) -> Notebook:
     """Add a cell to a notebook."""
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
@@ -194,8 +203,11 @@ async def add_cell(
 
 @router.patch("/{notebook_id}/cells/{cell_id}", response_model=NotebookResponse)
 async def update_cell(
-    notebook_id: uuid.UUID, cell_id: uuid.UUID, body: NotebookCellCreate,
-    current_user: CurrentUser, db: DbSession,
+    notebook_id: uuid.UUID,
+    cell_id: uuid.UUID,
+    body: NotebookCellCreate,
+    current_user: CurrentUser,
+    db: DbSession,
 ) -> Notebook:
     """Update a cell's content/config."""
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
@@ -218,7 +230,10 @@ async def update_cell(
 
 @router.delete("/{notebook_id}/cells/{cell_id}", response_model=NotebookResponse)
 async def delete_cell(
-    notebook_id: uuid.UUID, cell_id: uuid.UUID, current_user: CurrentUser, db: DbSession,
+    notebook_id: uuid.UUID,
+    cell_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
 ) -> Notebook:
     """Delete a cell from a notebook."""
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
@@ -235,7 +250,10 @@ async def delete_cell(
 
 @router.post("/{notebook_id}/cells/reorder", response_model=NotebookResponse)
 async def reorder_cells(
-    notebook_id: uuid.UUID, body: CellReorderRequest, current_user: CurrentUser, db: DbSession,
+    notebook_id: uuid.UUID,
+    body: CellReorderRequest,
+    current_user: CurrentUser,
+    db: DbSession,
 ) -> Notebook:
     """Reorder cells by providing an ordered list of cell IDs."""
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
@@ -252,8 +270,10 @@ async def reorder_cells(
 
 @router.post("/{notebook_id}/run")
 async def run_notebook(
-    notebook_id: uuid.UUID, body: NotebookRunRequest,
-    current_user: CurrentUser, db: DbSession,
+    notebook_id: uuid.UUID,
+    body: NotebookRunRequest,
+    current_user: CurrentUser,
+    db: DbSession,
 ) -> StreamingResponse:
     """Run a notebook and stream cell results as SSE."""
     user = await require_permission(Permission.QUERY_DATA, current_user, db)
@@ -331,14 +351,23 @@ async def run_notebook(
 
         await db.commit()
 
-        yield _sse({"type": "run_complete", "runId": str(run_id), "status": "completed" if not has_error else "failed", "totalMs": total_ms})
+        yield _sse(
+            {
+                "type": "run_complete",
+                "runId": str(run_id),
+                "status": "completed" if not has_error else "failed",
+                "totalMs": total_ms,
+            }
+        )
 
     return StreamingResponse(event_stream(), media_type="text/event-stream")
 
 
 @router.get("/{notebook_id}/runs", response_model=list[NotebookRunResponse])
 async def list_runs(
-    notebook_id: uuid.UUID, current_user: CurrentUser, db: DbSession,
+    notebook_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
 ) -> list[NotebookRun]:
     """List past runs of a notebook."""
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
@@ -356,7 +385,10 @@ async def list_runs(
 
 @router.get("/{notebook_id}/runs/{run_id}", response_model=NotebookRunResponse)
 async def get_run(
-    notebook_id: uuid.UUID, run_id: uuid.UUID, current_user: CurrentUser, db: DbSession,
+    notebook_id: uuid.UUID,
+    run_id: uuid.UUID,
+    current_user: CurrentUser,
+    db: DbSession,
 ) -> NotebookRun:
     """Get a specific run with all cell results."""
     user = await require_permission(Permission.VIEW_DATA, current_user, db)

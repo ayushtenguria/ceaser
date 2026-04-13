@@ -70,12 +70,14 @@ async def generate_notebook_from_description(
             ct = cell.get("cell_type", "")
             if ct not in valid_types:
                 continue
-            cleaned.append({
-                "cell_type": ct,
-                "content": cell.get("content", ""),
-                "config": cell.get("config"),
-                "output_variable": cell.get("output_variable", ""),
-            })
+            cleaned.append(
+                {
+                    "cell_type": ct,
+                    "content": cell.get("content", ""),
+                    "config": cell.get("config"),
+                    "output_variable": cell.get("output_variable", ""),
+                }
+            )
 
         if len(cleaned) < 2:
             return _default_cells(description)
@@ -91,8 +93,28 @@ def _default_cells(description: str) -> list[dict[str, Any]]:
     """Fallback notebook structure."""
     return [
         {"cell_type": "text", "content": f"# {description}", "config": None, "output_variable": ""},
-        {"cell_type": "file", "content": "Upload your data file", "config": {"accepted_types": [".xlsx", ".csv"], "description": "Upload data"}, "output_variable": ""},
-        {"cell_type": "prompt", "content": f"Analyze the uploaded data: {description}", "config": None, "output_variable": "analysis"},
-        {"cell_type": "prompt", "content": "Create a visualization of the key findings", "config": None, "output_variable": "chart"},
-        {"cell_type": "text", "content": "## Summary\nAnalysis complete.", "config": None, "output_variable": ""},
+        {
+            "cell_type": "file",
+            "content": "Upload your data file",
+            "config": {"accepted_types": [".xlsx", ".csv"], "description": "Upload data"},
+            "output_variable": "",
+        },
+        {
+            "cell_type": "prompt",
+            "content": f"Analyze the uploaded data: {description}",
+            "config": None,
+            "output_variable": "analysis",
+        },
+        {
+            "cell_type": "prompt",
+            "content": "Create a visualization of the key findings",
+            "config": None,
+            "output_variable": "chart",
+        },
+        {
+            "cell_type": "text",
+            "content": "## Summary\nAnalysis complete.",
+            "config": None,
+            "output_variable": "",
+        },
     ]

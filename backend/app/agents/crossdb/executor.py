@@ -11,7 +11,6 @@ import logging
 import time
 import uuid
 from dataclasses import dataclass, field
-from typing import Any
 
 import pandas as pd
 from sqlalchemy import select
@@ -29,6 +28,7 @@ _PER_QUERY_TIMEOUT = 30
 @dataclass
 class QueryResult:
     """Result from executing one sub-query."""
+
     alias: str
     connection_name: str
     df: pd.DataFrame | None = None
@@ -99,7 +99,7 @@ async def execute_parallel_queries(
                 result.columns = list(df.columns)
                 result.success = True
 
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 result.success = False
                 result.error = f"Query timed out after {timeout_per_query}s"
                 logger.warning("Query timeout on %s: %s", sub.connection_name, sub.sql[:80])
@@ -130,7 +130,9 @@ async def execute_parallel_queries(
     total_rows = sum(r.row_count for r in results.values() if r.success)
     logger.info(
         "Parallel execution: %d/%d succeeded, %d total rows",
-        successful, len(results), total_rows,
+        successful,
+        len(results),
+        total_rows,
     )
 
     return results
@@ -149,6 +151,7 @@ async def _execute_file_query(
             return result
 
         from app.services.storage import get_storage
+
         storage = get_storage()
         dfs = []
         for var_name, path in sub.parquet_paths.items():

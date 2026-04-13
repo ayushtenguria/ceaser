@@ -78,7 +78,5 @@ class S3Storage(StorageBackend):
     async def delete(self, remote_path: str) -> None:
         import asyncio
 
-        await asyncio.to_thread(
-            self._client.delete_object, Bucket=self._bucket, Key=remote_path
-        )
+        await asyncio.to_thread(self._client.delete_object, Bucket=self._bucket, Key=remote_path)
         logger.info("S3 delete: s3://%s/%s", self._bucket, remote_path)

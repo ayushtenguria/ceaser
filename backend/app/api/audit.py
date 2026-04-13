@@ -3,11 +3,10 @@
 from __future__ import annotations
 
 import logging
-import uuid
 from datetime import datetime
 
 from fastapi import APIRouter, Query
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
 from app.api.schemas import AuditLogResponse
 from app.core.deps import CurrentUser, DbSession
@@ -32,9 +31,11 @@ async def list_audit_logs(
 
     org_user_ids = select(User.id).where(User.organization_id == (user.organization_id or ""))
 
-    stmt = select(AuditLog).where(
-        AuditLog.user_id.in_(org_user_ids)
-    ).order_by(AuditLog.created_at.desc())
+    stmt = (
+        select(AuditLog)
+        .where(AuditLog.user_id.in_(org_user_ids))
+        .order_by(AuditLog.created_at.desc())
+    )
 
     if action:
         stmt = stmt.where(AuditLog.action == action)

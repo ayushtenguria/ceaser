@@ -5,11 +5,9 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass, field
-from typing import Any
 
 from sqlalchemy import create_engine, inspect, text
 
-from app.connectors.factory import get_connector
 from app.db.models import DatabaseConnection
 from app.services.encryption import decrypt_value
 
@@ -67,6 +65,7 @@ def _quote_ident(name: str) -> str:
     """
     # Reject names with dangerous characters
     import re
+
     if not re.match(r"^[\w\s.]+$", name):
         raise ValueError(f"Invalid identifier: {name!r}")
     return '"' + name.replace('"', '""') + '"'
@@ -88,11 +87,17 @@ def _introspect_schema_sync(connection: DatabaseConnection) -> SchemaInfo:
         table_names = inspector.get_table_names()
 
         for table_name in table_names:
-            pk_cols = {c for c in inspector.get_pk_constraint(table_name).get("constrained_columns", [])}
+            pk_cols = {
+                c for c in inspector.get_pk_constraint(table_name).get("constrained_columns", [])
+            }
             fk_map: dict[str, str] = {}
             for fk in inspector.get_foreign_keys(table_name):
                 for col in fk.get("constrained_columns", []):
-                    referred = f"{fk['referred_table']}.{fk['referred_columns'][0]}" if fk.get("referred_columns") else fk["referred_table"]
+                    referred = (
+                        f"{fk['referred_table']}.{fk['referred_columns'][0]}"
+                        if fk.get("referred_columns")
+                        else fk["referred_table"]
+                    )
                     fk_map[col] = referred
 
             columns: list[ColumnInfo] = []
@@ -139,15 +144,15 @@ def _introspect_schema_sync(connection: DatabaseConnection) -> SchemaInfo:
 
                         if distinct_count is not None and distinct_count <= 25:
                             values_result = conn_.execute(
-                                text(f"SELECT DISTINCT {safe_col} FROM {safe_table} WHERE {safe_col} IS NOT NULL ORDER BY {safe_col} LIMIT 25")
+                                text(
+                                    f"SELECT DISTINCT {safe_col} FROM {safe_table} WHERE {safe_col} IS NOT NULL ORDER BY {safe_col} LIMIT 25"
+                                )
                             )
                             col_info.sample_values = [str(row[0]) for row in values_result]
                 except Exception:
                     logger.debug("Could not get distinct values for %s.%s", table_name, col_name)
 
-            schema.tables.append(
-                TableInfo(name=table_name, columns=columns, row_count=row_count)
-            )
+            schema.tables.append(TableInfo(name=table_name, columns=columns, row_count=row_count))
     finally:
         sync_engine.dispose()
 
@@ -180,27 +185,77 @@ def _humanize_column_name(name: str) -> str | None:
 
     # Common abbreviation mapping
     abbrevs = {
-        "amt": "amount", "qty": "quantity", "cnt": "count", "num": "number",
-        "dt": "date", "ts": "timestamp", "tm": "time",
-        "desc": "description", "nm": "name", "addr": "address",
-        "cust": "customer", "usr": "user", "emp": "employee", "mgr": "manager",
-        "org": "organization", "dept": "department", "div": "division",
-        "prod": "product", "cat": "category", "inv": "invoice", "ord": "order",
-        "txn": "transaction", "pmt": "payment", "acct": "account",
-        "rev": "revenue", "mrr": "MRR", "arr": "ARR",
-        "flg": "flag", "ind": "indicator", "sts": "status", "st": "status",
-        "pct": "percent", "avg": "average", "tot": "total", "max": "maximum",
-        "min": "minimum", "prev": "previous", "cur": "current", "ytd": "year-to-date",
-        "mtd": "month-to-date", "qtd": "quarter-to-date",
-        "q1": "Q1", "q2": "Q2", "q3": "Q3", "q4": "Q4",
-        "yy": "year", "mm": "month", "dd": "day",
-        "adj": "adjusted", "unadj": "unadjusted", "calc": "calculated",
-        "src": "source", "tgt": "target", "dst": "destination",
-        "actv": "active", "inactv": "inactive", "del": "deleted",
-        "id": "ID", "pk": "PK", "fk": "FK", "utc": "UTC",
-        "lbl": "label", "grp": "group", "lvl": "level", "typ": "type",
-        "seq": "sequence", "ref": "reference", "ext": "external",
-        "int": "internal", "pri": "primary", "sec": "secondary",
+        "amt": "amount",
+        "qty": "quantity",
+        "cnt": "count",
+        "num": "number",
+        "dt": "date",
+        "ts": "timestamp",
+        "tm": "time",
+        "desc": "description",
+        "nm": "name",
+        "addr": "address",
+        "cust": "customer",
+        "usr": "user",
+        "emp": "employee",
+        "mgr": "manager",
+        "org": "organization",
+        "dept": "department",
+        "div": "division",
+        "prod": "product",
+        "cat": "category",
+        "inv": "invoice",
+        "ord": "order",
+        "txn": "transaction",
+        "pmt": "payment",
+        "acct": "account",
+        "rev": "revenue",
+        "mrr": "MRR",
+        "arr": "ARR",
+        "flg": "flag",
+        "ind": "indicator",
+        "sts": "status",
+        "st": "status",
+        "pct": "percent",
+        "avg": "average",
+        "tot": "total",
+        "max": "maximum",
+        "min": "minimum",
+        "prev": "previous",
+        "cur": "current",
+        "ytd": "year-to-date",
+        "mtd": "month-to-date",
+        "qtd": "quarter-to-date",
+        "q1": "Q1",
+        "q2": "Q2",
+        "q3": "Q3",
+        "q4": "Q4",
+        "yy": "year",
+        "mm": "month",
+        "dd": "day",
+        "adj": "adjusted",
+        "unadj": "unadjusted",
+        "calc": "calculated",
+        "src": "source",
+        "tgt": "target",
+        "dst": "destination",
+        "actv": "active",
+        "inactv": "inactive",
+        "del": "deleted",
+        "id": "ID",
+        "pk": "PK",
+        "fk": "FK",
+        "utc": "UTC",
+        "lbl": "label",
+        "grp": "group",
+        "lvl": "level",
+        "typ": "type",
+        "seq": "sequence",
+        "ref": "reference",
+        "ext": "external",
+        "int": "internal",
+        "pri": "primary",
+        "sec": "secondary",
     }
 
     parts = name.lower().replace("-", "_").split("_")
@@ -265,8 +320,14 @@ def format_schema_for_llm(schema: SchemaInfo) -> str:
                 str_vals = [str(v).lower().strip() for v in col.sample_values if v]
                 unique_lower = set(str_vals)
                 if len(unique_lower) < len(col.sample_values) and col.data_type.upper() in (
-                    "VARCHAR", "TEXT", "STRING", "CHARACTER VARYING",
-                    "VARCHAR(50)", "VARCHAR(100)", "VARCHAR(200)", "VARCHAR(255)",
+                    "VARCHAR",
+                    "TEXT",
+                    "STRING",
+                    "CHARACTER VARYING",
+                    "VARCHAR(50)",
+                    "VARCHAR(100)",
+                    "VARCHAR(200)",
+                    "VARCHAR(255)",
                 ):
                     parts.append("[DIRTY DATA - use LOWER(TRIM()) for comparison]")
             lines.append(" ".join(parts))

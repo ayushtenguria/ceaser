@@ -10,7 +10,6 @@ Each cell type is handled by a specialized executor:
 
 from __future__ import annotations
 
-import json
 import logging
 import time
 import uuid
@@ -21,16 +20,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.notebook.context import CellOutput, NotebookContext
-from app.db.models import DatabaseConnection, FileUpload, NotebookCell
+from app.db.models import FileUpload, NotebookCell
 
 logger = logging.getLogger(__name__)
+
 
 def _cell_timeout() -> int:
     try:
         from app.core.config import get_settings
+
         return get_settings().cell_timeout_seconds
     except Exception:
         return 120
+
 
 _CELL_TIMEOUT_SECONDS = _cell_timeout()
 
@@ -57,6 +59,7 @@ async def execute_notebook_cells(
     if connection_id:
         try:
             from app.api.chat import _build_schema_context
+
             schema = await _build_schema_context(db, uuid.UUID(connection_id), None)
             ctx.set_connection_schema(schema)
         except Exception as exc:
@@ -144,6 +147,7 @@ async def _execute_file_cell(
 
     if upload.parquet_paths:
         from app.agents.excel.context import CEASER_PROTOCOL
+
         for var_name, remote_path in upload.parquet_paths.items():
             safe_ref = f"{CEASER_PROTOCOL}{remote_path}"
             info = {"columns": [], "rows": 0, "path": safe_ref}
@@ -156,9 +160,7 @@ async def _execute_file_cell(
         return {"status": "success", "text": text}
 
     try:
-        import asyncio
         from app.agents.excel.orchestrator import process_excel_upload
-        from app.core.deps import get_llm
 
         excel_result = await process_excel_upload(upload.file_path, llm=None)
         for var_name, path in excel_result.get("parquet_paths", {}).items():
@@ -204,7 +206,9 @@ async def _execute_prompt_cell(
     if has_files:
         code_preamble = ctx.build_code_preamble()
         schema_context += f"\n\nCODE PREAMBLE (prepend to all Python code):\n{code_preamble}"
-        schema_context += "\nIMPORTANT: The DataFrames listed above are from UPLOADED FILES in this notebook."
+        schema_context += (
+            "\nIMPORTANT: The DataFrames listed above are from UPLOADED FILES in this notebook."
+        )
         schema_context += " Use Python/pandas to query these DataFrames — NOT SQL."
         schema_context += " If the user's question is about this uploaded data, use Python mode."
 

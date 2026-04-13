@@ -67,3 +67,8 @@ line-length = 100
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "N", "W", "UP"]
+ignore = [
+    "E501",   # line too long — enforced at review time, not CI
+    "E712",   # == True is required for SQLAlchemy .where() filters
+    "UP038",  # isinstance(x, (A, B)) — style preference, not a bug
+]

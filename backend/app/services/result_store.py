@@ -13,8 +13,6 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import uuid
-from datetime import datetime, timezone
 from typing import Any
 
 import pandas as pd
@@ -54,21 +52,22 @@ async def save_query_result(
     if len(df) > _MAX_RESULT_ROWS:
         df = df.head(_MAX_RESULT_ROWS)
 
-    result_id = hashlib.md5(
-        f"{conversation_id}:{query_text}:{len(rows)}".encode()
-    ).hexdigest()[:12]
+    result_id = hashlib.md5(f"{conversation_id}:{query_text}:{len(rows)}".encode()).hexdigest()[:12]
 
     remote_path = f"results/{org_id}/{conversation_id}/{result_id}.parquet"
     buf = df.to_parquet(index=False)
 
     from app.services.storage import get_storage
+
     storage = get_storage()
 
     try:
         await storage.upload(buf, remote_path)
         logger.info(
             "Saved query result: %s (%d rows × %d cols)",
-            result_id, len(df), len(df.columns),
+            result_id,
+            len(df),
+            len(df.columns),
         )
         return {
             "result_id": result_id,
@@ -110,9 +109,9 @@ def build_result_context(
         if len(cols) > 15:
             col_list += f", ... ({len(cols) - 15} more)"
 
-        lines.append(f"  {var_name}: {rows} rows — from: \"{query}\"")
+        lines.append(f'  {var_name}: {rows} rows — from: "{query}"')
         lines.append(f"    Columns: {col_list}")
-        lines.append(f"    Load: {var_name} = pd.read_parquet(\"{ref}\")")
+        lines.append(f'    Load: {var_name} = pd.read_parquet("{ref}")')
         lines.append(f"    DuckDB: duckdb.sql(\"SELECT ... FROM read_parquet('{ref}')\")")
         lines.append("")
 
@@ -128,6 +127,7 @@ async def load_conversation_results(
     Reads the result_ref field from assistant messages in this conversation.
     """
     from sqlalchemy import select
+
     from app.db.models import Message
 
     stmt = (

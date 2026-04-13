@@ -28,9 +28,7 @@ async def execute_sql(state: AgentState, db: AsyncSession) -> AgentState:
     if not sql or not connection_id:
         return {**state, "error": "Missing SQL query or connection_id.", "next_action": "error"}
 
-    stmt = select(DatabaseConnection).where(
-        DatabaseConnection.id == uuid.UUID(connection_id)
-    )
+    stmt = select(DatabaseConnection).where(DatabaseConnection.id == uuid.UUID(connection_id))
     result = await db.execute(stmt)
     connection = result.scalar_one_or_none()
     if connection is None:
@@ -49,9 +47,7 @@ async def execute_sql(state: AgentState, db: AsyncSession) -> AgentState:
             "truncated": len(rows) > _MAX_TABLE_ROWS,
         }
 
-        execution_result = (
-            f"Query returned {len(rows)} row(s) with columns: {', '.join(columns)}"
-        )
+        execution_result = f"Query returned {len(rows)} row(s) with columns: {', '.join(columns)}"
 
         return {
             **state,

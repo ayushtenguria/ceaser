@@ -76,12 +76,14 @@ async def generate_follow_up_suggestions(
         conv_summary += f"{role}: {content}\n"
 
     messages = [
-        SystemMessage(content=_SUGGEST_PROMPT.format(
-            schema_context=schema_context[:2000],
-            conversation_history=conv_summary or "No previous messages",
-            last_question=last_question,
-            last_answer=last_answer[:300],
-        )),
+        SystemMessage(
+            content=_SUGGEST_PROMPT.format(
+                schema_context=schema_context[:2000],
+                conversation_history=conv_summary or "No previous messages",
+                last_question=last_question,
+                last_answer=last_answer[:300],
+            )
+        ),
         HumanMessage(content="Generate 3 follow-up questions."),
     ]
 
@@ -113,10 +115,14 @@ async def generate_initial_suggestions(
         return _DEFAULT_SUGGESTIONS
 
     messages = [
-        SystemMessage(content=_INITIAL_PROMPT.format(
-            schema_context=schema_context[:3000],
-            metrics_context=f"Defined business metrics:\n{metrics_context}" if metrics_context else "",
-        )),
+        SystemMessage(
+            content=_INITIAL_PROMPT.format(
+                schema_context=schema_context[:3000],
+                metrics_context=f"Defined business metrics:\n{metrics_context}"
+                if metrics_context
+                else "",
+            )
+        ),
         HumanMessage(content="Generate 6 relevant starter questions."),
     ]
 

@@ -40,24 +40,29 @@ def discover_cross_file_relationships(
     vars_list = list(var_columns.keys())
 
     for i, var_a in enumerate(vars_list):
-        for var_b in vars_list[i + 1:]:
+        for var_b in vars_list[i + 1 :]:
             if var_to_file[var_a] == var_to_file[var_b]:
                 continue
 
             shared = var_columns[var_a] & var_columns[var_b]
             for col in shared:
                 is_key = any(kw in col for kw in ("id", "key", "code", "name", "email", "sku"))
-                relationships.append({
-                    "source_var": var_a,
-                    "source_col": col,
-                    "target_var": var_b,
-                    "target_col": col,
-                    "match_type": "exact_name_key" if is_key else "exact_name",
-                    "confidence": 0.95 if is_key else 0.7,
-                })
+                relationships.append(
+                    {
+                        "source_var": var_a,
+                        "source_col": col,
+                        "target_var": var_b,
+                        "target_col": col,
+                        "match_type": "exact_name_key" if is_key else "exact_name",
+                        "confidence": 0.95 if is_key else 0.7,
+                    }
+                )
 
-    logger.info("Cross-file discovery: %d relationships across %d files",
-                len(relationships), len(file_contexts))
+    logger.info(
+        "Cross-file discovery: %d relationships across %d files",
+        len(relationships),
+        len(file_contexts),
+    )
     return relationships
 
 
@@ -80,14 +85,11 @@ def format_cross_file_context(relationships: list[dict]) -> str:
         src_col = rel["source_col"]
         tgt_col = rel["target_col"]
 
-        lines.append(
-            f"  {src_var}.{src_col} → {tgt_var}.{tgt_col}"
-            f"  ({conf:.0%} confidence)"
-        )
+        lines.append(f"  {src_var}.{src_col} → {tgt_var}.{tgt_col}" f"  ({conf:.0%} confidence)")
         # DuckDB join (preferred for large files)
         lines.append(
-            f"    DuckDB: duckdb.sql(\"SELECT ... FROM read_parquet(_PARQUET_{src_var.upper()}) a "
-            f"JOIN read_parquet(_PARQUET_{tgt_var.upper()}) b ON a.{src_col} = b.{tgt_col}\").fetchdf()"
+            f'    DuckDB: duckdb.sql("SELECT ... FROM read_parquet(_PARQUET_{src_var.upper()}) a '
+            f'JOIN read_parquet(_PARQUET_{tgt_var.upper()}) b ON a.{src_col} = b.{tgt_col}").fetchdf()'
         )
         # pandas fallback
         lines.append(

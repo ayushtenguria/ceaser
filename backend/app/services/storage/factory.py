@@ -18,11 +18,13 @@ def get_storage() -> StorageBackend:
         return _instance
 
     from app.core.config import get_settings
+
     settings = get_settings()
     backend = settings.storage_backend.lower()
 
     if backend == "s3":
         from app.services.storage.s3 import S3Storage
+
         _instance = S3Storage(
             bucket=settings.parquet_s3_bucket or settings.supabase_bucket,
             region=settings.aws_region,
@@ -30,6 +32,7 @@ def get_storage() -> StorageBackend:
         logger.info("Storage: S3 (%s, %s)", settings.parquet_s3_bucket, settings.aws_region)
     elif backend == "supabase":
         from app.services.storage.supabase import SupabaseStorage
+
         _instance = SupabaseStorage(
             url=settings.supabase_url,
             service_key=settings.supabase_service_key,
@@ -38,6 +41,7 @@ def get_storage() -> StorageBackend:
         logger.info("Storage: Supabase (%s/%s)", settings.supabase_url, settings.supabase_bucket)
     else:
         from app.services.storage.local import LocalStorage
+
         _instance = LocalStorage()
         logger.info("Storage: local filesystem")
 

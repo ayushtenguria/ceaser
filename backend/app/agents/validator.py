@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import re
+
 from app.agents.state import AgentState
 
 logger = logging.getLogger(__name__)
@@ -32,10 +33,10 @@ def validate_sql(state: AgentState) -> AgentState:
         }
 
     destructive = re.findall(
-        r'\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|'
-        r'EXEC|EXECUTE|CALL|COPY|VACUUM|REINDEX|CLUSTER|COMMENT|'
-        r'LOCK|UNLOCK|BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b',
-        sql_upper
+        r"\b(INSERT|UPDATE|DELETE|DROP|ALTER|TRUNCATE|CREATE|GRANT|REVOKE|"
+        r"EXEC|EXECUTE|CALL|COPY|VACUUM|REINDEX|CLUSTER|COMMENT|"
+        r"LOCK|UNLOCK|BEGIN|COMMIT|ROLLBACK|SAVEPOINT)\b",
+        sql_upper,
     )
     if destructive:
         return {
@@ -57,20 +58,38 @@ def validate_sql(state: AgentState) -> AgentState:
     schema_ctx = state.get("schema_context", "")
     known_tables: set[str] = set()
     known_tables.update(re.findall(r'"name"\s*:\s*"(\w+)"', schema_ctx))
-    known_tables.update(re.findall(r'Table:\s*(\w+)', schema_ctx))
+    known_tables.update(re.findall(r"Table:\s*(\w+)", schema_ctx))
     known_tables = {t.lower() for t in known_tables}
 
-    _SQL_KEYWORDS = {
-        "select", "where", "group", "order", "having", "limit", "offset",
-        "union", "intersect", "except", "values", "set", "dual",
-        "current_date", "current_time", "current_timestamp", "now",
-        "lateral", "unnest", "generate_series", "json_each", "jsonb_each",
+    sql_keywords = {
+        "select",
+        "where",
+        "group",
+        "order",
+        "having",
+        "limit",
+        "offset",
+        "union",
+        "intersect",
+        "except",
+        "values",
+        "set",
+        "dual",
+        "current_date",
+        "current_time",
+        "current_timestamp",
+        "now",
+        "lateral",
+        "unnest",
+        "generate_series",
+        "json_each",
+        "jsonb_each",
     }
 
     if known_tables:
-        from_tables = re.findall(r'\bfrom\s+([a-z_]\w*)\b(?!\s*\()', sql.lower())
-        join_tables = re.findall(r'\bjoin\s+([a-z_]\w*)\b(?!\s*\()', sql.lower())
-        referenced_tables = set(from_tables + join_tables) - _SQL_KEYWORDS
+        from_tables = re.findall(r"\bfrom\s+([a-z_]\w*)\b(?!\s*\()", sql.lower())
+        join_tables = re.findall(r"\bjoin\s+([a-z_]\w*)\b(?!\s*\()", sql.lower())
+        referenced_tables = set(from_tables + join_tables) - sql_keywords
 
         unknown_tables = [t for t in referenced_tables if t not in known_tables]
         if unknown_tables:

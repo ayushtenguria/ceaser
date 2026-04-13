@@ -8,13 +8,17 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from app.api.schemas import ConnectionCreate, ConnectionResponse, ConnectionTestResult, ConnectionUpdate
-from app.connectors.factory import get_connector
+from app.api.schemas import (
+    ConnectionCreate,
+    ConnectionResponse,
+    ConnectionTestResult,
+    ConnectionUpdate,
+)
 from app.core.deps import CurrentUser, DbSession
 from app.core.permissions import Permission, require_permission
 from app.db.models import DatabaseConnection, User
 from app.services.encryption import encrypt_value
-from app.services.schema import introspect_schema, format_schema_for_llm
+from app.services.schema import introspect_schema
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/connections", tags=["connections"])
@@ -27,6 +31,7 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
     user = result.scalar_one_or_none()
     if user is None:
         from app.core.config import get_settings
+
         if get_settings().dev_mode and clerk_id == "dev_user":
             user = User(
                 clerk_id="dev_user",
@@ -53,6 +58,7 @@ async def create_connection(
     user = await require_permission(Permission.MANAGE_CONNECTIONS, current_user, db)
 
     from app.core.plan_enforcement import check_connection_limit
+
     await check_connection_limit(db, user.organization_id or current_user.org_id or "")
 
     connection = DatabaseConnection(
@@ -71,6 +77,7 @@ async def create_connection(
     await db.refresh(connection)
 
     from app.services.audit import log_action
+
     await log_action(
         db,
         user_id=current_user.user_id,
@@ -137,6 +144,7 @@ async def test_connection(
 
         try:
             from app.services.schema_graph import build_schema_graph
+
             org_id = connection.organization_id or ""
             graph_tables = await build_schema_graph(
                 str(connection_id), org_id, schema_dict, connection.db_type
@@ -159,7 +167,9 @@ async def test_connection(
         if "password" in error_str or "authentication" in error_str:
             safe_msg = "Authentication failed. Check your username and password."
         elif "refused" in error_str or "could not connect" in error_str:
-            safe_msg = "Connection refused. Check the host, port, and ensure the database is reachable."
+            safe_msg = (
+                "Connection refused. Check the host, port, and ensure the database is reachable."
+            )
         elif "timeout" in error_str:
             safe_msg = "Connection timed out. The database may be unreachable or behind a firewall."
         elif "does not exist" in error_str or "unknown database" in error_str:
@@ -227,7 +237,6 @@ async def update_connection(
     db: DbSession,
 ) -> DatabaseConnection:
     """Update an existing connection's settings (host, port, credentials, etc.)."""
-    from app.api.schemas import ConnectionUpdate
     user = await require_permission(Permission.MANAGE_CONNECTIONS, current_user, db)
     connection = await _load_connection(db, connection_id, user.id, user.organization_id or "")
 
@@ -236,6 +245,7 @@ async def update_connection(
     if body.host is not None:
         # Re-validate host for SSRF
         from app.api.schemas import ConnectionCreate
+
         ConnectionCreate.validate_host(body.host)
         connection.host = body.host
     if body.port is not None:
@@ -254,6 +264,7 @@ async def update_connection(
     await db.refresh(connection)
 
     from app.services.audit import log_action
+
     await log_action(
         db,
         user_id=current_user.user_id,
@@ -280,6 +291,7 @@ async def delete_connection(
     connection = await _load_connection(db, connection_id, user.id, user.organization_id or "")
 
     from app.services.audit import log_action
+
     await log_action(
         db,
         user_id=current_user.user_id,
@@ -307,9 +319,12 @@ async def scan_metrics(
     connection = await _load_connection(db, connection_id, user.id, user.organization_id or "")
 
     if not connection.schema_cache:
-        raise HTTPException(status_code=400, detail="Schema not cached. Refresh the connection first.")
+        raise HTTPException(
+            status_code=400, detail="Schema not cached. Refresh the connection first."
+        )
 
     from app.services.metric_scanner import scan_schema_for_metrics
+
     candidates = scan_schema_for_metrics(connection.schema_cache)
 
     connection.metrics_scanned = True
@@ -343,7 +358,7 @@ async def accept_metrics(
     """
     user = await require_permission(Permission.QUERY_DATA, current_user, db)
     org_id = user.organization_id or ""
-    connection = await _load_connection(db, connection_id, user.id, user.organization_id or "")
+    await _load_connection(db, connection_id, user.id, user.organization_id or "")
 
     metrics_data = body.get("metrics", [])
     if not metrics_data:

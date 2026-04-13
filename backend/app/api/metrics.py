@@ -8,7 +8,7 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
 
-from app.api.schemas import MetricCreate, MetricUpdate, MetricResponse
+from app.api.schemas import MetricCreate, MetricResponse, MetricUpdate
 from app.core.deps import CurrentUser, DbSession
 from app.core.permissions import Permission, require_permission
 from app.db.models import MetricDefinition, User
@@ -24,7 +24,14 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
     if user is None:
         if clerk_id == "dev_user":
             from app.core.config import get_settings
-            user = User(clerk_id="dev_user", email=get_settings().dev_fallback_email, first_name="Dev", last_name="User", organization_id="dev_org")
+
+            user = User(
+                clerk_id="dev_user",
+                email=get_settings().dev_fallback_email,
+                first_name="Dev",
+                last_name="User",
+                organization_id="dev_org",
+            )
             db.add(user)
             await db.flush()
             await db.refresh(user)
@@ -34,7 +41,9 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
 
 
 @router.post("/", response_model=MetricResponse, status_code=status.HTTP_201_CREATED)
-async def create_metric(body: MetricCreate, current_user: CurrentUser, db: DbSession) -> MetricDefinition:
+async def create_metric(
+    body: MetricCreate, current_user: CurrentUser, db: DbSession
+) -> MetricDefinition:
     """Define a new business metric."""
     user = await require_permission(Permission.MANAGE_METRICS, current_user, db)
     metric = MetricDefinition(
@@ -59,7 +68,9 @@ async def list_metrics(current_user: CurrentUser, db: DbSession) -> list[MetricD
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
     stmt = (
         select(MetricDefinition)
-        .where(MetricDefinition.organization_id == (user.organization_id or current_user.org_id or ""))
+        .where(
+            MetricDefinition.organization_id == (user.organization_id or current_user.org_id or "")
+        )
         .order_by(MetricDefinition.category, MetricDefinition.name)
     )
     result = await db.execute(stmt)
@@ -82,11 +93,16 @@ async def update_metric(
     if metric is None:
         raise HTTPException(status_code=404, detail="Metric not found.")
 
-    if body.name is not None: metric.name = body.name
-    if body.description is not None: metric.description = body.description
-    if body.sql_expression is not None: metric.sql_expression = body.sql_expression
-    if body.category is not None: metric.category = body.category
-    if body.is_locked is not None: metric.is_locked = body.is_locked
+    if body.name is not None:
+        metric.name = body.name
+    if body.description is not None:
+        metric.description = body.description
+    if body.sql_expression is not None:
+        metric.sql_expression = body.sql_expression
+    if body.category is not None:
+        metric.category = body.category
+    if body.is_locked is not None:
+        metric.is_locked = body.is_locked
 
     await db.flush()
     await db.refresh(metric)

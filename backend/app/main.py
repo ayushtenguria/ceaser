@@ -4,14 +4,30 @@ from __future__ import annotations
 
 import logging
 import os
-from contextlib import asynccontextmanager
 from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request, status
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
-from app.api import admin, auth, billing, chat, connections, feedback, files, join_rules, memories, metrics, audit, notebooks, onboarding, reports, verified_queries
+from app.api import (
+    admin,
+    audit,
+    auth,
+    billing,
+    chat,
+    connections,
+    feedback,
+    files,
+    join_rules,
+    memories,
+    metrics,
+    notebooks,
+    onboarding,
+    reports,
+    verified_queries,
+)
 from app.core.config import get_settings
 from app.db.session import Base, engine
 
@@ -33,19 +49,23 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         # new columns on existing tables. These run on every startup but are
         # no-ops once the columns exist.
         from sqlalchemy import text
-        await conn.execute(text(
-            "ALTER TABLE file_uploads "
-            "ADD COLUMN IF NOT EXISTS processing_status VARCHAR(32) NOT NULL DEFAULT 'pending'"
-        ))
-        await conn.execute(text(
-            "ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS processing_error TEXT"
-        ))
-        await conn.execute(text(
-            "ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS parquet_s3_key TEXT"
-        ))
+
+        await conn.execute(
+            text(
+                "ALTER TABLE file_uploads "
+                "ADD COLUMN IF NOT EXISTS processing_status VARCHAR(32) NOT NULL DEFAULT 'pending'"
+            )
+        )
+        await conn.execute(
+            text("ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS processing_error TEXT")
+        )
+        await conn.execute(
+            text("ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS parquet_s3_key TEXT")
+        )
     logger.info("Database tables ensured.")
     try:
         from app.services.memory_graph import ensure_vector_index
+
         await ensure_vector_index()
     except Exception as exc:
         logger.debug("Neo4j vector index setup skipped: %s", exc)
@@ -53,6 +73,7 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
     await engine.dispose()
     try:
         from app.services.schema_graph import close_graph_driver
+
         await close_graph_driver()
     except Exception:
         pass

@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import ForeignKey, Index, JSON, String, Text, UniqueConstraint, func
+from sqlalchemy import JSON, ForeignKey, Index, String, Text, UniqueConstraint, func
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
@@ -88,9 +88,7 @@ class Conversation(Base):
     connection_id: Mapped[uuid.UUID | None] = mapped_column(
         ForeignKey("database_connections.id"), nullable=True
     )
-    file_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("file_uploads.id"), nullable=True
-    )
+    file_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("file_uploads.id"), nullable=True)
     file_ids: Mapped[list | None] = mapped_column(JSON, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
@@ -113,9 +111,7 @@ class Message(Base):
     conversation_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("conversations.id"))
     role: Mapped[str] = mapped_column(String(20))
     content: Mapped[str] = mapped_column(Text, default="")
-    message_type: Mapped[str] = mapped_column(
-        String(50), default="text"
-    )
+    message_type: Mapped[str] = mapped_column(String(50), default="text")
     sql_query: Mapped[str | None] = mapped_column(Text, nullable=True)
     code_block: Mapped[str | None] = mapped_column(Text, nullable=True)
     plotly_figure: Mapped[dict | None] = mapped_column(JSON, nullable=True)
@@ -164,7 +160,9 @@ class Report(Base):
     name: Mapped[str] = mapped_column(String(500))
     description: Mapped[str] = mapped_column(Text, default="")
 
-    connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("database_connections.id"), nullable=True)
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("database_connections.id"), nullable=True
+    )
     file_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("file_uploads.id"), nullable=True)
 
     sql_query: Mapped[str | None] = mapped_column(Text, nullable=True)
@@ -187,8 +185,8 @@ class Report(Base):
     created_at: Mapped[datetime] = mapped_column(default=func.now())
     updated_at: Mapped[datetime] = mapped_column(default=func.now(), onupdate=func.now())
 
-    user: Mapped["User"] = relationship()
-    connection: Mapped["DatabaseConnection | None"] = relationship()
+    user: Mapped[User] = relationship()
+    connection: Mapped[DatabaseConnection | None] = relationship()
 
 
 class AuditLog(Base):
@@ -216,7 +214,9 @@ class MetricDefinition(Base):
     description: Mapped[str] = mapped_column(Text, default="")
     sql_expression: Mapped[str] = mapped_column(Text)
     category: Mapped[str] = mapped_column(String(100), default="general")
-    connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("database_connections.id"), nullable=True)
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("database_connections.id"), nullable=True
+    )
     organization_id: Mapped[str] = mapped_column(String(255), default="")
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     is_locked: Mapped[bool] = mapped_column(default=False)
@@ -236,7 +236,9 @@ class Notebook(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     organization_id: Mapped[str] = mapped_column(String(255), default="")
 
-    connection_id: Mapped[uuid.UUID | None] = mapped_column(ForeignKey("database_connections.id"), nullable=True)
+    connection_id: Mapped[uuid.UUID | None] = mapped_column(
+        ForeignKey("database_connections.id"), nullable=True
+    )
 
     is_template: Mapped[bool] = mapped_column(default=False)
     is_public: Mapped[bool] = mapped_column(default=False)
@@ -248,12 +250,14 @@ class Notebook(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
-    cells: Mapped[list["NotebookCell"]] = relationship(
-        back_populates="notebook", cascade="all, delete-orphan",
+    cells: Mapped[list[NotebookCell]] = relationship(
+        back_populates="notebook",
+        cascade="all, delete-orphan",
         order_by="NotebookCell.order",
     )
-    runs: Mapped[list["NotebookRun"]] = relationship(
-        back_populates="notebook", cascade="all, delete-orphan",
+    runs: Mapped[list[NotebookRun]] = relationship(
+        back_populates="notebook",
+        cascade="all, delete-orphan",
     )
 
 
@@ -277,7 +281,7 @@ class NotebookCell(Base):
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 
-    notebook: Mapped["Notebook"] = relationship(back_populates="cells")
+    notebook: Mapped[Notebook] = relationship(back_populates="cells")
 
 
 class NotebookRun(Base):
@@ -301,8 +305,8 @@ class NotebookRun(Base):
 
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 
-    notebook: Mapped["Notebook"] = relationship(back_populates="runs")
-    cell_results: Mapped[list["NotebookCellResult"]] = relationship(
+    notebook: Mapped[Notebook] = relationship(back_populates="runs")
+    cell_results: Mapped[list[NotebookCellResult]] = relationship(
         cascade="all, delete-orphan",
         order_by="NotebookCellResult.cell_order",
     )
@@ -416,7 +420,8 @@ class MessageFeedback(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
     message_id: Mapped[uuid.UUID] = mapped_column(
-        ForeignKey("messages.id", ondelete="CASCADE"), unique=True,
+        ForeignKey("messages.id", ondelete="CASCADE"),
+        unique=True,
     )
     conversation_id: Mapped[uuid.UUID] = mapped_column(
         ForeignKey("conversations.id", ondelete="CASCADE"),
@@ -424,7 +429,8 @@ class MessageFeedback(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     organization_id: Mapped[str] = mapped_column(String(255))
     connection_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("database_connections.id", ondelete="SET NULL"), nullable=True,
+        ForeignKey("database_connections.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     rating: Mapped[str] = mapped_column(String(10))  # "up" or "down"
@@ -451,8 +457,11 @@ class JoinRule(Base):
     __table_args__ = (
         Index("ix_join_rules_org_conn", "organization_id", "connection_id"),
         UniqueConstraint(
-            "connection_id", "source_table", "source_column",
-            "target_table", "target_column",
+            "connection_id",
+            "source_table",
+            "source_column",
+            "target_table",
+            "target_column",
             name="uq_join_rule_path",
         ),
     )
@@ -505,7 +514,8 @@ class VerifiedQuery(Base):
 
     verified_by: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     source_message_id: Mapped[uuid.UUID | None] = mapped_column(
-        ForeignKey("messages.id", ondelete="SET NULL"), nullable=True,
+        ForeignKey("messages.id", ondelete="SET NULL"),
+        nullable=True,
     )
 
     use_count: Mapped[int] = mapped_column(default=0)

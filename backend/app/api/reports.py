@@ -2,20 +2,18 @@
 
 from __future__ import annotations
 
-import json
 import logging
 import uuid
 from datetime import datetime, timedelta
 
 from fastapi import APIRouter, HTTPException, status
 from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.agents.graph import run_agent
-from app.api.schemas import ReportCreate, ReportUpdate, ReportResponse
+from app.api.schemas import ReportCreate, ReportResponse, ReportUpdate
 from app.core.deps import CurrentUser, DbSession, get_llm
 from app.core.permissions import Permission, require_permission
-from app.db.models import DatabaseConnection, FileUpload, Report, User
+from app.db.models import Report, User
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/reports", tags=["reports"])
@@ -28,6 +26,7 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
     user = result.scalar_one_or_none()
     if user is None:
         from app.core.config import get_settings
+
         if get_settings().dev_mode and clerk_id == "dev_user":
             user = User(
                 clerk_id="dev_user",
@@ -66,7 +65,8 @@ async def create_report(
 ) -> Report:
     """Save a new report from chat results."""
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
-    from app.core.features import check_feature, Feature
+    from app.core.features import Feature, check_feature
+
     await check_feature(Feature.REPORTS, db, user.organization_id or "")
 
     report = Report(
@@ -162,6 +162,7 @@ async def refresh_report(
     schema_context = ""
     if report.connection_id:
         from app.api.chat import _build_schema_context
+
         schema_context = await _build_schema_context(db, report.connection_id, report.file_id)
 
     llm = get_llm()

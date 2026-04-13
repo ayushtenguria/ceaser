@@ -127,14 +127,16 @@ async def extract_notebook_draft(
 
         steps = []
         for s in data.get("steps", []):
-            steps.append({
-                "label": s.get("label", "Analysis Step"),
-                "prompt": s.get("prompt", ""),
-                "produces_chart": s.get("produces_chart", False),
-                "original_question": s.get("original_question", ""),
-                "cell_type": "prompt",
-                "included": True,  # User can toggle this off in preview
-            })
+            steps.append(
+                {
+                    "label": s.get("label", "Analysis Step"),
+                    "prompt": s.get("prompt", ""),
+                    "produces_chart": s.get("produces_chart", False),
+                    "original_question": s.get("original_question", ""),
+                    "cell_type": "prompt",
+                    "included": True,  # User can toggle this off in preview
+                }
+            )
 
         result = {
             "title": data.get("title", notebook_name or "Analysis Notebook"),
@@ -143,8 +145,12 @@ async def extract_notebook_draft(
             "skipped": skipped,
         }
 
-        logger.info("Extracted draft: %d steps from %d messages (%d skipped)",
-                     len(steps), len(messages), len(skipped))
+        logger.info(
+            "Extracted draft: %d steps from %d messages (%d skipped)",
+            len(steps),
+            len(messages),
+            len(skipped),
+        )
         return result
 
     except Exception as exc:
@@ -186,11 +192,12 @@ def _prefilter_messages(messages: list[dict[str, Any]]) -> tuple[list[dict], lis
 
         # Skip corrections
         if _is_correction(content):
-            skipped.append({"index": i, "content": content[:80], "reason": "Correction/acknowledgment"})
+            skipped.append(
+                {"index": i, "content": content[:80], "reason": "Correction/acknowledgment"}
+            )
             continue
 
         # Detect duplicate/refined questions
-        is_duplicate = False
         content_lower = content.lower().strip()
         for prev_q in seen_questions:
             similarity = _quick_similarity(content_lower, prev_q)
@@ -198,19 +205,27 @@ def _prefilter_messages(messages: list[dict[str, Any]]) -> tuple[list[dict], lis
                 # This is a refinement — remove the old version, keep the new one
                 # Find and remove the old user message from kept
                 kept = [m for m in kept if (m.get("content") or "").lower().strip() != prev_q]
-                skipped.append({"index": i, "content": f"(Refined version of earlier question)", "reason": "Superseded by refinement"})
+                skipped.append(
+                    {
+                        "index": i,
+                        "content": "(Refined version of earlier question)",
+                        "reason": "Superseded by refinement",
+                    }
+                )
                 # Actually keep the NEW version
-                is_duplicate = False  # Keep this one
                 break
 
         seen_questions.append(content_lower)
 
         # Check if the NEXT assistant message has useful output
         has_useful_response = False
-        for next_msg in messages[i + 1:]:
+        for next_msg in messages[i + 1 :]:
             if next_msg.get("role") == "assistant":
-                if (next_msg.get("table_data") or next_msg.get("plotly_figure") or
-                        len(next_msg.get("content", "")) > 100):
+                if (
+                    next_msg.get("table_data")
+                    or next_msg.get("plotly_figure")
+                    or len(next_msg.get("content", "")) > 100
+                ):
                     has_useful_response = True
                 break
 
@@ -241,9 +256,7 @@ def _quick_similarity(a: str, b: str) -> float:
     return overlap / min(len(words_a), len(words_b))
 
 
-def _fallback_extraction(
-    filtered: list[dict], skipped: list[dict], name: str
-) -> dict[str, Any]:
+def _fallback_extraction(filtered: list[dict], skipped: list[dict], name: str) -> dict[str, Any]:
     """Fallback: create steps from filtered user messages."""
     steps = []
     for msg in filtered:
@@ -253,14 +266,18 @@ def _fallback_extraction(
         if len(content) < _MIN_STEP_LENGTH:
             continue
 
-        steps.append({
-            "label": content[:40],
-            "prompt": content,
-            "produces_chart": any(w in content.lower() for w in ("chart", "plot", "graph", "trend", "visuali")),
-            "original_question": content,
-            "cell_type": "prompt",
-            "included": True,
-        })
+        steps.append(
+            {
+                "label": content[:40],
+                "prompt": content,
+                "produces_chart": any(
+                    w in content.lower() for w in ("chart", "plot", "graph", "trend", "visuali")
+                ),
+                "original_question": content,
+                "cell_type": "prompt",
+                "included": True,
+            }
+        )
 
     return {
         "title": name or "Analysis Notebook",

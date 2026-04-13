@@ -9,7 +9,6 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
@@ -17,6 +16,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class FormulaInfo:
     """Extracted formula information."""
+
     cell: str
     formula: str
     sheet_name: str
@@ -26,6 +26,7 @@ class FormulaInfo:
 @dataclass
 class FormulaExtractionResult:
     """Result of extracting all formulas from a workbook."""
+
     total_formulas: int = 0
     formulas_by_sheet: dict[str, list[FormulaInfo]] = field(default_factory=dict)
     cross_sheet_references: list[tuple[str, str]] = field(default_factory=list)
@@ -47,6 +48,7 @@ def extract_formulas(file_path: str) -> FormulaExtractionResult:
 
     try:
         import openpyxl
+
         wb = openpyxl.load_workbook(path, data_only=False)
         sheet_names = set(wb.sheetnames)
 
@@ -91,8 +93,11 @@ def extract_formulas(file_path: str) -> FormulaExtractionResult:
 
     result.cross_sheet_references = list(set(result.cross_sheet_references))
 
-    logger.info("Extracted %d formulas, %d cross-sheet refs",
-                result.total_formulas, len(result.cross_sheet_references))
+    logger.info(
+        "Extracted %d formulas, %d cross-sheet refs",
+        result.total_formulas,
+        len(result.cross_sheet_references),
+    )
     return result
 
 

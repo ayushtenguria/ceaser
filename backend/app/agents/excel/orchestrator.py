@@ -27,6 +27,7 @@ def _node_inspect(state: ExcelPipelineState) -> ExcelPipelineState:
     """Node 1: Inspect the file — detect type, encoding, sheet count."""
     try:
         from app.agents.excel.inspector import inspect_workbook
+
         inspection = inspect_workbook(state["file_path"])
         return {
             **state,
@@ -36,8 +37,12 @@ def _node_inspect(state: ExcelPipelineState) -> ExcelPipelineState:
             "encoding": getattr(inspection, "encoding", None),
         }
     except Exception as exc:
-        log_edge_case(file_name=state["file_path"], category="parse",
-                     description=f"Inspector failed: {exc}", raw_error=str(exc))
+        log_edge_case(
+            file_name=state["file_path"],
+            category="parse",
+            description=f"Inspector failed: {exc}",
+            raw_error=str(exc),
+        )
         return {
             **state,
             "file_name": Path(state["file_path"]).name,
@@ -58,26 +63,33 @@ def _node_extract_sheets(state: ExcelPipelineState) -> ExcelPipelineState:
         sheet_dicts = []
         warnings = list(state.get("warnings", []))
         for s in sheets:
-            sheet_dicts.append({
-                "name": s.name,
-                "df": s.df,
-                "row_count": s.row_count,
-                "column_count": s.column_count,
-                "column_types": s.column_types,
-                "sample_values": s.sample_values,
-                "warnings": s.warnings,
-            })
+            sheet_dicts.append(
+                {
+                    "name": s.name,
+                    "df": s.df,
+                    "row_count": s.row_count,
+                    "column_count": s.column_count,
+                    "column_types": s.column_types,
+                    "sample_values": s.sample_values,
+                    "warnings": s.warnings,
+                }
+            )
             for w in s.warnings:
                 warnings.append(f"{s.name}: {w}")
 
-        logger.info("Extract: %d sheets, %d total rows",
-                    len(sheets), sum(s.row_count for s in sheets))
+        logger.info(
+            "Extract: %d sheets, %d total rows", len(sheets), sum(s.row_count for s in sheets)
+        )
 
         return {**state, "sheets": sheet_dicts, "warnings": warnings}
 
     except Exception as exc:
-        log_edge_case(file_name=state["file_path"], category="parse",
-                     description=f"Sheet extraction failed: {exc}", raw_error=str(exc))
+        log_edge_case(
+            file_name=state["file_path"],
+            category="parse",
+            description=f"Sheet extraction failed: {exc}",
+            raw_error=str(exc),
+        )
         return {
             **state,
             "sheets": [],
@@ -94,6 +106,7 @@ def _node_extract_formulas(state: ExcelPipelineState) -> ExcelPipelineState:
 
     try:
         from app.agents.excel.formula_extractor import extract_formulas
+
         formulas = extract_formulas(state["file_path"])
         return {
             **state,
@@ -124,25 +137,39 @@ def _node_map_relationships(state: ExcelPipelineState) -> ExcelPipelineState:
         extracted = []
         for sd in sheets:
             es = ExtractedSheet(
-                name=sd["name"], df=sd["df"], row_count=sd["row_count"],
-                column_count=sd["column_count"], column_types=sd["column_types"],
-                sample_values=sd["sample_values"], warnings=sd.get("warnings", []),
+                name=sd["name"],
+                df=sd["df"],
+                row_count=sd["row_count"],
+                column_count=sd["column_count"],
+                column_types=sd["column_types"],
+                sample_values=sd["sample_values"],
+                warnings=sd.get("warnings", []),
             )
             extracted.append(es)
 
         formula_obj = None
         if state.get("formulas"):
-            formula_obj = type("F", (), {
-                "total_formulas": state["formulas"].get("total_formulas", 0),
-                "cross_sheet_references": state["formulas"].get("cross_sheet_references", []),
-            })()
+            formula_obj = type(
+                "F",
+                (),
+                {
+                    "total_formulas": state["formulas"].get("total_formulas", 0),
+                    "cross_sheet_references": state["formulas"].get("cross_sheet_references", []),
+                },
+            )()
 
         relationships = map_relationships(extracted, formula_obj)
 
         rel_dicts = [
-            {"source_sheet": r.source_sheet, "source_column": r.source_column,
-             "target_sheet": r.target_sheet, "target_column": r.target_column,
-             "confidence": r.confidence, "rel_type": r.rel_type, "method": r.method}
+            {
+                "source_sheet": r.source_sheet,
+                "source_column": r.source_column,
+                "target_sheet": r.target_sheet,
+                "target_column": r.target_column,
+                "confidence": r.confidence,
+                "rel_type": r.rel_type,
+                "method": r.method,
+            }
             for r in relationships
         ]
         logger.info("Relationships: %d found", len(rel_dicts))
@@ -169,9 +196,13 @@ def _node_profile(state: ExcelPipelineState) -> ExcelPipelineState:
 
         extracted = [
             ExtractedSheet(
-                name=sd["name"], df=sd["df"], row_count=sd["row_count"],
-                column_count=sd["column_count"], column_types=sd["column_types"],
-                sample_values=sd["sample_values"], warnings=sd.get("warnings", []),
+                name=sd["name"],
+                df=sd["df"],
+                row_count=sd["row_count"],
+                column_count=sd["column_count"],
+                column_types=sd["column_types"],
+                sample_values=sd["sample_values"],
+                warnings=sd.get("warnings", []),
             )
             for sd in sheets
         ]
@@ -181,18 +212,25 @@ def _node_profile(state: ExcelPipelineState) -> ExcelPipelineState:
 
         profile_dicts = []
         for p in profiles:
-            profile_dicts.append({
-                "sheet_name": p.sheet_name,
-                "row_count": p.row_count,
-                "column_count": p.column_count,
-                "duplicate_rows": p.duplicate_rows,
-                "warnings": p.warnings,
-                "columns": [
-                    {"name": c.name, "dtype": c.dtype, "null_pct": c.null_pct,
-                     "unique_count": c.unique_count, "suspected_typos": c.suspected_typos}
-                    for c in p.columns
-                ],
-            })
+            profile_dicts.append(
+                {
+                    "sheet_name": p.sheet_name,
+                    "row_count": p.row_count,
+                    "column_count": p.column_count,
+                    "duplicate_rows": p.duplicate_rows,
+                    "warnings": p.warnings,
+                    "columns": [
+                        {
+                            "name": c.name,
+                            "dtype": c.dtype,
+                            "null_pct": c.null_pct,
+                            "unique_count": c.unique_count,
+                            "suspected_typos": c.suspected_typos,
+                        }
+                        for c in p.columns
+                    ],
+                }
+            )
             for w in p.warnings:
                 warnings.append(w)
 
@@ -271,7 +309,9 @@ def _node_build_context(state: ExcelPipelineState) -> ExcelPipelineState:
 
     try:
         from app.agents.excel.context import (
-            save_dataframes_to_parquet, build_excel_context, generate_code_preamble,
+            build_excel_context,
+            generate_code_preamble,
+            save_dataframes_to_parquet,
         )
 
         wb_compat = _make_wb_compat(state)
@@ -282,7 +322,9 @@ def _node_build_context(state: ExcelPipelineState) -> ExcelPipelineState:
         excel_context = build_excel_context([wb_compat], rel_compat, parquet_paths)
         code_preamble = generate_code_preamble(parquet_paths, workbooks=[wb_compat])
 
-        logger.info("Context: %d parquet files, %d char context", len(parquet_paths), len(excel_context))
+        logger.info(
+            "Context: %d parquet files, %d char context", len(parquet_paths), len(excel_context)
+        )
 
         return {
             **state,
@@ -292,8 +334,12 @@ def _node_build_context(state: ExcelPipelineState) -> ExcelPipelineState:
         }
 
     except Exception as exc:
-        log_edge_case(file_name=state.get("file_path", ""), category="parse",
-                     description=f"Context building failed: {exc}", raw_error=str(exc))
+        log_edge_case(
+            file_name=state.get("file_path", ""),
+            category="parse",
+            description=f"Context building failed: {exc}",
+            raw_error=str(exc),
+        )
         return {
             **state,
             "parquet_paths": {},
@@ -304,7 +350,9 @@ def _node_build_context(state: ExcelPipelineState) -> ExcelPipelineState:
         }
 
 
-async def _node_generate_insight(state: ExcelPipelineState, llm: BaseChatModel | None) -> ExcelPipelineState:
+async def _node_generate_insight(
+    state: ExcelPipelineState, llm: BaseChatModel | None
+) -> ExcelPipelineState:
     """Node 8: Generate LLM-powered insights from the processed data."""
     if not llm:
         summary = _auto_summary(state)
@@ -312,6 +360,7 @@ async def _node_generate_insight(state: ExcelPipelineState, llm: BaseChatModel |
 
     try:
         from app.agents.excel.insight import generate_upload_insight
+
         wb_compat = _make_wb_compat(state)
         rel_compat = _make_rel_compat(state.get("relationships", []))
         qual_compat = _make_quality_compat(state)
@@ -357,13 +406,20 @@ async def process_excel_upload(
     }
 
     state = await asyncio.to_thread(_node_inspect, state)
-    logger.info("Node 1 (Inspector): file=%s type=%s sheets=%s",
-                state.get("file_name"), state.get("file_type"), state.get("sheet_count"))
+    logger.info(
+        "Node 1 (Inspector): file=%s type=%s sheets=%s",
+        state.get("file_name"),
+        state.get("file_type"),
+        state.get("sheet_count"),
+    )
 
     state = await asyncio.to_thread(_node_extract_sheets, state)
     sheets = state.get("sheets", [])
-    logger.info("Node 2 (Extractor): %d sheets, %d total rows",
-                len(sheets), sum(s.get("row_count", 0) for s in sheets))
+    logger.info(
+        "Node 2 (Extractor): %d sheets, %d total rows",
+        len(sheets),
+        sum(s.get("row_count", 0) for s in sheets),
+    )
 
     if not sheets:
         logger.warning("No sheets extracted — returning minimal result")
@@ -378,8 +434,11 @@ async def process_excel_upload(
     state = await asyncio.to_thread(_node_profile, state)
 
     state = await asyncio.to_thread(_node_quality_gate, state)
-    logger.info("Node 6 (Quality Gate): severity=%s, auto-fixes=%d",
-                state.get("quality_severity"), len(state.get("auto_fixes_applied", [])))
+    logger.info(
+        "Node 6 (Quality Gate): severity=%s, auto-fixes=%d",
+        state.get("quality_severity"),
+        len(state.get("auto_fixes_applied", [])),
+    )
 
     state = await asyncio.to_thread(_node_build_context, state)
 
@@ -387,8 +446,13 @@ async def process_excel_upload(
 
     elapsed = time.monotonic() - start_time
     state["pipeline_time_seconds"] = elapsed
-    logger.info("Excel pipeline complete: %.1fs, %d sheets, %d warnings, %d failed steps",
-                elapsed, len(sheets), len(state.get("warnings", [])), len(state.get("failed_steps", [])))
+    logger.info(
+        "Excel pipeline complete: %.1fs, %d sheets, %d warnings, %d failed steps",
+        elapsed,
+        len(sheets),
+        len(state.get("warnings", [])),
+        len(state.get("failed_steps", [])),
+    )
 
     return _build_result(state, elapsed)
 
@@ -415,7 +479,10 @@ def _build_result(state: ExcelPipelineState, elapsed: float) -> dict[str, Any]:
         "insight": {
             "summary": state.get("insight_summary", _auto_summary(state)),
             "suggestions": state.get("insight_suggestions", []),
-            "sheets": [{"name": s["name"], "rows": s["row_count"], "columns": s["column_count"]} for s in sheets],
+            "sheets": [
+                {"name": s["name"], "rows": s["row_count"], "columns": s["column_count"]}
+                for s in sheets
+            ],
             "relationships": [
                 f"{r['source_sheet']}.{r['source_column']} → {r['target_sheet']}.{r['target_column']}"
                 for r in state.get("relationships", [])
@@ -432,7 +499,9 @@ def _auto_summary(state: ExcelPipelineState) -> str:
     sheets = state.get("sheets", [])
     total_rows = sum(s.get("row_count", 0) for s in sheets)
     total_cols = sum(s.get("column_count", 0) for s in sheets)
-    parts = [f"Uploaded {len(sheets)} sheet(s) with {total_rows:,} total rows and {total_cols} columns."]
+    parts = [
+        f"Uploaded {len(sheets)} sheet(s) with {total_rows:,} total rows and {total_cols} columns."
+    ]
     rels = state.get("relationships", [])
     if rels:
         parts.append(f"Found {len(rels)} relationship(s) between sheets.")
@@ -470,13 +539,19 @@ def _make_wb_compat(state: ExcelPipelineState):
 def _make_rel_compat(relationships: list[dict]):
     """Create relationship-compatible objects from state dicts."""
     return [
-        type("R", (), {
-            "source_sheet": r["source_sheet"], "source_column": r["source_column"],
-            "target_sheet": r["target_sheet"], "target_column": r["target_column"],
-            "confidence": r["confidence"],
-            "relationship_type": r.get("rel_type", "unknown"),
-            "rel_type": r.get("rel_type", "unknown"),
-        })()
+        type(
+            "R",
+            (),
+            {
+                "source_sheet": r["source_sheet"],
+                "source_column": r["source_column"],
+                "target_sheet": r["target_sheet"],
+                "target_column": r["target_column"],
+                "confidence": r["confidence"],
+                "relationship_type": r.get("rel_type", "unknown"),
+                "rel_type": r.get("rel_type", "unknown"),
+            },
+        )()
         for r in relationships
     ]
 
@@ -484,8 +559,10 @@ def _make_rel_compat(relationships: list[dict]):
 def _make_quality_compat(state: ExcelPipelineState):
     """Create quality report compat from state."""
     warnings = state.get("warnings", [])
+
     class _QualCompat:
         severity = state.get("quality_severity", "clean")
         total_issues = len(warnings)
         summary_items = warnings[:10]
+
     return _QualCompat()

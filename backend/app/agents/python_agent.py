@@ -101,6 +101,7 @@ def _save_table_data_as_csv(table_data: dict) -> str | None:
         return None
 
     import csv
+
     csv_path = _DATA_DIR / f"sql_result_{id(table_data)}.csv"
     with open(csv_path, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=columns)
@@ -128,7 +129,9 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
             preamble_lines.append("# Auto-convert numeric-looking columns to numeric")
             preamble_lines.append("for _col in df.select_dtypes(include=['object']).columns:")
             preamble_lines.append("    _converted = pd.to_numeric(df[_col], errors='coerce')")
-            preamble_lines.append("    if _converted.notna().sum() > len(df) * 0.5:  # >50% are numeric")
+            preamble_lines.append(
+                "    if _converted.notna().sum() > len(df) * 0.5:  # >50% are numeric"
+            )
             preamble_lines.append("        df[_col] = _converted")
             preamble_lines.append("")
 
@@ -159,7 +162,9 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
     data_context = "\n\n".join(data_pieces) if data_pieces else "No prior data context."
     file_context = ""
     if state.get("file_id"):
-        file_context = "A file has been uploaded. Its path and summary are included in the data context above."
+        file_context = (
+            "A file has been uploaded. Its path and summary are included in the data context above."
+        )
 
     messages = [
         SystemMessage(
@@ -209,11 +214,15 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
         if stripped.startswith("import pandas") or stripped.startswith("import plotly"):
             continue
         # Filter out LLM-generated file reads when preamble already loads data
-        if has_file_load and (
-            "pd.read_csv(" in stripped
-            or "pd.read_excel(" in stripped
-            or "pd.read_parquet(" in stripped
-        ) and "ceaser://" not in stripped:
+        if (
+            has_file_load
+            and (
+                "pd.read_csv(" in stripped
+                or "pd.read_excel(" in stripped
+                or "pd.read_parquet(" in stripped
+            )
+            and "ceaser://" not in stripped
+        ):
             continue
         if stripped.startswith("data = [") and has_file_load:
             continue
@@ -221,5 +230,7 @@ async def generate_python(state: AgentState, llm: BaseChatModel) -> AgentState:
 
     final_code = "\n".join(preamble_lines) + "\n" + "\n".join(filtered)
 
-    logger.info("Generated Python code (%d chars, preamble=%d lines)", len(final_code), len(preamble_lines))
+    logger.info(
+        "Generated Python code (%d chars, preamble=%d lines)", len(final_code), len(preamble_lines)
+    )
     return {**state, "code_block": final_code}

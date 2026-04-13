@@ -39,12 +39,15 @@ from app.agents.verifier import verify_results
 
 logger = logging.getLogger(__name__)
 
+
 def _max_retries() -> int:
     try:
         from app.core.config import get_settings
+
         return get_settings().max_retries
     except Exception:
         return 3
+
 
 _MAX_RETRIES = _max_retries()
 
@@ -105,10 +108,24 @@ async def _respond(state: AgentState, llm: BaseChatModel) -> AgentState:
     if state.get("error"):
         error = state["error"]
         technical_keywords = (
-            "UNION", "SYNTAX", "COLUMN", "RELATION", "CAST", "TYPE",
-            "TRACEBACK", "FILE \"", "LINE ", "VALUEERROR", "KEYERROR",
-            "INDEXERROR", "TYPEERROR", "ATTRIBUTEERROR", "IMPORTERROR",
-            "MODULENOTFOUNDERROR", "LENGTH MISMATCH", "SETATTR",
+            "UNION",
+            "SYNTAX",
+            "COLUMN",
+            "RELATION",
+            "CAST",
+            "TYPE",
+            "TRACEBACK",
+            'FILE "',
+            "LINE ",
+            "VALUEERROR",
+            "KEYERROR",
+            "INDEXERROR",
+            "TYPEERROR",
+            "ATTRIBUTEERROR",
+            "IMPORTERROR",
+            "MODULENOTFOUNDERROR",
+            "LENGTH MISMATCH",
+            "SETATTR",
         )
         if any(kw in error.upper() for kw in technical_keywords):
             context_parts.append(
@@ -179,11 +196,13 @@ def _after_code_execute(state: AgentState) -> str:
         retry = state.get("retry_count", 0)
         if retry <= 1:
             return "repair_python"  # surgical fix on first errors
-        return "python_agent"      # full regeneration after that
+        return "python_agent"  # full regeneration after that
     return "respond"
 
 
-def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel | None = None) -> StateGraph:
+def build_graph(
+    llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel | None = None
+) -> StateGraph:
     """Construct and return the compiled LangGraph agent.
 
     Two model tiers:
@@ -257,7 +276,7 @@ def build_graph(llm: BaseChatModel, db: AsyncSession, llm_light: BaseChatModel |
         "router",
         _after_router,
         {
-            "sql": "disambiguator",       # → disambiguator first, then sql_agent
+            "sql": "disambiguator",  # → disambiguator first, then sql_agent
             "python": "python_agent",
             "sql_then_viz": "disambiguator",  # → disambiguator first
             "analyze": "analyst",
@@ -330,7 +349,10 @@ async def _run_cross_db_query(
 ) -> AsyncGenerator[dict[str, Any], None]:
     """Run a cross-source query — databases + files, parallel execution, join results."""
     from app.agents.crossdb import (
-        load_all_schemas, plan_cross_db_query, execute_parallel_queries, join_results,
+        execute_parallel_queries,
+        join_results,
+        load_all_schemas,
+        plan_cross_db_query,
     )
 
     source_label = "databases" if not file_ids else "sources"
@@ -343,16 +365,25 @@ async def _run_cross_db_query(
         yield {"type": "error", "content": "No databases are reachable. Check your connections."}
         return
 
-    yield {"type": "status", "content": f"Connected to {len(available)} databases. Planning query..."}
+    yield {
+        "type": "status",
+        "content": f"Connected to {len(available)} databases. Planning query...",
+    }
 
     plan = await plan_cross_db_query(query, multi_schema, llm)
 
     if not plan.queries:
-        yield {"type": "error", "content": "Could not plan a query across your databases. Try rephrasing."}
+        yield {
+            "type": "error",
+            "content": "Could not plan a query across your databases. Try rephrasing.",
+        }
         return
 
     if plan.is_single_db and len(plan.queries) == 1:
-        yield {"type": "status", "content": f"Query targets {plan.queries[0].connection_name} only."}
+        yield {
+            "type": "status",
+            "content": f"Query targets {plan.queries[0].connection_name} only.",
+        }
         yield {"type": "sql", "content": plan.queries[0].sql}
 
     yield {"type": "status", "content": f"Executing {len(plan.queries)} queries in parallel..."}
@@ -361,7 +392,10 @@ async def _run_cross_db_query(
 
     for alias, result in results.items():
         if result.success:
-            yield {"type": "status", "content": f"✓ {result.connection_name}: {result.row_count} rows ({result.execution_ms}ms)"}
+            yield {
+                "type": "status",
+                "content": f"✓ {result.connection_name}: {result.row_count} rows ({result.execution_ms}ms)",
+            }
         else:
             yield {"type": "status", "content": f"✗ {result.connection_name}: {result.error}"}
 
@@ -380,6 +414,7 @@ async def _run_cross_db_query(
     td = joined.get("table_data", {})
     if td.get("rows"):
         import json
+
         table_preview = json.dumps(td["rows"][:10], default=str)[:1000]
 
     response_prompt = (
@@ -389,11 +424,16 @@ async def _run_cross_db_query(
         f"Final joined data ({td.get('total_rows', 0)} rows): {table_preview}"
     )
 
-    from langchain_core.messages import SystemMessage as SM, HumanMessage as HM
-    resp = await llm.ainvoke([
-        SM(content="You are Ceaser, a data analyst. Summarize the cross-database query results. Reference specific numbers. Keep it concise."),
-        HM(content=response_prompt),
-    ])
+    from langchain_core.messages import HumanMessage, SystemMessage
+
+    resp = await llm.ainvoke(
+        [
+            SystemMessage(
+                content="You are Ceaser, a data analyst. Summarize the cross-database query results. Reference specific numbers. Keep it concise."
+            ),
+            HumanMessage(content=response_prompt),
+        ]
+    )
     yield {"type": "text", "content": resp.content}
 
 
@@ -415,6 +455,7 @@ async def _run_single_query(
     data_source_id = connection_id or file_id or ""
     try:
         from app.services.query_cache import get_query_cache
+
         cache = get_query_cache()
         cached = cache.get(data_source_id, query)
         if cached:
@@ -438,9 +479,13 @@ async def _run_single_query(
     if db and connection_id:
         try:
             import uuid as _uuid
+
             from app.services.verified_queries import find_matching_verified_query
+
             verified = await find_matching_verified_query(
-                db, query, _uuid.UUID(connection_id),
+                db,
+                query,
+                _uuid.UUID(connection_id),
                 org_id="",  # org_id is checked at the chat endpoint level
             )
             if verified:
@@ -450,6 +495,7 @@ async def _run_single_query(
 
                 # Execute directly
                 from app.agents.executor import execute_sql
+
                 exec_state: AgentState = {
                     "messages": [],
                     "query": query,
@@ -473,7 +519,10 @@ async def _run_single_query(
                 if result_state.get("table_data"):
                     yield {"type": "table", "content": result_state["table_data"]}
                     yield {"type": "confidence", "content": "high"}
-                    yield {"type": "reasoning", "content": f"Using a verified query pattern (used {verified.use_count} times successfully)"}
+                    yield {
+                        "type": "reasoning",
+                        "content": f"Using a verified query pattern (used {verified.use_count} times successfully)",
+                    }
 
                 if result_state.get("error"):
                     # Verified query failed — deactivate it and fall through to normal pipeline
@@ -519,7 +568,6 @@ async def _run_single_query(
         "disambiguation_resolution": "",
     }
 
-    import asyncio as _asyncio
     import time as _time
 
     final_state: AgentState | None = None
@@ -538,7 +586,11 @@ async def _run_single_query(
 
             elif node_name == "disambiguator":
                 if node_state.get("disambiguation"):
-                    yield {"type": "disambiguation", "content": "", "data": node_state["disambiguation"]}
+                    yield {
+                        "type": "disambiguation",
+                        "content": "",
+                        "data": node_state["disambiguation"],
+                    }
                     return  # Stop pipeline — waiting for user input
 
             elif node_name == "sql_agent":
@@ -551,14 +603,21 @@ async def _run_single_query(
 
             elif node_name == "validate_sql":
                 if node_state.get("error"):
-                    yield {"type": "status", "content": f"SQL validation issue: {node_state['error'][:100]}"}
+                    yield {
+                        "type": "status",
+                        "content": f"SQL validation issue: {node_state['error'][:100]}",
+                    }
 
             elif node_name == "sql_execute":
                 if node_state.get("error"):
-                    yield {"type": "status", "content": f"SQL error, retrying... ({node_state.get('retry_count', 0)}/{_MAX_RETRIES})"}
+                    yield {
+                        "type": "status",
+                        "content": f"SQL error, retrying... ({node_state.get('retry_count', 0)}/{_MAX_RETRIES})",
+                    }
                 elif node_state.get("table_data"):
                     # Check if this is a single KPI metric (1 row, 1-2 values)
                     from app.services.metric_card import detect_metric_card
+
                     metric = detect_metric_card(node_state["table_data"])
                     if metric:
                         yield {"type": "metric_card", "content": "", "data": metric}
@@ -566,7 +625,10 @@ async def _run_single_query(
 
             elif node_name == "verify_results":
                 if node_state.get("error"):
-                    yield {"type": "status", "content": "Verifying results... re-trying for better accuracy"}
+                    yield {
+                        "type": "status",
+                        "content": "Verifying results... re-trying for better accuracy",
+                    }
                 confidence = node_state.get("confidence")
                 if confidence:
                     yield {"type": "confidence", "content": confidence}
@@ -590,19 +652,28 @@ async def _run_single_query(
 
             elif node_name == "validate_python":
                 if node_state.get("error"):
-                    yield {"type": "status", "content": f"Code validation issue, regenerating... ({node_state.get('retry_count', 0)}/{_MAX_RETRIES})"}
+                    yield {
+                        "type": "status",
+                        "content": f"Code validation issue, regenerating... ({node_state.get('retry_count', 0)}/{_MAX_RETRIES})",
+                    }
 
             elif node_name == "repair_python":
                 yield {"type": "status", "content": "Fixing code..."}
 
             elif node_name == "code_execute":
                 if node_state.get("error"):
-                    yield {"type": "status", "content": f"Code error, retrying... ({node_state.get('retry_count', 0)}/{_MAX_RETRIES})"}
+                    yield {
+                        "type": "status",
+                        "content": f"Code error, retrying... ({node_state.get('retry_count', 0)}/{_MAX_RETRIES})",
+                    }
                 else:
                     if node_state.get("plotly_figure"):
                         yield {"type": "plotly", "content": node_state["plotly_figure"]}
-                    if node_state.get("table_data") and node_state["table_data"] != initial_state.get("table_data"):
+                    if node_state.get("table_data") and node_state[
+                        "table_data"
+                    ] != initial_state.get("table_data"):
                         from app.services.metric_card import detect_metric_card
+
                         metric = detect_metric_card(node_state["table_data"])
                         if metric:
                             yield {"type": "metric_card", "content": "", "data": metric}
@@ -618,15 +689,26 @@ async def _run_single_query(
 
     if final_state and final_state.get("error"):
         error = final_state["error"]
-        raw_traceback_markers = ("Traceback", "File \"", "  File ", "SyntaxError", "IndentationError", "ModuleNotFoundError")
+        raw_traceback_markers = (
+            "Traceback",
+            'File "',
+            "  File ",
+            "SyntaxError",
+            "IndentationError",
+            "ModuleNotFoundError",
+        )
         if any(marker in error for marker in raw_traceback_markers):
-            yield {"type": "error", "content": "The analysis encountered a technical issue. Try rephrasing your question or asking for a simpler analysis."}
+            yield {
+                "type": "error",
+                "content": "The analysis encountered a technical issue. Try rephrasing your question or asking for a simpler analysis.",
+            }
         else:
             yield {"type": "error", "content": error}
     elif final_state and not final_state.get("error"):
         # Cache successful results for future identical queries
         try:
             from app.services.query_cache import get_query_cache
+
             cache_entry: dict[str, Any] = {"_data_source_id": data_source_id}
             if final_state.get("sql_query"):
                 cache_entry["sql"] = final_state["sql_query"]
@@ -668,7 +750,7 @@ async def run_agent(
     compiled = graph.compile()
 
     history_messages: list = []
-    for msg in (history or []):
+    for msg in history or []:
         if msg["role"] == "user":
             history_messages.append(HumanMessage(content=msg["content"]))
         else:
@@ -682,6 +764,7 @@ async def run_agent(
             yield chunk
         try:
             from app.agents.suggestions import generate_follow_up_suggestions
+
             follow_ups = await generate_follow_up_suggestions(
                 schema_context=schema_context,
                 conversation_history=history or [],
@@ -700,8 +783,14 @@ async def run_agent(
 
     if len(sub_queries) == 1:
         async for chunk in _run_single_query(
-            compiled, query, connection_id, file_id, schema_context, history_messages,
-            db=db, llm=llm,
+            compiled,
+            query,
+            connection_id,
+            file_id,
+            schema_context,
+            history_messages,
+            db=db,
+            llm=llm,
         ):
             if chunk.get("type") == "text":
                 all_texts.append(chunk.get("content", ""))
@@ -714,8 +803,14 @@ async def run_agent(
 
             sub_text = ""
             async for chunk in _run_single_query(
-                compiled, sub_q, connection_id, file_id, schema_context, history_messages,
-                db=db, llm=llm,
+                compiled,
+                sub_q,
+                connection_id,
+                file_id,
+                schema_context,
+                history_messages,
+                db=db,
+                llm=llm,
             ):
                 if chunk["type"] in ("table", "plotly", "sql", "code", "chart"):
                     yield chunk
@@ -732,6 +827,7 @@ async def run_agent(
 
     try:
         from app.agents.suggestions import generate_follow_up_suggestions
+
         follow_ups = await generate_follow_up_suggestions(
             schema_context=schema_context,
             conversation_history=history or [],

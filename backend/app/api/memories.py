@@ -6,7 +6,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException, Query, status
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
 from app.core.deps import CurrentUser, DbSession
 from app.core.permissions import Permission, require_permission
@@ -49,12 +49,7 @@ async def list_memories(
     if memory_type:
         filters.append(AgentMemory.memory_type == memory_type)
 
-    stmt = (
-        select(AgentMemory)
-        .where(*filters)
-        .order_by(AgentMemory.created_at.desc())
-        .limit(limit)
-    )
+    stmt = select(AgentMemory).where(*filters).order_by(AgentMemory.created_at.desc()).limit(limit)
     result = await db.execute(stmt)
     memories = list(result.scalars().all())
 
@@ -78,7 +73,15 @@ async def create_memory(
     if not content:
         raise HTTPException(status_code=400, detail="Content is required.")
 
-    valid_types = {"correction", "preference", "column_alias", "domain_term", "business_rule", "table_note", "learned_fact"}
+    valid_types = {
+        "correction",
+        "preference",
+        "column_alias",
+        "domain_term",
+        "business_rule",
+        "table_note",
+        "learned_fact",
+    }
     if memory_type not in valid_types:
         raise HTTPException(status_code=400, detail=f"Invalid type. Valid: {sorted(valid_types)}")
 

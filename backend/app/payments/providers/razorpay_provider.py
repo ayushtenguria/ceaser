@@ -6,7 +6,6 @@ import hashlib
 import hmac
 import json
 import logging
-from datetime import datetime
 
 import httpx
 
@@ -70,9 +69,7 @@ class RazorpayProvider(IPaymentProvider):
 
     async def verify_webhook(self, *, payload: bytes, headers: dict) -> PaymentEvent:
         sig = headers.get("x-razorpay-signature", "")
-        expected = hmac.new(
-            self._webhook_secret.encode(), payload, hashlib.sha256
-        ).hexdigest()
+        expected = hmac.new(self._webhook_secret.encode(), payload, hashlib.sha256).hexdigest()
         if not hmac.compare_digest(sig, expected):
             raise ValueError("Invalid Razorpay webhook signature")
 

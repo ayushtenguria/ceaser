@@ -14,13 +14,11 @@ import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
-import numpy as np
 import pandas as pd
 
-from app.agents.excel.inspector import WorkbookInspection
 from app.agents.excel.edge_case_logger import log_edge_case
+from app.agents.excel.inspector import WorkbookInspection
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +30,7 @@ _MAX_COL_NAME_LEN = 60
 @dataclass
 class ExtractedSheet:
     """A single extracted and cleaned sheet."""
+
     name: str
     df: pd.DataFrame
     row_count: int = 0
@@ -62,15 +61,23 @@ def extract_sheet(
         elif suffix in (".xlsx", ".xls", ".xlsm"):
             return _extract_excel_sheet(path, sheet_name or "", max_rows)
         else:
-            log_edge_case(file_name=path.name, category="parse",
-                         description=f"Unknown extension '{suffix}', trying CSV fallback")
+            log_edge_case(
+                file_name=path.name,
+                category="parse",
+                description=f"Unknown extension '{suffix}', trying CSV fallback",
+            )
             return _extract_csv(path, inspection, max_rows)
     except Exception as exc:
-        log_edge_case(file_name=path.name, sheet_name=sheet_name or "",
-                     category="parse", description=f"Complete extraction failure: {exc}",
-                     raw_error=str(exc))
-        return ExtractedSheet(name=sheet_name or path.stem, df=pd.DataFrame(),
-                            warnings=[f"Failed to extract: {exc}"])
+        log_edge_case(
+            file_name=path.name,
+            sheet_name=sheet_name or "",
+            category="parse",
+            description=f"Complete extraction failure: {exc}",
+            raw_error=str(exc),
+        )
+        return ExtractedSheet(
+            name=sheet_name or path.stem, df=pd.DataFrame(), warnings=[f"Failed to extract: {exc}"]
+        )
 
 
 def extract_all_sheets(
@@ -92,10 +99,15 @@ def extract_all_sheets(
             sheet_names = xl.sheet_names
             xl.close()
         except Exception as exc:
-            log_edge_case(file_name=path.name, category="parse",
-                         description=f"Cannot read sheet names: {exc}", raw_error=str(exc))
+            log_edge_case(
+                file_name=path.name,
+                category="parse",
+                description=f"Cannot read sheet names: {exc}",
+                raw_error=str(exc),
+            )
             try:
                 import openpyxl
+
                 wb = openpyxl.load_workbook(path, read_only=True)
                 sheet_names = wb.sheetnames
                 wb.close()
@@ -105,8 +117,9 @@ def extract_all_sheets(
         sheets = []
         for i, name in enumerate(sheet_names):
             logger.info("Extracting sheet '%s' (%d/%d)...", name, i + 1, len(sheet_names))
-            result = _safe_extract(path.name, name,
-                                   lambda n=name: _extract_excel_sheet(path, n, max_rows))
+            result = _safe_extract(
+                path.name, name, lambda n=name: _extract_excel_sheet(path, n, max_rows)
+            )
             if result.row_count > 0:
                 sheets.append(result)
                 logger.info("  → %d rows, %d cols", result.row_count, result.column_count)
@@ -125,19 +138,33 @@ def _safe_extract(file_name: str, sheet_name: str, fn) -> ExtractedSheet:
     try:
         return fn()
     except MemoryError:
-        log_edge_case(file_name=file_name, sheet_name=sheet_name,
-                     category="memory", description="Out of memory during extraction")
-        return ExtractedSheet(name=sheet_name or file_name, df=pd.DataFrame(),
-                            warnings=["Sheet too large — out of memory"])
+        log_edge_case(
+            file_name=file_name,
+            sheet_name=sheet_name,
+            category="memory",
+            description="Out of memory during extraction",
+        )
+        return ExtractedSheet(
+            name=sheet_name or file_name,
+            df=pd.DataFrame(),
+            warnings=["Sheet too large — out of memory"],
+        )
     except Exception as exc:
-        log_edge_case(file_name=file_name, sheet_name=sheet_name,
-                     category="parse", description=f"Extraction failed: {type(exc).__name__}: {exc}",
-                     raw_error=str(exc))
-        return ExtractedSheet(name=sheet_name or file_name, df=pd.DataFrame(),
-                            warnings=[f"Failed: {exc}"])
+        log_edge_case(
+            file_name=file_name,
+            sheet_name=sheet_name,
+            category="parse",
+            description=f"Extraction failed: {type(exc).__name__}: {exc}",
+            raw_error=str(exc),
+        )
+        return ExtractedSheet(
+            name=sheet_name or file_name, df=pd.DataFrame(), warnings=[f"Failed: {exc}"]
+        )
 
 
-def _extract_csv(path: Path, inspection: WorkbookInspection | None, max_rows: int) -> ExtractedSheet:
+def _extract_csv(
+    path: Path, inspection: WorkbookInspection | None, max_rows: int
+) -> ExtractedSheet:
     """Extract a CSV file with encoding/delimiter fallback chain."""
     encoding = inspection.encoding if inspection else "utf-8"
     delimiter = inspection.delimiter if inspection else ","
@@ -146,8 +173,14 @@ def _extract_csv(path: Path, inspection: WorkbookInspection | None, max_rows: in
     header_row = 0
     for enc in [encoding, "utf-8", "latin-1", "cp1252", "iso-8859-1"]:
         try:
-            raw_df = pd.read_csv(path, encoding=enc, sep=delimiter,
-                                  header=None, nrows=_HEADER_SCAN_ROWS, on_bad_lines="skip")
+            raw_df = pd.read_csv(
+                path,
+                encoding=enc,
+                sep=delimiter,
+                header=None,
+                nrows=_HEADER_SCAN_ROWS,
+                on_bad_lines="skip",
+            )
             header_row = _detect_header_row(raw_df)
             encoding = enc
             break
@@ -157,16 +190,24 @@ def _extract_csv(path: Path, inspection: WorkbookInspection | None, max_rows: in
     df = None
     for enc in [encoding, "utf-8", "latin-1", "cp1252"]:
         try:
-            df = pd.read_csv(path, encoding=enc, sep=delimiter, header=header_row,
-                              on_bad_lines="skip", low_memory=False, nrows=max_rows)
+            df = pd.read_csv(
+                path,
+                encoding=enc,
+                sep=delimiter,
+                header=header_row,
+                on_bad_lines="skip",
+                low_memory=False,
+                nrows=max_rows,
+            )
             break
         except Exception:
             continue
 
     if df is None:
         try:
-            df = pd.read_csv(path, encoding="utf-8", errors="replace",
-                              on_bad_lines="skip", nrows=max_rows)
+            df = pd.read_csv(
+                path, encoding="utf-8", errors="replace", on_bad_lines="skip", nrows=max_rows
+            )
             warnings.append("Encoding issues — some characters may be corrupted")
         except Exception:
             df = pd.DataFrame()
@@ -195,8 +236,12 @@ def _extract_excel_sheet(path: Path, sheet_name: str, max_rows: int) -> Extracte
     try:
         raw_df = pd.read_excel(path, sheet_name=sheet_name, header=None, nrows=_HEADER_SCAN_ROWS)
     except Exception as exc:
-        log_edge_case(file_name=path.name, sheet_name=sheet_name,
-                     category="parse", description=f"Cannot read sheet for header detection: {exc}")
+        log_edge_case(
+            file_name=path.name,
+            sheet_name=sheet_name,
+            category="parse",
+            description=f"Cannot read sheet for header detection: {exc}",
+        )
         return ExtractedSheet(name=sheet_name, df=pd.DataFrame(), warnings=[str(exc)])
 
     if raw_df.empty or raw_df.shape[1] < 1:
@@ -207,9 +252,13 @@ def _extract_excel_sheet(path: Path, sheet_name: str, max_rows: int) -> Extracte
     try:
         df = pd.read_excel(path, sheet_name=sheet_name, header=header_row, nrows=max_rows)
     except Exception as exc:
-        log_edge_case(file_name=path.name, sheet_name=sheet_name,
-                     category="header", description=f"Read with header={header_row} failed, trying header=0",
-                     raw_error=str(exc))
+        log_edge_case(
+            file_name=path.name,
+            sheet_name=sheet_name,
+            category="header",
+            description=f"Read with header={header_row} failed, trying header=0",
+            raw_error=str(exc),
+        )
         try:
             df = pd.read_excel(path, sheet_name=sheet_name, header=0, nrows=max_rows)
             header_row = 0
@@ -277,14 +326,28 @@ def _detect_header_row(raw_df: pd.DataFrame) -> int:
                     pass
             numeric_penalty = numeric_count / total
 
-            header_like = sum(1 for s in str_vals
-                              if 2 <= len(s) <= 50
-                              and not s.replace('.', '').replace('-', '').replace('/', '').replace(',', '').isdigit())
+            header_like = sum(
+                1
+                for s in str_vals
+                if 2 <= len(s) <= 50
+                and not s.replace(".", "")
+                .replace("-", "")
+                .replace("/", "")
+                .replace(",", "")
+                .isdigit()
+            )
             header_bonus = header_like / max(str_count, 1)
 
             sparse_penalty = max(0, 0.5 - non_null_ratio) * 2
 
-            score = (str_ratio * 3) + (unique_ratio * 2) + (non_null_ratio * 2) + (header_bonus * 3) - (numeric_penalty * 2) - (sparse_penalty * 2)
+            score = (
+                (str_ratio * 3)
+                + (unique_ratio * 2)
+                + (non_null_ratio * 2)
+                + (header_bonus * 3)
+                - (numeric_penalty * 2)
+                - (sparse_penalty * 2)
+            )
 
             if score > best_score:
                 best_score = score
@@ -305,8 +368,12 @@ def _clean_dataframe(df: pd.DataFrame, file_name: str = "", sheet_name: str = ""
     try:
         df.columns = _clean_column_names(df.columns)
     except Exception as exc:
-        log_edge_case(file_name=file_name, sheet_name=sheet_name,
-                     category="header", description=f"Column name cleaning failed: {exc}")
+        log_edge_case(
+            file_name=file_name,
+            sheet_name=sheet_name,
+            category="header",
+            description=f"Column name cleaning failed: {exc}",
+        )
         df.columns = [f"col_{i}" for i in range(len(df.columns))]
 
     try:
@@ -365,9 +432,12 @@ def _clean_dataframe(df: pd.DataFrame, file_name: str = "", sheet_name: str = ""
                     mask = df[col].isin(formula_errors)
                     if mask.any():
                         df.loc[mask, col] = None
-                        log_edge_case(file_name=file_name, sheet_name=sheet_name,
-                                     category="data",
-                                     description=f"Column '{col}' had {mask.sum()} formula error values, replaced with null")
+                        log_edge_case(
+                            file_name=file_name,
+                            sheet_name=sheet_name,
+                            category="data",
+                            description=f"Column '{col}' had {mask.sum()} formula error values, replaced with null",
+                        )
             except Exception:
                 pass
     except Exception:
@@ -409,7 +479,9 @@ def _clean_column_names(columns: pd.Index) -> list[str]:
     return clean
 
 
-def _detect_column_types(df: pd.DataFrame, file_name: str = "", sheet_name: str = "") -> dict[str, str]:
+def _detect_column_types(
+    df: pd.DataFrame, file_name: str = "", sheet_name: str = ""
+) -> dict[str, str]:
     """Detect column types. Never raises — defaults to 'string' on any failure."""
     types: dict[str, str] = {}
     sample = df.head(_SAMPLE_SIZE) if len(df) > _SAMPLE_SIZE else df
@@ -452,8 +524,12 @@ def _detect_column_types(df: pd.DataFrame, file_name: str = "", sheet_name: str 
 
         except Exception as exc:
             types[col] = "string"
-            log_edge_case(file_name=file_name, sheet_name=sheet_name,
-                         category="type", description=f"Type detection failed for '{col}': {exc}")
+            log_edge_case(
+                file_name=file_name,
+                sheet_name=sheet_name,
+                category="type",
+                description=f"Type detection failed for '{col}': {exc}",
+            )
 
     return types
 

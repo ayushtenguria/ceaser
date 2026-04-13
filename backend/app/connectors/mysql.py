@@ -23,7 +23,6 @@ class MySQLConnector(BaseConnector):
         self._password = decrypt_value(connection.encrypted_password)
         self._conn: pymysql.connections.Connection | None = None
 
-
     _QUERY_TIMEOUT_S = 60
     _MAX_ROWS = 5000
 

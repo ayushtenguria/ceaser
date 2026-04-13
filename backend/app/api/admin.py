@@ -3,16 +3,15 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 import httpx
 from fastapi import APIRouter, HTTPException, status
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 
 from app.api.schemas import _CamelModel
 from app.core.config import get_settings
 from app.core.deps import CurrentUser, DbSession
-from app.db.models import AuditLog, Conversation, DatabaseConnection, Message, Report, User
+from app.db.models import Conversation, DatabaseConnection, Message, Report, User
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/admin", tags=["admin"])
@@ -38,10 +37,15 @@ async def _require_admin(current_user: CurrentUser, db: DbSession) -> User:
     if user is None:
         if settings.dev_mode and current_user.user_id == "dev_user":
             user = User(
-                clerk_id="dev_user", email=settings.super_admin_emails[0] if settings.super_admin_emails else "admin@ceaser.local",
-                first_name="Admin", last_name="(Dev)",
+                clerk_id="dev_user",
+                email=settings.super_admin_emails[0]
+                if settings.super_admin_emails
+                else "admin@ceaser.local",
+                first_name="Admin",
+                last_name="(Dev)",
                 organization_id="dev_org",
-                role="super_admin", is_super_admin=True,
+                role="super_admin",
+                is_super_admin=True,
             )
             db.add(user)
             await db.flush()
@@ -63,12 +67,16 @@ async def _require_admin(current_user: CurrentUser, db: DbSession) -> User:
 @router.get("/stats")
 async def get_platform_stats(current_user: CurrentUser, db: DbSession) -> dict:
     """Platform-wide stats for the admin dashboard."""
-    admin = await _require_admin(current_user, db)
+    await _require_admin(current_user, db)
 
     total_users = (await db.execute(select(func.count()).select_from(User))).scalar() or 0
-    total_conversations = (await db.execute(select(func.count()).select_from(Conversation))).scalar() or 0
+    total_conversations = (
+        await db.execute(select(func.count()).select_from(Conversation))
+    ).scalar() or 0
     total_messages = (await db.execute(select(func.count()).select_from(Message))).scalar() or 0
-    total_connections = (await db.execute(select(func.count()).select_from(DatabaseConnection))).scalar() or 0
+    total_connections = (
+        await db.execute(select(func.count()).select_from(DatabaseConnection))
+    ).scalar() or 0
     total_reports = (await db.execute(select(func.count()).select_from(Report))).scalar() or 0
 
     orgs_result = await db.execute(
@@ -91,6 +99,7 @@ async def get_platform_stats(current_user: CurrentUser, db: DbSession) -> dict:
 class OrgCreate(_CamelModel):
     name: str
     slug: str = ""
+
 
 class InviteUser(_CamelModel):
     email: str
@@ -130,17 +139,22 @@ async def list_organizations(current_user: CurrentUser, db: DbSession) -> list[d
 
 
 @router.post("/organizations/{org_id}/invite")
-async def invite_user(org_id: str, body: InviteUser, current_user: CurrentUser, db: DbSession) -> dict:
+async def invite_user(
+    org_id: str, body: InviteUser, current_user: CurrentUser, db: DbSession
+) -> dict:
     """Invite a user to an organization via Clerk."""
     await _require_admin(current_user, db)
 
     from app.db.models import OrganizationPlan
+
     plan_stmt = select(OrganizationPlan).where(OrganizationPlan.organization_id == org_id)
     plan_result = await db.execute(plan_stmt)
     plan = plan_result.scalar_one_or_none()
 
     if plan:
-        member_count_stmt = select(func.count()).select_from(User).where(User.organization_id == org_id)
+        member_count_stmt = (
+            select(func.count()).select_from(User).where(User.organization_id == org_id)
+        )
         member_count = (await db.execute(member_count_stmt)).scalar() or 0
 
         if member_count >= plan.max_seats:
@@ -196,6 +210,7 @@ async def get_org_plan(org_id: str, current_user: CurrentUser, db: DbSession) ->
     await _require_admin(current_user, db)
 
     from app.db.models import OrganizationPlan
+
     stmt = select(OrganizationPlan).where(OrganizationPlan.organization_id == org_id)
     result = await db.execute(stmt)
     plan = result.scalar_one_or_none()
@@ -207,6 +222,7 @@ async def get_org_plan(org_id: str, current_user: CurrentUser, db: DbSession) ->
         await db.refresh(plan)
 
     from app.core.features import get_all_features
+
     features = await get_all_features(db, org_id)
 
     return {
@@ -223,11 +239,14 @@ async def get_org_plan(org_id: str, current_user: CurrentUser, db: DbSession) ->
 
 
 @router.patch("/organizations/{org_id}/plan")
-async def update_org_plan(org_id: str, body: PlanUpdate, current_user: CurrentUser, db: DbSession) -> dict:
+async def update_org_plan(
+    org_id: str, body: PlanUpdate, current_user: CurrentUser, db: DbSession
+) -> dict:
     """Update an organization's plan (super admin only)."""
     await _require_admin(current_user, db)
 
     from app.db.models import OrganizationPlan
+
     stmt = select(OrganizationPlan).where(OrganizationPlan.organization_id == org_id)
     result = await db.execute(stmt)
     plan = result.scalar_one_or_none()
@@ -236,16 +255,22 @@ async def update_org_plan(org_id: str, body: PlanUpdate, current_user: CurrentUs
         plan = OrganizationPlan(organization_id=org_id)
         db.add(plan)
 
-    if body.plan_name is not None: plan.plan_name = body.plan_name
-    if body.max_seats is not None: plan.max_seats = body.max_seats
-    if body.max_connections is not None: plan.max_connections = body.max_connections
-    if body.max_queries_per_day is not None: plan.max_queries_per_day = body.max_queries_per_day
-    if body.max_reports is not None: plan.max_reports = body.max_reports
+    if body.plan_name is not None:
+        plan.plan_name = body.plan_name
+    if body.max_seats is not None:
+        plan.max_seats = body.max_seats
+    if body.max_connections is not None:
+        plan.max_connections = body.max_connections
+    if body.max_queries_per_day is not None:
+        plan.max_queries_per_day = body.max_queries_per_day
+    if body.max_reports is not None:
+        plan.max_reports = body.max_reports
 
     await db.flush()
     await db.refresh(plan)
 
     from app.core.features import get_all_features
+
     features = await get_all_features(db, org_id)
 
     return {
@@ -261,7 +286,9 @@ async def update_org_plan(org_id: str, body: PlanUpdate, current_user: CurrentUs
 
 
 @router.patch("/organizations/{org_id}/features")
-async def update_org_features(org_id: str, body: dict, current_user: CurrentUser, db: DbSession) -> dict:
+async def update_org_features(
+    org_id: str, body: dict, current_user: CurrentUser, db: DbSession
+) -> dict:
     """Toggle feature flags per org (super admin only).
 
     Body: {"notebooks": true, "advanced_analytics": false, ...}
@@ -270,13 +297,15 @@ async def update_org_features(org_id: str, body: dict, current_user: CurrentUser
     """
     await _require_admin(current_user, db)
 
-    from app.db.models import OrganizationPlan
     from app.core.features import Feature, get_all_features
+    from app.db.models import OrganizationPlan
 
     valid_features = {f.value for f in Feature}
     for key in body:
         if key not in valid_features:
-            raise HTTPException(status_code=400, detail=f"Unknown feature: '{key}'. Valid: {sorted(valid_features)}")
+            raise HTTPException(
+                status_code=400, detail=f"Unknown feature: '{key}'. Valid: {sorted(valid_features)}"
+            )
 
     stmt = select(OrganizationPlan).where(OrganizationPlan.organization_id == org_id)
     result = await db.execute(stmt)
@@ -293,6 +322,7 @@ async def update_org_features(org_id: str, body: dict, current_user: CurrentUser
 
     plan.features = current
     from sqlalchemy.orm.attributes import flag_modified
+
     flag_modified(plan, "features")
     await db.flush()
 

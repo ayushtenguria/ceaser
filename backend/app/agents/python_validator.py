@@ -10,7 +10,6 @@ from __future__ import annotations
 import ast
 import logging
 import re
-from typing import Any
 
 from app.agents.state import AgentState
 
@@ -20,18 +19,44 @@ logger = logging.getLogger(__name__)
 # Helpers
 # ---------------------------------------------------------------------------
 
-_BLOCKED_CALLS = frozenset({
-    "eval", "exec", "compile", "__import__", "open",
-    "system", "popen", "getattr", "setattr", "delattr",
-    "globals", "locals",
-})
+_BLOCKED_CALLS = frozenset(
+    {
+        "eval",
+        "exec",
+        "compile",
+        "__import__",
+        "open",
+        "system",
+        "popen",
+        "getattr",
+        "setattr",
+        "delattr",
+        "globals",
+        "locals",
+    }
+)
 
-_BLOCKED_MODULES = frozenset({
-    "subprocess", "shutil", "socket", "http", "urllib",
-    "requests", "httpx", "aiohttp", "ftplib", "smtplib",
-    "telnetlib", "xmlrpc", "ctypes", "multiprocessing",
-    "webbrowser", "antigravity", "os",
-})
+_BLOCKED_MODULES = frozenset(
+    {
+        "subprocess",
+        "shutil",
+        "socket",
+        "http",
+        "urllib",
+        "requests",
+        "httpx",
+        "aiohttp",
+        "ftplib",
+        "smtplib",
+        "telnetlib",
+        "xmlrpc",
+        "ctypes",
+        "multiprocessing",
+        "webbrowser",
+        "antigravity",
+        "os",
+    }
+)
 
 
 def _extract_dataframe_columns(schema_context: str) -> dict[str, list[str]]:
@@ -63,9 +88,7 @@ def _extract_dataframe_columns(schema_context: str) -> dict[str, list[str]]:
             known[var] = cols
 
     # Pattern 3: "Columns (N): col1, col2, col3" after a sheet/file header
-    for m in re.finditer(
-        r"(?:Columns|columns)\s*\(\d+\):\s*(.+?)(?:\n|$)", schema_context
-    ):
+    for m in re.finditer(r"(?:Columns|columns)\s*\(\d+\):\s*(.+?)(?:\n|$)", schema_context):
         cols = [c.strip() for c in m.group(1).split(",") if c.strip()]
         if cols:
             # Attach to the most recently seen df variable or use "df"
@@ -75,7 +98,9 @@ def _extract_dataframe_columns(schema_context: str) -> dict[str, list[str]]:
                 known[target] = cols
 
     # Pattern 4: EXACT COLUMNS lines with quoted names
-    for m in re.finditer(r"EXACT COLUMNS.*?:\n((?:\s+-\s+'.+?'.*\n)+)", schema_context, re.IGNORECASE):
+    for m in re.finditer(
+        r"EXACT COLUMNS.*?:\n((?:\s+-\s+'.+?'.*\n)+)", schema_context, re.IGNORECASE
+    ):
         cols = re.findall(r"'([^']+)'", m.group(1))
         if cols:
             target = list(known.keys())[-1] if known else "df"
@@ -228,7 +253,7 @@ def _check_read_excel_without_preamble(code: str) -> str | None:
             return (
                 f"Code tries to load '{path}' directly, but the file is stored "
                 f"in cloud storage. Use the DataFrame variable from the CODE "
-                f"PREAMBLE (e.g., df_xxx = pd.read_parquet(\"ceaser://...\")) instead."
+                f'PREAMBLE (e.g., df_xxx = pd.read_parquet("ceaser://...")) instead.'
             )
     return None
 
@@ -236,6 +261,7 @@ def _check_read_excel_without_preamble(code: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Main validation function
 # ---------------------------------------------------------------------------
+
 
 def validate_python(state: AgentState) -> AgentState:
     """Validate generated Python code before execution.

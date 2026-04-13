@@ -3,18 +3,17 @@
 from __future__ import annotations
 
 from enum import Enum
-from functools import wraps
-from typing import Any
 
 from fastapi import HTTPException, status
+from sqlalchemy import select
 
 from app.core.deps import CurrentUser, DbSession
 from app.db.models import User
-from sqlalchemy import select
 
 
 class Permission(str, Enum):
     """Available permissions in the platform."""
+
     QUERY_DATA = "query_data"
     VIEW_DATA = "view_data"
     SAVE_REPORTS = "save_reports"
@@ -70,14 +69,17 @@ async def get_user_with_role(db: DbSession, clerk_id: str) -> User:
     user = result.scalar_one_or_none()
     if user is None:
         from app.core.config import get_settings
+
         settings = get_settings()
         if settings.dev_mode and clerk_id == "dev_user":
             user = User(
                 clerk_id="dev_user",
                 email="admin@ceaser.local",
-                first_name="Dev", last_name="User",
+                first_name="Dev",
+                last_name="User",
                 organization_id="dev_org",
-                role="super_admin", is_super_admin=True,
+                role="super_admin",
+                is_super_admin=True,
             )
             db.add(user)
             await db.flush()
@@ -99,6 +101,6 @@ async def require_permission(
         raise HTTPException(
             status_code=status.HTTP_403_FORBIDDEN,
             detail=f"Your role '{user.role}' does not have permission: {permission.value}. "
-                   f"Contact your organization admin to upgrade your access.",
+            f"Contact your organization admin to upgrade your access.",
         )
     return user

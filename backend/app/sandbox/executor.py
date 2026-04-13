@@ -8,22 +8,26 @@ import logging
 import sys
 import tempfile
 import textwrap
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 logger = logging.getLogger(__name__)
 
+
 def _sandbox_timeout() -> int:
     try:
         from app.core.config import get_settings
+
         return get_settings().sandbox_timeout_seconds
     except Exception:
         return 30
 
+
 _TIMEOUT_SECONDS = _sandbox_timeout()
 
 _PYTHON_EXECUTABLE = sys.executable
+
 
 def _sanitize_error(text: str) -> str:
     """Strip signed URLs, tokens, and internal file paths from error text.
@@ -32,6 +36,7 @@ def _sanitize_error(text: str) -> str:
     the frontend or being stored in the database.
     """
     import re
+
     # Strip full URLs (signed Supabase URLs, etc.)
     text = re.sub(
         r'https?://[^\s"\')\]]+',
@@ -224,6 +229,7 @@ async def execute_python(code: str) -> ExecutionResult:
     if "ceaser://" in code:
         try:
             from app.agents.excel.context import resolve_ceaser_refs
+
             resolved_code = await resolve_ceaser_refs(code)
         except Exception as exc:
             logger.warning("Failed to resolve ceaser:// refs: %s", exc)
@@ -265,7 +271,7 @@ async def execute_python(code: str) -> ExecutionResult:
                 except json.JSONDecodeError:
                     logger.warning("Plotly figure file was not valid JSON.")
 
-        except asyncio.TimeoutError:
+        except TimeoutError:
             proc.kill()  # type: ignore[union-attr]
             result.success = False
             result.error = f"Execution timed out after {_TIMEOUT_SECONDS}s."

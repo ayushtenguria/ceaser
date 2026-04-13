@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
@@ -51,12 +50,14 @@ async def enrich_report(
         recommendations = "\n".join(f"- {r}" for r in report.recommendations)
 
         messages = [
-            SystemMessage(content=_ENRICH_PROMPT.format(
-                title=report.title,
-                summary=report.executive_summary[:500],
-                section_titles=section_titles,
-                recommendations=recommendations,
-            )),
+            SystemMessage(
+                content=_ENRICH_PROMPT.format(
+                    title=report.title,
+                    summary=report.executive_summary[:500],
+                    section_titles=section_titles,
+                    recommendations=recommendations,
+                )
+            ),
             HumanMessage(content="Review and enrich."),
         ]
 
@@ -85,8 +86,11 @@ async def enrich_report(
                 if isinstance(r, str) and r not in report.recommendations:
                     report.recommendations.append(r)
 
-        logger.info("Report enriched: %d metrics, %d recommendations",
-                     len(report.key_metrics), len(report.recommendations))
+        logger.info(
+            "Report enriched: %d metrics, %d recommendations",
+            len(report.key_metrics),
+            len(report.recommendations),
+        )
 
     except Exception as exc:
         logger.warning("Report enrichment failed (using original): %s", exc)

@@ -63,6 +63,7 @@ async def sync_user(payload: UserSyncRequest, current_user: CurrentUser, db: DbS
 
     if user.organization_id:
         from app.db.models import OrganizationPlan
+
         plan_stmt = select(OrganizationPlan).where(
             OrganizationPlan.organization_id == user.organization_id
         )
@@ -101,9 +102,11 @@ async def get_me(current_user: CurrentUser, db: DbSession) -> User:
 @router.get("/me/plan")
 async def get_my_plan(current_user: CurrentUser, db: DbSession) -> dict:
     """Return the current user's organization plan and usage."""
-    from app.db.models import OrganizationPlan, AuditLog, DatabaseConnection, Report
     from datetime import datetime
+
     from sqlalchemy import func
+
+    from app.db.models import AuditLog, DatabaseConnection, OrganizationPlan, Report
 
     user = await get_user_with_role(db, current_user.user_id)
     org_id = user.organization_id or ""
@@ -129,32 +132,36 @@ async def get_my_plan(current_user: CurrentUser, db: DbSession) -> dict:
 
     today = datetime.utcnow().replace(hour=0, minute=0, second=0, microsecond=0)
     query_count_stmt = (
-        select(func.count()).select_from(AuditLog)
+        select(func.count())
+        .select_from(AuditLog)
         .where(AuditLog.action == "chat_query", AuditLog.created_at >= today)
     )
     queries_today = (await db.execute(query_count_stmt)).scalar() or 0
 
     conn_count_stmt = (
-        select(func.count()).select_from(DatabaseConnection)
+        select(func.count())
+        .select_from(DatabaseConnection)
         .where(DatabaseConnection.organization_id == org_id)
     )
     connections_used = (await db.execute(conn_count_stmt)).scalar() or 0
 
     month_start = datetime.utcnow().replace(day=1, hour=0, minute=0, second=0, microsecond=0)
     report_count_stmt = (
-        select(func.count()).select_from(Report)
+        select(func.count())
+        .select_from(Report)
         .where(Report.organization_id == org_id, Report.created_at >= month_start)
     )
     reports_this_month = (await db.execute(report_count_stmt)).scalar() or 0
 
     from app.db.models import User as UserModel
+
     seat_count_stmt = (
-        select(func.count()).select_from(UserModel)
-        .where(UserModel.organization_id == org_id)
+        select(func.count()).select_from(UserModel).where(UserModel.organization_id == org_id)
     )
     seats_used = (await db.execute(seat_count_stmt)).scalar() or 0
 
     from app.core.features import get_all_features
+
     features = await get_all_features(db, org_id)
 
     return {
@@ -167,8 +174,20 @@ async def get_my_plan(current_user: CurrentUser, db: DbSession) -> dict:
         },
         "features": features,
         "upgrades": {
-            "starter": {"price": "$79/mo", "queries": 100, "connections": 3, "reports": 30, "seats": 3},
-            "business": {"price": "$249/mo", "queries": 500, "connections": 10, "reports": -1, "seats": 10},
+            "starter": {
+                "price": "$79/mo",
+                "queries": 100,
+                "connections": 3,
+                "reports": 30,
+                "seats": 3,
+            },
+            "business": {
+                "price": "$249/mo",
+                "queries": 500,
+                "connections": 10,
+                "reports": -1,
+                "seats": 10,
+            },
         },
     }
 

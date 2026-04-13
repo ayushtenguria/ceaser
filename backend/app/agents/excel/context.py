@@ -12,10 +12,6 @@ import logging
 from pathlib import Path
 from typing import Any
 
-import pandas as pd
-
-from app.agents.excel.relationship_mapper import Relationship
-
 logger = logging.getLogger(__name__)
 
 CEASER_PROTOCOL = "ceaser://"
@@ -24,10 +20,11 @@ CEASER_PROTOCOL = "ceaser://"
 def _make_var_name(file_name: str, sheet_name: str, sheet_count: int) -> str:
     """Create a clean, short DataFrame variable name."""
     import re
+
     prefix = Path(file_name).stem.lower().replace(" ", "_").replace("-", "_")
-    prefix = re.sub(r'^[a-f0-9]{20,}_', '', prefix)
+    prefix = re.sub(r"^[a-f0-9]{20,}_", "", prefix)
     prefix = prefix[:30]
-    sheet_clean = sheet_name.lower().replace(' ', '_')[:30]
+    sheet_clean = sheet_name.lower().replace(" ", "_")[:30]
 
     if sheet_count == 1:
         var = f"df_{prefix}" if prefix else f"df_{sheet_clean}"
@@ -35,7 +32,7 @@ def _make_var_name(file_name: str, sheet_name: str, sheet_count: int) -> str:
         var = f"df_{prefix}_{sheet_clean}" if prefix else f"df_{sheet_clean}"
 
     var = "".join(c if c.isalnum() or c == "_" else "_" for c in var)
-    var = re.sub(r'_+', '_', var).strip('_')
+    var = re.sub(r"_+", "_", var).strip("_")
     return var
 
 
@@ -49,8 +46,8 @@ def save_dataframes_to_parquet(
     The remote_path is a storage key like 'parquet/org/df_name.parquet',
     NOT a URL. URLs are only generated at execution time.
     """
-    import asyncio
     from app.services.storage import get_storage
+
     storage = get_storage()
 
     paths: dict[str, str] = {}
@@ -69,9 +66,7 @@ def save_dataframes_to_parquet(
             buf = sheet.df.to_parquet(index=False)
 
             if has_loop:
-                future = asyncio.run_coroutine_threadsafe(
-                    storage.upload(buf, remote_path), loop
-                )
+                future = asyncio.run_coroutine_threadsafe(storage.upload(buf, remote_path), loop)
                 future.result(timeout=60)
             else:
                 asyncio.run(storage.upload(buf, remote_path))
@@ -122,8 +117,12 @@ def generate_code_preamble(
     use_duckdb = total_rows > 100_000
     if use_duckdb:
         lines.append("import duckdb")
-        lines.append(f"# NOTE: This file has {total_rows:,} rows — use duckdb.sql() for aggregations")
-        lines.append("# Example: result = duckdb.sql(\"SELECT col, SUM(val) FROM read_parquet('ceaser://...') GROUP BY col\").fetchdf()")
+        lines.append(
+            f"# NOTE: This file has {total_rows:,} rows — use duckdb.sql() for aggregations"
+        )
+        lines.append(
+            "# Example: result = duckdb.sql(\"SELECT col, SUM(val) FROM read_parquet('ceaser://...') GROUP BY col\").fetchdf()"
+        )
         lines.append("")
 
     for var_name, remote_path in parquet_paths.items():
@@ -135,7 +134,9 @@ def generate_code_preamble(
             # DuckDB path: define both a parquet ref constant AND a pandas load
             # The LLM can choose: duckdb.sql() for aggregations, pd.read_parquet() for transforms
             lines.append(f'_PARQUET_{var_name.upper()} = "{safe_ref}"')
-            lines.append(f'{var_name} = pd.read_parquet("{safe_ref}")  # WARNING: {row_count:,} rows — prefer duckdb.sql() for aggregations')
+            lines.append(
+                f'{var_name} = pd.read_parquet("{safe_ref}")  # WARNING: {row_count:,} rows — prefer duckdb.sql() for aggregations'
+            )
         else:
             lines.append(f'{var_name} = pd.read_parquet("{safe_ref}")')
 
@@ -160,8 +161,12 @@ def generate_code_preamble(
                     )
 
             # Auto-convert date-looking columns
-            date_cols = [c for c in cols if types.get(c, "") in ("datetime64", "date")
-                         or any(d in c.lower() for d in ("date", "time", "year", "month"))]
+            date_cols = [
+                c
+                for c in cols
+                if types.get(c, "") in ("datetime64", "date")
+                or any(d in c.lower() for d in ("date", "time", "year", "month"))
+            ]
             if date_cols:
                 for dc in date_cols:
                     if types.get(dc, "") not in ("datetime64",):
@@ -185,7 +190,9 @@ async def resolve_ceaser_refs(code: str) -> str:
     can surface a clear error instead of executing partially-resolved code.
     """
     import re
+
     from app.services.storage import get_storage
+
     storage = get_storage()
 
     pattern = re.compile(r'ceaser://([^\s"\']+)')

@@ -9,7 +9,6 @@ import uuid
 from fastapi import APIRouter, HTTPException, status
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select
-from sqlalchemy.orm import selectinload
 
 from app.agents.graph import run_agent
 from app.api.schemas import (
@@ -29,7 +28,7 @@ from app.db.models import (
     User,
 )
 from app.services.file_parser import get_file_summary, parse_file
-from app.services.schema import format_schema_for_llm, introspect_schema, SchemaInfo
+from app.services.schema import format_schema_for_llm, introspect_schema
 
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["chat"])
@@ -42,6 +41,7 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
     user = result.scalar_one_or_none()
     if user is None:
         from app.core.config import get_settings
+
         if get_settings().dev_mode and clerk_id == "dev_user":
             user = User(
                 clerk_id="dev_user",
@@ -58,7 +58,9 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
     return user
 
 
-async def _verify_org_connection(db: DbSession, connection_id: uuid.UUID, org_id: str) -> DatabaseConnection:
+async def _verify_org_connection(
+    db: DbSession, connection_id: uuid.UUID, org_id: str
+) -> DatabaseConnection:
     """Load a connection and verify it belongs to the given org. Raises 404 if not."""
     stmt = select(DatabaseConnection).where(
         DatabaseConnection.id == connection_id,
@@ -84,7 +86,9 @@ async def _verify_org_file(db: DbSession, file_id: uuid.UUID, org_id: str) -> Fi
     return upload
 
 
-async def _verify_org_conversation(db: DbSession, conversation_id: uuid.UUID, org_id: str) -> Conversation:
+async def _verify_org_conversation(
+    db: DbSession, conversation_id: uuid.UUID, org_id: str
+) -> Conversation:
     """Load a conversation and verify it belongs to a user in the given org."""
     org_filter = (
         User.organization_id.is_(None) | (User.organization_id == "")
@@ -117,9 +121,8 @@ async def _build_schema_context(
     if connection_id:
         try:
             from app.services.schema_graph import select_relevant_schema
-            graph_context = await select_relevant_schema(
-                user_question, str(connection_id), org_id
-            )
+
+            graph_context = await select_relevant_schema(user_question, str(connection_id), org_id)
             if graph_context:
                 parts.append(graph_context)
                 graph_rag_used = True
@@ -128,16 +131,21 @@ async def _build_schema_context(
             logger.warning("Graph RAG failed (falling back to full schema): %s", exc)
 
     if connection_id and not graph_rag_used:
-        stmt = select(DatabaseConnection).where(
-            DatabaseConnection.id == connection_id,
-            DatabaseConnection.organization_id == org_id,
-        ) if org_id else select(DatabaseConnection).where(DatabaseConnection.id == connection_id)
+        stmt = (
+            select(DatabaseConnection).where(
+                DatabaseConnection.id == connection_id,
+                DatabaseConnection.organization_id == org_id,
+            )
+            if org_id
+            else select(DatabaseConnection).where(DatabaseConnection.id == connection_id)
+        )
         result = await db.execute(stmt)
         conn = result.scalar_one_or_none()
         if conn:
             parts.append(f"DATABASE DIALECT: {conn.db_type.upper()}")
             if conn.schema_cache:
-                from app.services.schema import SchemaInfo, TableInfo, ColumnInfo
+                from app.services.schema import ColumnInfo, SchemaInfo, TableInfo
+
                 tables = []
                 for t in conn.schema_cache.get("tables", []):
                     cols = [
@@ -151,17 +159,23 @@ async def _build_schema_context(
                         )
                         for c in t.get("columns", [])
                     ]
-                    tables.append(TableInfo(name=t["name"], columns=cols, row_count=t.get("row_count")))
+                    tables.append(
+                        TableInfo(name=t["name"], columns=cols, row_count=t.get("row_count"))
+                    )
                 parts.append(format_schema_for_llm(SchemaInfo(tables=tables)))
             else:
                 schema = await introspect_schema(conn)
                 parts.append(format_schema_for_llm(schema))
 
     if file_id:
-        stmt = select(FileUpload).where(
-            FileUpload.id == file_id,
-            FileUpload.organization_id == org_id,
-        ) if org_id else select(FileUpload).where(FileUpload.id == file_id)
+        stmt = (
+            select(FileUpload).where(
+                FileUpload.id == file_id,
+                FileUpload.organization_id == org_id,
+            )
+            if org_id
+            else select(FileUpload).where(FileUpload.id == file_id)
+        )
         result = await db.execute(stmt)
         upload = result.scalar_one_or_none()
         if upload:
@@ -169,8 +183,10 @@ async def _build_schema_context(
 
             if upload.excel_context:
                 from app.agents.excel.sheet_selector import (
-                    parse_excel_context_to_sheets, select_relevant_sheets,
-                    build_compact_summary, build_selected_context,
+                    build_compact_summary,
+                    build_selected_context,
+                    parse_excel_context_to_sheets,
+                    select_relevant_sheets,
                 )
 
                 all_sheet_metas = parse_excel_context_to_sheets(upload.excel_context)
@@ -180,9 +196,12 @@ async def _build_schema_context(
                     selected = select_relevant_sheets(user_question, all_sheet_metas, max_sheets=3)
                     parts.append(build_selected_context(selected, preamble))
 
-                    logger.info("Smart context: %d/%d sheets selected, ~%d chars",
-                               len(selected), len(all_sheet_metas),
-                               sum(len(p) for p in parts))
+                    logger.info(
+                        "Smart context: %d/%d sheets selected, ~%d chars",
+                        len(selected),
+                        len(all_sheet_metas),
+                        sum(len(p) for p in parts),
+                    )
                 else:
                     parts.append(upload.excel_context)
                     if preamble:
@@ -190,6 +209,7 @@ async def _build_schema_context(
             else:
                 try:
                     from app.services.storage import get_storage
+
                     storage = get_storage()
                     local_path = await storage.download_url(upload.file_path)
                     df, _ = parse_file(local_path, upload.file_type)
@@ -212,17 +232,23 @@ async def _build_schema_context(
             metric_lines: list[str] = []
 
             if locked:
-                metric_lines.append("\n\nMANDATORY METRIC DEFINITIONS (use these EXACTLY as written — DO NOT deviate or generate alternative SQL)")
+                metric_lines.append(
+                    "\n\nMANDATORY METRIC DEFINITIONS (use these EXACTLY as written — DO NOT deviate or generate alternative SQL)"
+                )
                 metric_lines.append("=" * 70)
                 for m in locked:
                     metric_lines.append(f"\n  {m.name} ({m.category})")
                     if m.description:
                         metric_lines.append(f"    Description: {m.description}")
                     metric_lines.append(f"    SQL: {m.sql_expression}")
-                    metric_lines.append(f"    ** THIS DEFINITION IS LOCKED — you MUST use it exactly as shown **")
+                    metric_lines.append(
+                        "    ** THIS DEFINITION IS LOCKED — you MUST use it exactly as shown **"
+                    )
 
             if unlocked:
-                metric_lines.append("\n\nSUGGESTED METRIC DEFINITIONS (use as guidance when user references these terms)")
+                metric_lines.append(
+                    "\n\nSUGGESTED METRIC DEFINITIONS (use as guidance when user references these terms)"
+                )
                 metric_lines.append("=" * 70)
                 for m in unlocked:
                     metric_lines.append(f"\n  {m.name} ({m.category})")
@@ -236,6 +262,7 @@ async def _build_schema_context(
     # ── Inject org-level join rules ──────────────────────────────────
     if connection_id:
         from app.db.models import JoinRule
+
         jr_stmt = select(JoinRule).where(
             JoinRule.connection_id == connection_id,
             JoinRule.is_active == True,
@@ -289,11 +316,13 @@ async def _build_multi_file_context(
         if not upload:
             continue
 
-        file_contexts.append({
-            "filename": upload.filename,
-            "parquet_paths": upload.parquet_paths or {},
-            "column_info": upload.column_info or {},
-        })
+        file_contexts.append(
+            {
+                "filename": upload.filename,
+                "parquet_paths": upload.parquet_paths or {},
+                "column_info": upload.column_info or {},
+            }
+        )
 
         if upload.code_preamble:
             for line in upload.code_preamble.split("\n"):
@@ -303,10 +332,13 @@ async def _build_multi_file_context(
 
         if upload.excel_context:
             from app.agents.excel.sheet_selector import (
-                parse_excel_context_to_sheets, select_relevant_sheets,
-                select_relevant_columns, build_compact_summary,
+                build_compact_summary,
                 build_selected_context,
+                parse_excel_context_to_sheets,
+                select_relevant_columns,
+                select_relevant_sheets,
             )
+
             all_sheet_metas = parse_excel_context_to_sheets(upload.excel_context)
 
             if all_sheet_metas and len(all_sheet_metas) > 3:
@@ -324,7 +356,11 @@ async def _build_multi_file_context(
 
     cross_rels: list[dict] = []
     if len(file_contexts) > 1:
-        from app.agents.excel.cross_file import discover_cross_file_relationships, format_cross_file_context
+        from app.agents.excel.cross_file import (
+            discover_cross_file_relationships,
+            format_cross_file_context,
+        )
+
         cross_rels = discover_cross_file_relationships(file_contexts)
         rel_context = format_cross_file_context(cross_rels)
         if rel_context:
@@ -346,6 +382,7 @@ def _build_adaptive_history(
     recency + correction boost. Much smaller token budget than raw dumping.
     """
     from app.services.conversation_memory import build_relevant_history
+
     return build_relevant_history(prev_msgs, current_question, max_chars=max_chars)
 
 
@@ -358,7 +395,7 @@ async def get_suggestions(
 ) -> dict:
     """Generate smart query suggestions based on schema and conversation history."""
     from app.agents.suggestions import generate_follow_up_suggestions, generate_suggestions
-    from app.core.permissions import require_permission, Permission
+    from app.core.permissions import Permission, require_permission
 
     user = await require_permission(Permission.VIEW_DATA, current_user, db)
     org_id = user.organization_id or ""
@@ -419,14 +456,17 @@ async def chat(
 
     if not user.is_super_admin:
         from app.core.rate_limiter import check_rate_limit
+
         check_rate_limit(current_user.user_id, max_requests=30, window_seconds=60)
 
         from app.core.plan_enforcement import check_query_limit
+
         await check_query_limit(db, user.organization_id or "")
 
     org_id = user.organization_id or ""
 
-    from app.core.features import check_feature, has_feature, Feature
+    from app.core.features import Feature, check_feature
+
     if body.model == "claude":
         await check_feature(Feature.CLAUDE_MODEL, db, org_id)
     if body.connection_ids and len(body.connection_ids) > 1:
@@ -466,8 +506,12 @@ async def chat(
     await db.commit()
     await db.refresh(conversation)
 
-    logger.info("Chat request: file_id=%s file_ids=%s connection_id=%s",
-                body.file_id, body.file_ids, body.connection_id)
+    logger.info(
+        "Chat request: file_id=%s file_ids=%s connection_id=%s",
+        body.file_id,
+        body.file_ids,
+        body.connection_id,
+    )
     incoming_file_ids: list[str] = []
     if body.file_ids:
         incoming_file_ids = [str(fid) for fid in body.file_ids]
@@ -485,18 +529,24 @@ async def chat(
             conversation.file_ids = existing_ids
             conversation.file_id = uuid.UUID(incoming_file_ids[-1])
             from sqlalchemy.orm.attributes import flag_modified
+
             flag_modified(conversation, "file_ids")
 
             try:
                 from app.services.schema_graph import get_graph_driver
+
                 driver = get_graph_driver()
                 if driver:
                     async with driver.session() as neo_session:
                         for fid in incoming_file_ids:
-                            await neo_session.run("""
+                            await neo_session.run(
+                                """
                                 MATCH (f:FileNode {file_id: $file_id})
                                 SET f.conversation_id = $conv_id
-                            """, file_id=fid, conv_id=str(conversation.id))
+                            """,
+                                file_id=fid,
+                                conv_id=str(conversation.id),
+                            )
             except Exception:
                 pass
             await db.flush()
@@ -535,6 +585,7 @@ async def chat(
             file_graph_context = ""
             try:
                 from app.services.schema_graph import select_relevant_files
+
                 file_graph_context = await select_relevant_files(
                     question=body.message,
                     org_id=org_id,
@@ -542,17 +593,28 @@ async def chat(
                     connection_id=str(effective_connection_id) if effective_connection_id else None,
                 )
                 if file_graph_context:
-                    logger.info("File Graph RAG: selected relevant files (%d chars)", len(file_graph_context))
+                    logger.info(
+                        "File Graph RAG: selected relevant files (%d chars)",
+                        len(file_graph_context),
+                    )
             except Exception as exc:
                 logger.debug("File graph selection failed: %s", exc)
 
             if file_graph_context:
-                schema_context = (schema_context + "\n\n" + file_graph_context) if schema_context else file_graph_context
+                schema_context = (
+                    (schema_context + "\n\n" + file_graph_context)
+                    if schema_context
+                    else file_graph_context
+                )
             else:
                 # Fallback to flat multi-file context
-                file_context, cross_rels = await _build_multi_file_context(db, all_file_ids, org_id, body.message)
+                file_context, cross_rels = await _build_multi_file_context(
+                    db, all_file_ids, org_id, body.message
+                )
                 if file_context:
-                    schema_context = (schema_context + "\n\n" + file_context) if schema_context else file_context
+                    schema_context = (
+                        (schema_context + "\n\n" + file_context) if schema_context else file_context
+                    )
 
             # Always append CODE PREAMBLE from file uploads so the Python
             # agent knows how to load the data (parquet paths).  Graph RAG
@@ -576,13 +638,15 @@ async def chat(
                             preamble_lines.append(stripped)
             if len(preamble_lines) > 3:  # more than just the imports
                 unified_preamble = "\n".join(preamble_lines)
-                schema_context += f"\n\nCODE PREAMBLE (prepend to all Python code):\n{unified_preamble}\n"
+                schema_context += (
+                    f"\n\nCODE PREAMBLE (prepend to all Python code):\n{unified_preamble}\n"
+                )
 
-    logger.info("Chat context: connection=%s files=%d",
-                effective_connection_id, len(all_file_ids))
+    logger.info("Chat context: connection=%s files=%d", effective_connection_id, len(all_file_ids))
 
     # ── Load agent memories (org + user) ──────────────────────────
-    from app.services.memory import load_memories, format_memories_for_prompt
+    from app.services.memory import format_memories_for_prompt, load_memories
+
     memories = await load_memories(db, org_id, user.id, question=body.message)
     memory_context = format_memories_for_prompt(memories)
     if memory_context:
@@ -598,9 +662,11 @@ async def chat(
         # Save as memory for future queries
         try:
             from app.services.memory import save_memory
+
             for term, chosen in body.disambiguation_choice.items():
                 await save_memory(
-                    db, org_id=org_id,
+                    db,
+                    org_id=org_id,
                     content=f'When user says "{term}", they mean {chosen}',
                     memory_type="domain_term",
                     user_id=user.id,
@@ -610,8 +676,12 @@ async def chat(
         except Exception as exc:
             logger.debug("Failed to save disambiguation memory: %s", exc)
 
-    logger.info("Schema context length: %d chars, memories=%d, has_excel=%s",
-                len(schema_context), len(memories), "EXCEL" in schema_context or "DATAFRAME" in schema_context)
+    logger.info(
+        "Schema context length: %d chars, memories=%d, has_excel=%s",
+        len(schema_context),
+        len(memories),
+        "EXCEL" in schema_context or "DATAFRAME" in schema_context,
+    )
 
     # ── Load conversation history (adaptive — fits as many as token budget allows)
     history_messages: list[dict[str, str]] = []
@@ -624,14 +694,21 @@ async def chat(
         hist_result = await db.execute(hist_stmt)
         prev_msgs = list(hist_result.scalars().all())
         history_messages = _build_adaptive_history(
-            prev_msgs, max_chars=4000, current_question=body.message,
+            prev_msgs,
+            max_chars=4000,
+            current_question=body.message,
         )
-        logger.info("Relevant history: %d messages loaded (of %d total)", len(history_messages), len(prev_msgs))
+        logger.info(
+            "Relevant history: %d messages loaded (of %d total)",
+            len(history_messages),
+            len(prev_msgs),
+        )
 
     # ── Inject previous query results for follow-up reference ────────
     if body.conversation_id:
         try:
-            from app.services.result_store import load_conversation_results, build_result_context
+            from app.services.result_store import build_result_context, load_conversation_results
+
             prev_results = await load_conversation_results(db, str(conversation.id))
             result_context = build_result_context(prev_results)
             if result_context:
@@ -660,8 +737,12 @@ async def chat(
         async for chunk in run_agent(
             query=body.message,
             connection_id=str(effective_connection_id) if effective_connection_id else None,
-            connection_ids=[str(cid) for cid in body.connection_ids] if body.connection_ids else None,
-            file_id=str(body.file_id) if body.file_id else (str(conversation.file_id) if conversation.file_id else None),
+            connection_ids=[str(cid) for cid in body.connection_ids]
+            if body.connection_ids
+            else None,
+            file_id=str(body.file_id)
+            if body.file_id
+            else (str(conversation.file_id) if conversation.file_id else None),
             schema_context=schema_context,
             history=history_messages,
             llm=llm,
@@ -704,6 +785,7 @@ async def chat(
 
         # Generate compressed summaries for history injection
         from app.services.conversation_memory import summarize_exchange
+
         user_summary, assistant_summary = summarize_exchange(
             user_message=body.message,
             assistant_message=collected_text or collected_error or "",
@@ -716,6 +798,7 @@ async def chat(
         # Update user message with summary
         user_msg.summary = user_summary
         from sqlalchemy.orm.attributes import flag_modified
+
         flag_modified(user_msg, "summary")
 
         assistant_msg = Message(
@@ -734,8 +817,12 @@ async def chat(
         if collected_table and not collected_error:
             try:
                 from app.services.result_store import save_query_result
+
                 result_ref = await save_query_result(
-                    collected_table, org_id, str(conversation_id), body.message,
+                    collected_table,
+                    org_id,
+                    str(conversation_id),
+                    body.message,
                 )
                 if result_ref and assistant_msg.table_data:
                     assistant_msg.table_data["_result_ref"] = result_ref
@@ -747,6 +834,7 @@ async def chat(
         await db.flush()
 
         from app.services.audit import log_action
+
         await log_action(
             db,
             user_id=current_user.user_id,
@@ -758,6 +846,7 @@ async def chat(
 
         try:
             from app.agents.memory_extractor import extract_memories
+
             await extract_memories(
                 user_message=body.message,
                 assistant_response=collected_text or "",
@@ -822,7 +911,9 @@ async def get_notebook_draft(
 
     return {
         "conversationId": str(conversation_id),
-        "connectionId": str(conversation.connection_id) if conversation and conversation.connection_id else None,
+        "connectionId": str(conversation.connection_id)
+        if conversation and conversation.connection_id
+        else None,
         **draft,
     }
 
@@ -835,8 +926,8 @@ async def save_conversation_as_notebook(
     body: dict | None = None,
 ) -> dict:
     """Save a notebook from a reviewed draft. Accepts the steps the user approved."""
-    from app.db.models import Notebook, NotebookCell
     from app.agents.notebook.extractor import extract_notebook_draft
+    from app.db.models import Notebook, NotebookCell
 
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
     org_id = user.organization_id or ""
@@ -859,13 +950,21 @@ async def save_conversation_as_notebook(
             raise HTTPException(status_code=400, detail="No messages.")
 
         messages = [
-            {"role": m.role, "content": m.content or "", "sql_query": m.sql_query,
-             "table_data": m.table_data, "plotly_figure": m.plotly_figure, "error": m.error}
+            {
+                "role": m.role,
+                "content": m.content or "",
+                "sql_query": m.sql_query,
+                "table_data": m.table_data,
+                "plotly_figure": m.plotly_figure,
+                "error": m.error,
+            }
             for m in db_messages
         ]
 
         llm = get_llm(tier="light")
-        draft = await extract_notebook_draft(messages, llm, conversation.title if conversation else "")
+        draft = await extract_notebook_draft(
+            messages, llm, conversation.title if conversation else ""
+        )
         title = draft["title"]
         description = draft["description"]
         steps = [s for s in draft["steps"] if s.get("included", True)]
@@ -881,8 +980,10 @@ async def save_conversation_as_notebook(
     await db.flush()
 
     file_cell = NotebookCell(
-        notebook_id=notebook.id, order=0,
-        cell_type="file", content="Upload your data file",
+        notebook_id=notebook.id,
+        order=0,
+        cell_type="file",
+        content="Upload your data file",
         config={"accepted_types": [".xlsx", ".csv"], "description": "Upload data"},
     )
     db.add(file_cell)
@@ -899,8 +1000,9 @@ async def save_conversation_as_notebook(
 
     await db.commit()
 
-    logger.info("Saved conversation %s as notebook %s (%d steps)",
-                conversation_id, notebook.id, len(steps))
+    logger.info(
+        "Saved conversation %s as notebook %s (%d steps)", conversation_id, notebook.id, len(steps)
+    )
 
     return {
         "notebookId": str(notebook.id),
@@ -935,9 +1037,8 @@ async def get_conversation_report(
     if report is None:
         raise HTTPException(status_code=404, detail="No report found for this conversation.")
 
-    latest_msg_stmt = (
-        select(sqlfunc.max(Message.created_at))
-        .where(Message.conversation_id == conversation_id)
+    latest_msg_stmt = select(sqlfunc.max(Message.created_at)).where(
+        Message.conversation_id == conversation_id
     )
     latest_msg_result = await db.execute(latest_msg_stmt)
     latest_msg_time = latest_msg_result.scalar()
@@ -962,12 +1063,14 @@ async def generate_conversation_report(
 ) -> StreamingResponse:
     """Generate a professional report from a conversation and save it."""
     import json as _json
+
     from app.agents.report.orchestrator import generate_report_from_conversation
 
     user = await require_permission(Permission.SAVE_REPORTS, current_user, db)
     org_id = user.organization_id or ""
 
     from app.core.plan_enforcement import check_report_limit
+
     await check_report_limit(db, org_id)
 
     conversation = await _verify_org_conversation(db, conversation_id, org_id)

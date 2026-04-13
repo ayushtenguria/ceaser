@@ -24,7 +24,7 @@ import logging
 import re
 from typing import Any
 
-from neo4j import AsyncGraphDatabase, AsyncDriver
+from neo4j import AsyncDriver, AsyncGraphDatabase
 
 from app.core.config import get_settings
 
@@ -66,19 +66,54 @@ def _classify_domain(col_name: str, col_type: str) -> str:
 
     if name == "id" or name.endswith("_id") or name.endswith("_key"):
         return "identifier"
-    if any(kw in name for kw in ("price", "amount", "revenue", "cost", "total", "spend", "fee", "salary", "budget", "mrr", "arr")):
+    if any(
+        kw in name
+        for kw in (
+            "price",
+            "amount",
+            "revenue",
+            "cost",
+            "total",
+            "spend",
+            "fee",
+            "salary",
+            "budget",
+            "mrr",
+            "arr",
+        )
+    ):
         return "monetary"
     if "decimal" in dtype or "money" in dtype or "numeric" in dtype:
         return "monetary"
-    if any(kw in name for kw in ("city", "state", "country", "region", "zip", "pincode", "address", "location")):
+    if any(
+        kw in name
+        for kw in ("city", "state", "country", "region", "zip", "pincode", "address", "location")
+    ):
         return "location"
-    if any(kw in name for kw in ("date", "time", "created", "updated", "_at", "when", "start", "end", "born", "expires")):
+    if any(
+        kw in name
+        for kw in (
+            "date",
+            "time",
+            "created",
+            "updated",
+            "_at",
+            "when",
+            "start",
+            "end",
+            "born",
+            "expires",
+        )
+    ):
         return "temporal"
     if "timestamp" in dtype or "date" in dtype:
         return "temporal"
     if any(kw in name for kw in ("email", "phone", "mobile")):
         return "contact"
-    if any(kw in name for kw in ("status", "type", "category", "level", "tier", "plan", "priority", "stage")):
+    if any(
+        kw in name
+        for kw in ("status", "type", "category", "level", "tier", "plan", "priority", "stage")
+    ):
         return "categorical"
     if any(kw in name for kw in ("count", "quantity", "qty", "num", "number", "size")):
         return "quantity"
@@ -92,7 +127,10 @@ def _classify_domain(col_name: str, col_type: str) -> str:
 
 def _is_numeric(col_type: str) -> bool:
     dtype = col_type.lower()
-    return any(kw in dtype for kw in ("int", "decimal", "numeric", "float", "double", "real", "money", "serial"))
+    return any(
+        kw in dtype
+        for kw in ("int", "decimal", "numeric", "float", "double", "real", "money", "serial")
+    )
 
 
 def _is_temporal(col_type: str) -> bool:
@@ -147,13 +185,20 @@ async def build_schema_graph(
             row_count = table.get("row_count", 0)
             columns = table.get("columns", [])
 
-            await session.run("""
+            await session.run(
+                """
                 CREATE (t:Table {
                     name: $name, connection_id: $conn_id, org_id: $org_id,
                     db_type: $db_type, row_count: $rows, column_count: $col_count
                 })
-            """, name=table_name, conn_id=connection_id, org_id=org_id,
-                db_type=db_type, rows=row_count or 0, col_count=len(columns))
+            """,
+                name=table_name,
+                conn_id=connection_id,
+                org_id=org_id,
+                db_type=db_type,
+                rows=row_count or 0,
+                col_count=len(columns),
+            )
 
             # Create column nodes
             for col in columns:
@@ -166,7 +211,8 @@ async def build_schema_graph(
                 is_pk = col.get("primary_key", False)
                 fk = col.get("foreign_key")
 
-                await session.run("""
+                await session.run(
+                    """
                     MATCH (t:Table {name: $table, connection_id: $conn_id})
                     CREATE (t)-[:HAS_COLUMN]->(c:Column {
                         name: $name, connection_id: $conn_id,
@@ -177,32 +223,46 @@ async def build_schema_graph(
                         nullable: $nullable,
                         sample_values: $samples
                     })
-                """, table=table_name, conn_id=connection_id,
-                    name=col_name, dtype=col_type, domain=domain,
-                    numeric=_is_numeric(col_type), temporal=_is_temporal(col_type),
+                """,
+                    table=table_name,
+                    conn_id=connection_id,
+                    name=col_name,
+                    dtype=col_type,
+                    domain=domain,
+                    numeric=_is_numeric(col_type),
+                    temporal=_is_temporal(col_type),
                     categorical=_is_categorical(unique_count, row_count or 0),
-                    pk=is_pk, fk=fk is not None,
+                    pk=is_pk,
+                    fk=fk is not None,
                     nullable=col.get("nullable", True),
-                    samples=[str(s) for s in (samples or [])[:10]])
+                    samples=[str(s) for s in (samples or [])[:10]],
+                )
 
                 # Create FK relationship
                 if fk:
                     parts = fk.split(".")
                     if len(parts) == 2:
                         ref_table, ref_col = parts
-                        await session.run("""
+                        await session.run(
+                            """
                             MATCH (from_t:Table {name: $from_table, connection_id: $conn_id})
                             MATCH (to_t:Table {name: $to_table, connection_id: $conn_id})
                             MERGE (from_t)-[:FK {
                                 from_column: $from_col, to_column: $to_col,
                                 join_sql: $join_sql
                             }]->(to_t)
-                        """, from_table=table_name, to_table=ref_table, conn_id=connection_id,
-                            from_col=col_name, to_col=ref_col,
-                            join_sql=f"{table_name}.{col_name} = {ref_table}.{ref_col}")
+                        """,
+                            from_table=table_name,
+                            to_table=ref_table,
+                            conn_id=connection_id,
+                            from_col=col_name,
+                            to_col=ref_col,
+                            join_sql=f"{table_name}.{col_name} = {ref_table}.{ref_col}",
+                        )
 
         # Infer relationships from shared column names across tables
-        await session.run("""
+        await session.run(
+            """
             MATCH (t1:Table {connection_id: $conn_id})-[:HAS_COLUMN]->(c1:Column)
             MATCH (t2:Table {connection_id: $conn_id})-[:HAS_COLUMN]->(c2:Column)
             WHERE t1 <> t2 AND c1.name = c2.name AND c1.domain = 'identifier'
@@ -210,17 +270,22 @@ async def build_schema_graph(
             MERGE (t1)-[:INFERRED_REL {
                 shared_column: c1.name, confidence: 0.85, method: 'name_match'
             }]->(t2)
-        """, conn_id=connection_id)
+        """,
+            conn_id=connection_id,
+        )
 
         # Cross-domain links (city ↔ shipping_city)
-        await session.run("""
+        await session.run(
+            """
             MATCH (c1:Column {connection_id: $conn_id})
             MATCH (c2:Column {connection_id: $conn_id})
             WHERE c1 <> c2 AND c1.domain = c2.domain
             AND c1.domain IN ['location', 'contact']
             AND c1.name <> c2.name
             MERGE (c1)-[:SAME_DOMAIN {domain: c1.domain, similarity: 0.7}]->(c2)
-        """, conn_id=connection_id)
+        """,
+            conn_id=connection_id,
+        )
 
     logger.info("Schema graph built: %d tables for connection %s", len(tables), connection_id)
     return len(tables)
@@ -230,14 +295,41 @@ async def build_schema_graph(
 # Entity extraction — no LLM, pure keyword/pattern matching
 # ---------------------------------------------------------------------------
 
-TEMPORAL_KEYWORDS = frozenset({
-    "monthly", "weekly", "daily", "yearly", "quarterly", "trend", "over time",
-    "by month", "by week", "by year", "time series", "growth", "by date",
-})
-NUMERIC_KEYWORDS = frozenset({
-    "revenue", "sales", "amount", "total", "average", "sum", "count",
-    "price", "cost", "profit", "margin", "spend", "budget", "salary",
-})
+TEMPORAL_KEYWORDS = frozenset(
+    {
+        "monthly",
+        "weekly",
+        "daily",
+        "yearly",
+        "quarterly",
+        "trend",
+        "over time",
+        "by month",
+        "by week",
+        "by year",
+        "time series",
+        "growth",
+        "by date",
+    }
+)
+NUMERIC_KEYWORDS = frozenset(
+    {
+        "revenue",
+        "sales",
+        "amount",
+        "total",
+        "average",
+        "sum",
+        "count",
+        "price",
+        "cost",
+        "profit",
+        "margin",
+        "spend",
+        "budget",
+        "salary",
+    }
+)
 CHART_KEYWORDS = {
     "histogram": frozenset({"histogram", "distribution", "spread"}),
     "pie": frozenset({"pie", "proportion", "share", "breakdown"}),
@@ -267,9 +359,37 @@ def extract_entities(question: str) -> dict[str, Any]:
             entities["chart_type"] = chart_type
             break
 
-    stop_words = {"the", "a", "an", "is", "are", "was", "were", "show", "me", "give",
-                  "please", "can", "you", "what", "how", "many", "much", "do", "does",
-                  "for", "by", "in", "of", "to", "and", "or", "with", "as", "from"}
+    stop_words = {
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "show",
+        "me",
+        "give",
+        "please",
+        "can",
+        "you",
+        "what",
+        "how",
+        "many",
+        "much",
+        "do",
+        "does",
+        "for",
+        "by",
+        "in",
+        "of",
+        "to",
+        "and",
+        "or",
+        "with",
+        "as",
+        "from",
+    }
     entities["keywords"] = [w for w in words if w not in stop_words and len(w) > 2]
 
     return entities
@@ -464,7 +584,9 @@ def _format_graph_context(tables: list[dict], entities: dict) -> str:
 
     hints = []
     if entities.get("chart_type") == "histogram":
-        hints.append("HISTOGRAM: Return RAW individual values — do NOT aggregate with CASE/GROUP BY.")
+        hints.append(
+            "HISTOGRAM: Return RAW individual values — do NOT aggregate with CASE/GROUP BY."
+        )
     if entities.get("needs_temporal"):
         hints.append("TEMPORAL: Use DATE_TRUNC('month', col) for monthly grouping.")
     if hints:
@@ -502,7 +624,8 @@ async def build_file_graph(
 
     try:
         async with driver.session() as session:
-            await session.run("""
+            await session.run(
+                """
                 MATCH (old:FileNode {org_id: $org_id, filename: $filename, is_active: true})
                 WHERE old.file_id <> $file_id
                 SET old.is_active = false
@@ -510,10 +633,15 @@ async def build_file_graph(
                 MATCH (new:FileNode {file_id: $file_id})
                 WHERE new IS NOT NULL
                 CREATE (new)-[:SUPERSEDES {reason: 'newer_upload'}]->(old)
-            """, org_id=org_id, filename=filename, file_id=file_id)
+            """,
+                org_id=org_id,
+                filename=filename,
+                file_id=file_id,
+            )
 
             # Create file node
-            await session.run("""
+            await session.run(
+                """
                 MERGE (f:FileNode {file_id: $file_id})
                 SET f.org_id = $org_id,
                     f.filename = $filename,
@@ -523,9 +651,15 @@ async def build_file_graph(
                     f.row_count = $rows,
                     f.is_active = true,
                     f.project_tag = $tag
-            """, file_id=file_id, org_id=org_id, filename=filename,
-                conv_id=conversation_id or "", user_id=uploaded_by or "",
-                rows=row_count, tag=project_tag)
+            """,
+                file_id=file_id,
+                org_id=org_id,
+                filename=filename,
+                conv_id=conversation_id or "",
+                user_id=uploaded_by or "",
+                rows=row_count,
+                tag=project_tag,
+            )
 
             # Create column nodes (scoped to this file)
             for col in columns:
@@ -536,7 +670,8 @@ async def build_file_graph(
 
                 domain = _classify_domain(col_name, col_dtype)
 
-                await session.run("""
+                await session.run(
+                    """
                     MATCH (f:FileNode {file_id: $file_id})
                     CREATE (f)-[:HAS_COLUMN]->(c:FileColumn {
                         name: $name, file_id: $file_id,
@@ -545,12 +680,16 @@ async def build_file_graph(
                         is_categorical: $categorical,
                         sample_values: $samples
                     })
-                """, file_id=file_id, name=col_name, dtype=col_dtype,
+                """,
+                    file_id=file_id,
+                    name=col_name,
+                    dtype=col_dtype,
                     domain=domain,
                     numeric=_is_numeric(col_dtype) or col_dtype in ("int64", "float64"),
                     temporal="date" in col_name.lower() or "time" in col_name.lower(),
                     categorical=_is_categorical(unique, row_count) if row_count > 0 else False,
-                    samples=[str(s) for s in (samples or [])[:10]])
+                    samples=[str(s) for s in (samples or [])[:10]],
+                )
 
             # Discover cross-file relationships WITHIN same conversation
             if conversation_id:
@@ -559,8 +698,9 @@ async def build_file_graph(
             # Discover cross-source links (file ↔ database tables)
             await _build_cross_source_links(session, file_id, org_id)
 
-        logger.info("File graph built: %s (%d columns) for file %s",
-                    filename, len(columns), file_id)
+        logger.info(
+            "File graph built: %s (%d columns) for file %s", filename, len(columns), file_id
+        )
         return len(columns)
 
     except Exception as exc:
@@ -571,7 +711,8 @@ async def build_file_graph(
 async def _build_cross_file_links(session, file_id: str, org_id: str, conversation_id: str):
     """Find shared columns between files in the same conversation."""
     try:
-        await session.run("""
+        await session.run(
+            """
             MATCH (f1:FileNode {file_id: $file_id})-[:HAS_COLUMN]->(c1:FileColumn)
             MATCH (f2:FileNode {org_id: $org_id, conversation_id: $conv_id, is_active: true})
                   -[:HAS_COLUMN]->(c2:FileColumn)
@@ -580,7 +721,11 @@ async def _build_cross_file_links(session, file_id: str, org_id: str, conversati
             MERGE (f1)-[:SHARED_KEY {
                 shared_column: c1.name, confidence: 0.9
             }]->(f2)
-        """, file_id=file_id, org_id=org_id, conv_id=conversation_id)
+        """,
+            file_id=file_id,
+            org_id=org_id,
+            conv_id=conversation_id,
+        )
     except Exception as exc:
         logger.debug("Cross-file link failed: %s", exc)
 
@@ -588,7 +733,8 @@ async def _build_cross_file_links(session, file_id: str, org_id: str, conversati
 async def _build_cross_source_links(session, file_id: str, org_id: str):
     """Find file columns that match database table columns (same org)."""
     try:
-        await session.run("""
+        await session.run(
+            """
             MATCH (f:FileNode {file_id: $file_id})-[:HAS_COLUMN]->(fc:FileColumn)
             MATCH (t:Table {org_id: $org_id})-[:HAS_COLUMN]->(tc:Column)
             WHERE fc.name = tc.name AND fc.domain = tc.domain
@@ -599,7 +745,10 @@ async def _build_cross_source_links(session, file_id: str, org_id: str):
                 table_name: t.name,
                 table_column: tc.name
             }]->(tc)
-        """, file_id=file_id, org_id=org_id)
+        """,
+            file_id=file_id,
+            org_id=org_id,
+        )
     except Exception as exc:
         logger.debug("Cross-source link failed: %s", exc)
 
@@ -708,7 +857,8 @@ async def select_relevant_files(
             if conversation_id:
                 result = await session.run(
                     _FILE_TRAVERSAL_CYPHER,
-                    conv_id=conversation_id, org_id=org_id,
+                    conv_id=conversation_id,
+                    org_id=org_id,
                     keywords=entities["keywords"],
                 )
                 tier1 = [r.data() async for r in result]
@@ -718,7 +868,8 @@ async def select_relevant_files(
             if len(all_records) < 3:
                 result = await session.run(
                     _FILE_ORG_CYPHER,
-                    conv_id=conversation_id or "", org_id=org_id,
+                    conv_id=conversation_id or "",
+                    org_id=org_id,
                     keywords=entities["keywords"],
                 )
                 tier2 = [r.data() async for r in result]
@@ -811,10 +962,9 @@ def _format_file_context(files: list[dict], entities: dict) -> str:
         file_links = record.get("file_links", [])
         db_links = record.get("db_links", [])
 
-        import re
         stem = filename.rsplit(".", 1)[0].lower()
-        stem = re.sub(r'[^a-z0-9_]', '_', stem)
-        stem = re.sub(r'_+', '_', stem).strip('_')[:30]
+        stem = re.sub(r"[^a-z0-9_]", "_", stem)
+        stem = re.sub(r"_+", "_", stem).strip("_")[:30]
         var_name = f"df_{stem}"
 
         lines.append(f"\n{var_name}  (from: {filename}, ~{row_count:,} rows)")

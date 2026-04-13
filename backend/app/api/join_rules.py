@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
-from app.api.schemas import to_camel, _CamelModel
+from app.api.schemas import _CamelModel, to_camel
 from app.core.deps import CurrentUser, DbSession
 from app.core.permissions import Permission, require_permission
 from app.db.models import JoinRule
@@ -24,7 +24,9 @@ class JoinRuleCreate(_CamelModel):
     source_column: str = Field(..., min_length=1)
     target_table: str = Field(..., min_length=1)
     target_column: str = Field(..., min_length=1)
-    join_type: str = Field("LEFT JOIN", pattern=r"^(LEFT JOIN|INNER JOIN|RIGHT JOIN|FULL OUTER JOIN)$")
+    join_type: str = Field(
+        "LEFT JOIN", pattern=r"^(LEFT JOIN|INNER JOIN|RIGHT JOIN|FULL OUTER JOIN)$"
+    )
     description: str = ""
 
 
@@ -93,9 +95,13 @@ async def create_join_rule(
     await db.refresh(rule)
     await db.commit()
 
-    logger.info("Join rule created: %s.%s → %s.%s",
-                body.source_table, body.source_column,
-                body.target_table, body.target_column)
+    logger.info(
+        "Join rule created: %s.%s → %s.%s",
+        body.source_table,
+        body.source_column,
+        body.target_table,
+        body.target_column,
+    )
     return rule
 
 

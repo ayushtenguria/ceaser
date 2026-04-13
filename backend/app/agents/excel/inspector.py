@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 
@@ -19,6 +18,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SheetInfo:
     """Metadata about one sheet (without loading data)."""
+
     name: str
     estimated_rows: int = 0
     estimated_cols: int = 0
@@ -29,6 +29,7 @@ class SheetInfo:
 @dataclass
 class WorkbookInspection:
     """Result of inspecting a workbook."""
+
     file_name: str
     file_path: str
     file_size_bytes: int
@@ -75,7 +76,7 @@ def _inspect_csv(path: Path, result: WorkbookInspection) -> WorkbookInspection:
 
     try:
         row_count = 0
-        with open(path, "r", encoding=result.encoding, errors="replace") as f:
+        with open(path, encoding=result.encoding, errors="replace") as f:
             for _ in f:
                 row_count += 1
         row_count = max(0, row_count - 1)
@@ -83,18 +84,21 @@ def _inspect_csv(path: Path, result: WorkbookInspection) -> WorkbookInspection:
         row_count = 0
 
     try:
-        df_head = pd.read_csv(path, encoding=result.encoding, sep=result.delimiter,
-                               nrows=0, on_bad_lines="skip")
+        df_head = pd.read_csv(
+            path, encoding=result.encoding, sep=result.delimiter, nrows=0, on_bad_lines="skip"
+        )
         col_count = len(df_head.columns)
     except Exception:
         col_count = 0
 
     result.sheet_count = 1
-    result.sheets = [SheetInfo(
-        name=path.stem,
-        estimated_rows=row_count,
-        estimated_cols=col_count,
-    )]
+    result.sheets = [
+        SheetInfo(
+            name=path.stem,
+            estimated_rows=row_count,
+            estimated_cols=col_count,
+        )
+    ]
     return result
 
 
@@ -102,16 +106,19 @@ def _inspect_excel(path: Path, result: WorkbookInspection) -> WorkbookInspection
     """Inspect an Excel file."""
     try:
         import openpyxl
+
         wb = openpyxl.load_workbook(path, read_only=True, data_only=True)
 
         sheets = []
         for name in wb.sheetnames:
             ws = wb[name]
-            sheets.append(SheetInfo(
-                name=name,
-                estimated_rows=ws.max_row or 0,
-                estimated_cols=ws.max_column or 0,
-            ))
+            sheets.append(
+                SheetInfo(
+                    name=name,
+                    estimated_rows=ws.max_row or 0,
+                    estimated_cols=ws.max_column or 0,
+                )
+            )
 
         wb.close()
         result.sheet_count = len(sheets)
@@ -145,17 +152,18 @@ def _detect_encoding(path: Path) -> str:
     """Detect file encoding."""
     try:
         import chardet
+
         with open(path, "rb") as f:
             raw = f.read(10240)
         detected = chardet.detect(raw)
         enc = detected.get("encoding", "utf-8") or "utf-8"
-        with open(path, "r", encoding=enc) as f:
+        with open(path, encoding=enc) as f:
             f.read(1024)
         return enc
     except Exception:
         for enc in ["utf-8", "latin-1", "cp1252"]:
             try:
-                with open(path, "r", encoding=enc) as f:
+                with open(path, encoding=enc) as f:
                     f.read(1024)
                 return enc
             except Exception:
@@ -166,8 +174,9 @@ def _detect_encoding(path: Path) -> str:
 def _detect_delimiter(path: Path, encoding: str) -> str:
     """Detect CSV delimiter."""
     import csv
+
     try:
-        with open(path, "r", encoding=encoding, errors="replace") as f:
+        with open(path, encoding=encoding, errors="replace") as f:
             sample = f.read(8192)
         dialect = csv.Sniffer().sniff(sample, delimiters=",\t|;")
         return dialect.delimiter

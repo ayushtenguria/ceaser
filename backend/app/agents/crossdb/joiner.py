@@ -12,7 +12,7 @@ from typing import Any
 import pandas as pd
 
 from app.agents.crossdb.executor import QueryResult
-from app.agents.crossdb.planner import CrossDbQueryPlan, JoinStep
+from app.agents.crossdb.planner import CrossDbQueryPlan
 
 logger = logging.getLogger(__name__)
 
@@ -102,8 +102,12 @@ def join_results(
 
             logger.info(
                 "Joined %s.%s ↔ %s.%s (%s): %d rows",
-                join.left_alias, left_col, join.right_alias, right_col,
-                how, len(current_df),
+                join.left_alias,
+                left_col,
+                join.right_alias,
+                right_col,
+                how,
+                len(current_df),
             )
 
         except Exception as exc:

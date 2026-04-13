@@ -6,7 +6,6 @@ Streams progress events via SSE.
 
 from __future__ import annotations
 
-import json
 import logging
 from collections.abc import AsyncGenerator
 from typing import Any
@@ -15,10 +14,10 @@ from langchain_core.language_models import BaseChatModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.agents.report.planner import plan_report
-from app.agents.report.writer import write_report, GeneratedReport
 from app.agents.report.enricher import enrich_report
-from app.db.models import Message, Conversation
+from app.agents.report.planner import plan_report
+from app.agents.report.writer import write_report
+from app.db.models import Message
 
 logger = logging.getLogger(__name__)
 
@@ -53,27 +52,37 @@ async def generate_report_from_conversation(
 
     messages: list[dict[str, Any]] = []
     for msg in db_messages:
-        messages.append({
-            "id": str(msg.id),
-            "role": msg.role,
-            "content": msg.content or "",
-            "message_type": msg.message_type,
-            "sql_query": msg.sql_query,
-            "table_data": msg.table_data,
-            "plotly_figure": msg.plotly_figure,
-            "error": msg.error,
-        })
+        messages.append(
+            {
+                "id": str(msg.id),
+                "role": msg.role,
+                "content": msg.content or "",
+                "message_type": msg.message_type,
+                "sql_query": msg.sql_query,
+                "table_data": msg.table_data,
+                "plotly_figure": msg.plotly_figure,
+                "error": msg.error,
+            }
+        )
 
     yield {"type": "report_status", "stage": f"Analyzing {len(messages)} messages", "progress": 15}
 
     yield {"type": "report_status", "stage": "Planning report structure", "progress": 25}
     plan = await plan_report(messages, llm)
-    yield {"type": "report_status", "stage": f"Planned {len(plan.sections)} sections", "progress": 35}
+    yield {
+        "type": "report_status",
+        "stage": f"Planned {len(plan.sections)} sections",
+        "progress": 35,
+    }
 
     total_sections = len(plan.sections) or 1
     for i in range(total_sections):
         pct = 35 + int((i / total_sections) * 40)
-        yield {"type": "report_status", "stage": f"Writing section {i+1}/{total_sections}: {plan.sections[i].title if i < len(plan.sections) else ''}", "progress": pct}
+        yield {
+            "type": "report_status",
+            "stage": f"Writing section {i+1}/{total_sections}: {plan.sections[i].title if i < len(plan.sections) else ''}",
+            "progress": pct,
+        }
 
     report = await write_report(plan, messages, llm)
     report.conversation_id = conversation_id

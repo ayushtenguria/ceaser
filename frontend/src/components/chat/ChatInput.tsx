@@ -54,7 +54,7 @@ export default function ChatInput({ onSend, isStreaming, preselectedFileIds }: C
         });
       }
     }).catch(() => {});
-  }, [preselectedFileIds]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [preselectedFileIds]);
   const [isUploadingFile, setIsUploadingFile] = useState(false);
   const [uploadProgress, setUploadProgress] = useState(0);
   const [uploadStage, setUploadStage] = useState("");

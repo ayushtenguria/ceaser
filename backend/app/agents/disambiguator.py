@@ -20,10 +20,30 @@ logger = logging.getLogger(__name__)
 
 # Terms that commonly cause ambiguity in business databases
 _AMBIGUOUS_TERMS = {
-    "revenue", "sales", "amount", "total", "cost", "price", "value",
-    "profit", "margin", "discount", "rate", "count", "quantity",
-    "status", "type", "category", "date", "name", "id",
-    "customer", "account", "user", "order", "product",
+    "revenue",
+    "sales",
+    "amount",
+    "total",
+    "cost",
+    "price",
+    "value",
+    "profit",
+    "margin",
+    "discount",
+    "rate",
+    "count",
+    "quantity",
+    "status",
+    "type",
+    "category",
+    "date",
+    "name",
+    "id",
+    "customer",
+    "account",
+    "user",
+    "order",
+    "product",
 }
 
 # Minimum number of matches to trigger disambiguation
@@ -65,8 +85,9 @@ def disambiguate(state: AgentState) -> AgentState:
     # Build disambiguation question
     disambiguation = _build_disambiguation(ambiguities)
 
-    logger.info("Disambiguation needed for %d terms: %s",
-                len(ambiguities), [a["term"] for a in ambiguities])
+    logger.info(
+        "Disambiguation needed for %d terms: %s", len(ambiguities), [a["term"] for a in ambiguities]
+    )
 
     return {
         **state,
@@ -95,10 +116,12 @@ def _find_ambiguities(
             # Check if the matches are in different tables (real ambiguity)
             tables = {m["table"] for m in matches}
             if len(tables) >= 2:
-                ambiguities.append({
-                    "term": term,
-                    "matches": matches,
-                })
+                ambiguities.append(
+                    {
+                        "term": term,
+                        "matches": matches,
+                    }
+                )
 
     return ambiguities
 
@@ -138,14 +161,17 @@ def _find_column_matches(term: str, schema_context: str) -> list[dict[str, str]]
                     if alias_match:
                         alias = alias_match.group(1)
 
-                    matches.append({
-                        "table": current_table,
-                        "column": col_name,
-                        "type": col_type,
-                        "samples": samples,
-                        "alias": alias,
-                        "label": f"{current_table}.{col_name}" + (f" ({alias})" if alias else ""),
-                    })
+                    matches.append(
+                        {
+                            "table": current_table,
+                            "column": col_name,
+                            "type": col_type,
+                            "samples": samples,
+                            "alias": alias,
+                            "label": f"{current_table}.{col_name}"
+                            + (f" ({alias})" if alias else ""),
+                        }
+                    )
 
     return matches
 
@@ -171,20 +197,24 @@ def _build_disambiguation(ambiguities: list[dict[str, Any]]) -> dict[str, Any]:
         term = amb["term"]
         options = []
         for i, match in enumerate(amb["matches"]):
-            options.append({
-                "id": f"{term}_{i}",
-                "label": match["label"],
-                "table": match["table"],
-                "column": match["column"],
-                "description": match.get("alias", ""),
-                "sampleValues": match.get("samples", ""),
-            })
+            options.append(
+                {
+                    "id": f"{term}_{i}",
+                    "label": match["label"],
+                    "table": match["table"],
+                    "column": match["column"],
+                    "description": match.get("alias", ""),
+                    "sampleValues": match.get("samples", ""),
+                }
+            )
 
-        questions.append({
-            "term": term,
-            "question": f'Which "{term}" do you mean?',
-            "options": options,
-        })
+        questions.append(
+            {
+                "term": term,
+                "question": f'Which "{term}" do you mean?',
+                "options": options,
+            }
+        )
 
     return {
         "type": "disambiguation",

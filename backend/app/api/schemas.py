@@ -177,6 +177,7 @@ class ConnectionCreate(_CamelModel):
 
 class ConnectionUpdate(_CamelModel):
     """Partial update for an existing connection."""
+
     name: str | None = Field(None, min_length=1, max_length=255)
     host: str | None = None
     port: int | None = Field(None, ge=1, le=65535)
@@ -232,6 +233,7 @@ class FileUploadResponse(BaseModel):
 
 class ReportCreate(_CamelModel):
     """Create a saved report from a chat result."""
+
     name: str = Field(..., min_length=1, max_length=500)
     description: str = ""
     connection_id: uuid.UUID | None = None
@@ -244,16 +246,20 @@ class ReportCreate(_CamelModel):
     summary_text: str = ""
     schedule: str | None = Field(None, pattern="^(hourly|daily|weekly)?$")
 
+
 class ReportUpdate(_CamelModel):
     """Update a saved report."""
+
     name: str | None = None
     description: str | None = None
     schedule: str | None = None
     is_pinned: bool | None = None
     is_active: bool | None = None
 
+
 class ReportResponse(BaseModel):
     """Public representation of a saved report."""
+
     model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
 
     id: uuid.UUID
@@ -279,13 +285,17 @@ class ReportResponse(BaseModel):
 
 class FeedbackCreate(_CamelModel):
     """Submit thumbs up/down on an assistant message."""
+
     rating: str = Field(..., pattern=r"^(up|down)$")
     correction_note: str | None = None
-    category: str | None = Field(None, pattern=r"^(wrong_data|wrong_join|wrong_metric|wrong_filter|other)?$")
+    category: str | None = Field(
+        None, pattern=r"^(wrong_data|wrong_join|wrong_metric|wrong_filter|other)?$"
+    )
 
 
 class FeedbackResponse(BaseModel):
     """Public representation of message feedback."""
+
     model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
 
     id: uuid.UUID
@@ -298,6 +308,7 @@ class FeedbackResponse(BaseModel):
 
 class AccuracyStats(BaseModel):
     """Accuracy statistics for a connection or org."""
+
     total_rated: int = 0
     thumbs_up: int = 0
     thumbs_down: int = 0
@@ -307,22 +318,27 @@ class AccuracyStats(BaseModel):
 
 class MetricCreate(_CamelModel):
     """Define a new business metric."""
+
     name: str = Field(..., min_length=1, max_length=200)
     description: str = ""
     sql_expression: str = Field(..., min_length=1)
     category: str = "general"
     connection_id: uuid.UUID | None = None
 
+
 class MetricUpdate(_CamelModel):
     """Update a metric definition."""
+
     name: str | None = None
     description: str | None = None
     sql_expression: str | None = None
     category: str | None = None
     is_locked: bool | None = None
 
+
 class MetricResponse(BaseModel):
     """Public representation of a metric definition."""
+
     model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
 
     id: uuid.UUID
@@ -339,6 +355,7 @@ class MetricResponse(BaseModel):
 
 class AuditLogResponse(BaseModel):
     """Public representation of an audit log entry."""
+
     model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
 
     id: uuid.UUID
@@ -353,27 +370,33 @@ class AuditLogResponse(BaseModel):
 
 class NotebookCellCreate(_CamelModel):
     """Create/update a notebook cell."""
+
     cell_type: str = Field(..., pattern="^(text|file|input|prompt|code)$")
     content: str = ""
     config: dict[str, Any] | None = None
     output_variable: str = ""
     order: int = 0
 
+
 class NotebookCreate(_CamelModel):
     """Create a new notebook."""
+
     name: str = Field(..., min_length=1, max_length=500)
     description: str = ""
     connection_id: uuid.UUID | None = None
     cells: list[NotebookCellCreate] = []
 
+
 class NotebookUpdate(_CamelModel):
     """Update notebook metadata."""
+
     name: str | None = None
     description: str | None = None
     connection_id: uuid.UUID | None = None
     is_template: bool | None = None
     is_public: bool | None = None
     template_category: str | None = None
+
 
 class NotebookCellResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
@@ -384,6 +407,7 @@ class NotebookCellResponse(BaseModel):
     content: str
     config: dict[str, Any] | None
     output_variable: str
+
 
 class NotebookResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
@@ -401,6 +425,7 @@ class NotebookResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
 
+
 class NotebookCellResultResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
     id: uuid.UUID
@@ -413,6 +438,7 @@ class NotebookCellResultResponse(BaseModel):
     output_code: str | None
     error: str | None
     execution_time_ms: int
+
 
 class NotebookRunResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True, alias_generator=to_camel, populate_by_name=True)
@@ -428,11 +454,15 @@ class NotebookRunResponse(BaseModel):
     cell_results: list[NotebookCellResultResponse] = []
     created_at: datetime
 
+
 class NotebookRunRequest(_CamelModel):
     """Request to run a notebook."""
+
     inputs: dict[str, Any] = {}
     files: dict[str, str] = {}
 
+
 class CellReorderRequest(_CamelModel):
     """Reorder cells."""
+
     cell_ids: list[uuid.UUID]

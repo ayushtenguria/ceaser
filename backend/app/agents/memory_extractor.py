@@ -11,7 +11,7 @@ import logging
 import uuid
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.messages import HumanMessage, SystemMessage
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.services.memory import save_memory
@@ -93,7 +93,14 @@ async def extract_memories(
             if not content or len(content) < 5:
                 continue
 
-            valid_types = {"correction", "preference", "column_alias", "domain_term", "business_rule", "learned_fact"}
+            valid_types = {
+                "correction",
+                "preference",
+                "column_alias",
+                "domain_term",
+                "business_rule",
+                "learned_fact",
+            }
             if mem_type not in valid_types:
                 mem_type = "learned_fact"
 

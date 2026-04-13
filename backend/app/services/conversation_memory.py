@@ -53,7 +53,7 @@ def summarize_exchange(
             parts.append(f"({', '.join(aggs)})")
     elif code_block:
         libs = _extract_libraries(code_block)
-        parts.append(f"Python" + (f" ({', '.join(libs)})" if libs else ""))
+        parts.append("Python" + (f" ({', '.join(libs)})" if libs else ""))
 
     # Key numbers from the response
     numbers = _extract_key_numbers(assistant_message)
@@ -97,7 +97,12 @@ def summarize_assistant_message(
 ) -> str:
     """Create a summary for a standalone assistant message."""
     _, summary = summarize_exchange(
-        "", content, sql_query, code_block, table_data, error,
+        "",
+        content,
+        sql_query,
+        code_block,
+        table_data,
+        error,
     )
     return summary
 
@@ -142,9 +147,14 @@ def build_relevant_history(
 
         # Correction boost: corrections are always worth keeping
         correction_boost = 0.0
-        if msg.summary and any(kw in msg.summary.lower() for kw in ("error", "wrong", "fix", "correction")):
+        if msg.summary and any(
+            kw in msg.summary.lower() for kw in ("error", "wrong", "fix", "correction")
+        ):
             correction_boost = 1.0
-        if msg.role == "user" and any(kw in (msg.content or "").lower() for kw in ("no ", "not ", "wrong", "actually", "i meant")):
+        if msg.role == "user" and any(
+            kw in (msg.content or "").lower()
+            for kw in ("no ", "not ", "wrong", "actually", "i meant")
+        ):
             correction_boost = 1.0
 
         # Combined score
@@ -189,7 +199,7 @@ def build_relevant_history(
 
     # Re-sort by chronological order for the LLM (oldest first)
     # We need to track original indices
-    msg_to_idx = {id(msg): i for i, (msg, _) in enumerate(scored)}
+    {id(msg): i for i, (msg, _) in enumerate(scored)}
     history_with_idx = []
     for h in history:
         # Find the original message by matching content
@@ -204,7 +214,10 @@ def build_relevant_history(
 
     logger.info(
         "Relevant history: %d/%d messages selected, %d chars, keywords=%s",
-        len(history), total_msgs, total_chars, list(current_keywords)[:5],
+        len(history),
+        total_msgs,
+        total_chars,
+        list(current_keywords)[:5],
     )
 
     return history
@@ -212,17 +225,78 @@ def build_relevant_history(
 
 # ── Private Helpers ─────────────────────────────────────────────────
 
-_STOP_WORDS = frozenset({
-    "the", "a", "an", "is", "are", "was", "were", "be", "been",
-    "have", "has", "had", "do", "does", "did", "will", "would",
-    "can", "could", "should", "may", "might", "must",
-    "i", "me", "my", "we", "our", "you", "your",
-    "show", "me", "give", "tell", "find", "get", "list", "display",
-    "please", "also", "just", "like", "want", "need",
-    "what", "which", "who", "how", "when", "where", "why",
-    "in", "on", "at", "to", "for", "of", "with", "by", "from",
-    "and", "or", "but", "not", "no", "all", "each", "every",
-})
+_STOP_WORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "can",
+        "could",
+        "should",
+        "may",
+        "might",
+        "must",
+        "i",
+        "me",
+        "my",
+        "we",
+        "our",
+        "you",
+        "your",
+        "show",
+        "me",
+        "give",
+        "tell",
+        "find",
+        "get",
+        "list",
+        "display",
+        "please",
+        "also",
+        "just",
+        "like",
+        "want",
+        "need",
+        "what",
+        "which",
+        "who",
+        "how",
+        "when",
+        "where",
+        "why",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "and",
+        "or",
+        "but",
+        "not",
+        "no",
+        "all",
+        "each",
+        "every",
+    }
+)
 
 
 def _extract_keywords(text: str) -> set[str]:

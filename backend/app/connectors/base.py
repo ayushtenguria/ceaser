@@ -47,10 +47,13 @@ class BaseConnector(ABC):
             except (ConnectionError, OSError, TimeoutError) as exc:
                 last_exc = exc
                 if attempt < _MAX_RETRIES:
-                    delay = _BASE_DELAY * (2 ** attempt)
+                    delay = _BASE_DELAY * (2**attempt)
                     logger.warning(
                         "Query failed (attempt %d/%d), retrying in %.1fs: %s",
-                        attempt + 1, _MAX_RETRIES + 1, delay, exc,
+                        attempt + 1,
+                        _MAX_RETRIES + 1,
+                        delay,
+                        exc,
                     )
                     await asyncio.sleep(delay)
                     # Force reconnect on connection errors
@@ -59,7 +62,7 @@ class BaseConnector(ABC):
                         await self.connect()
                     except Exception:
                         pass
-            except (PermissionError, ValueError) as exc:
+            except (PermissionError, ValueError):
                 raise  # Don't retry auth/validation errors
             except Exception as exc:
                 # Check if it's a transient error worth retrying
@@ -67,9 +70,10 @@ class BaseConnector(ABC):
                 if any(kw in err_str for kw in ("connection", "timeout", "reset", "broken pipe")):
                     last_exc = exc
                     if attempt < _MAX_RETRIES:
-                        delay = _BASE_DELAY * (2 ** attempt)
-                        logger.warning("Transient error (attempt %d), retrying: %s",
-                                       attempt + 1, exc)
+                        delay = _BASE_DELAY * (2**attempt)
+                        logger.warning(
+                            "Transient error (attempt %d), retrying: %s", attempt + 1, exc
+                        )
                         await asyncio.sleep(delay)
                         try:
                             await self.disconnect()

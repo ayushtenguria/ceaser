@@ -9,7 +9,6 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass, field
 
-import numpy as np
 import pandas as pd
 
 from app.agents.excel.sheet_extractor import ExtractedSheet
@@ -20,6 +19,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ColumnProfile:
     """Quality profile for one column."""
+
     name: str
     dtype: str
     null_count: int = 0
@@ -36,6 +36,7 @@ class ColumnProfile:
 @dataclass
 class SheetProfile:
     """Quality profile for one sheet."""
+
     sheet_name: str
     row_count: int = 0
     column_count: int = 0
@@ -106,7 +107,9 @@ def _profile_column(series: pd.Series, name: str) -> ColumnProfile:
             q3 = non_null.quantile(0.75)
             iqr = q3 - q1
             if iqr > 0:
-                cp.outlier_count = int(((non_null < q1 - 1.5 * iqr) | (non_null > q3 + 1.5 * iqr)).sum())
+                cp.outlier_count = int(
+                    ((non_null < q1 - 1.5 * iqr) | (non_null > q3 + 1.5 * iqr)).sum()
+                )
         except Exception:
             pass
     elif pd.api.types.is_datetime64_any_dtype(non_null):
@@ -136,7 +139,7 @@ def _detect_fuzzy_duplicates(series: pd.Series) -> list[tuple[str, str]]:
     typos: list[tuple[str, str]] = []
 
     for i, val_a in enumerate(values):
-        for val_b in values[i + 1:]:
+        for val_b in values[i + 1 :]:
             count_a = value_counts.get(val_a, 0)
             count_b = value_counts.get(val_b, 0)
             if min(count_a, count_b) >= max(count_a, count_b) * 0.8:

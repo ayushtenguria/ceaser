@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class ReportSection:
     """A section in the generated report."""
+
     order: int
     title: str
     narrative: str
@@ -34,6 +35,7 @@ class ReportSection:
 @dataclass
 class GeneratedReport:
     """Complete generated report."""
+
     title: str
     subtitle: str
     executive_summary: str
@@ -127,12 +129,14 @@ async def write_report(
 
         try:
             section_msgs = [
-                SystemMessage(content=_SECTION_PROMPT.format(
-                    title=section_plan.title,
-                    description=section_plan.description,
-                    data_context=data_context[:3000],
-                    key_points=key_points,
-                )),
+                SystemMessage(
+                    content=_SECTION_PROMPT.format(
+                        title=section_plan.title,
+                        description=section_plan.description,
+                        data_context=data_context[:3000],
+                        key_points=key_points,
+                    )
+                ),
                 HumanMessage(content="Write this section."),
             ]
             response = await llm.ainvoke(section_msgs)
@@ -157,10 +161,12 @@ async def write_report(
     findings_text = "\n".join(all_findings)
     try:
         summary_msgs = [
-            SystemMessage(content=_SUMMARY_PROMPT.format(
-                title=plan.title,
-                findings=findings_text,
-            )),
+            SystemMessage(
+                content=_SUMMARY_PROMPT.format(
+                    title=plan.title,
+                    findings=findings_text,
+                )
+            ),
             HumanMessage(content="Write the executive summary."),
         ]
         response = await llm.ainvoke(summary_msgs)
@@ -181,10 +187,12 @@ async def write_report(
     try:
         topics = "\n".join(f"- {t}" for t in plan.recommendation_topics) or "General improvements"
         rec_msgs = [
-            SystemMessage(content=_RECOMMENDATIONS_PROMPT.format(
-                findings=findings_text,
-                topics=topics,
-            )),
+            SystemMessage(
+                content=_RECOMMENDATIONS_PROMPT.format(
+                    findings=findings_text,
+                    topics=topics,
+                )
+            ),
             HumanMessage(content="Write recommendations."),
         ]
         response = await llm.ainvoke(rec_msgs)
@@ -202,7 +210,11 @@ async def write_report(
         logger.warning("Recommendations writing failed: %s", exc)
         report.recommendations = ["Review the findings and identify action items."]
 
-    logger.info("Report written: %d sections, %d recommendations", len(report.sections), len(report.recommendations))
+    logger.info(
+        "Report written: %d sections, %d recommendations",
+        len(report.sections),
+        len(report.recommendations),
+    )
     return report
 
 

@@ -11,13 +11,13 @@ Checks:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from fastapi import HTTPException, status
-from sqlalchemy import select, func
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import AuditLog, DatabaseConnection, FileUpload, Report, User, OrganizationPlan
+from app.db.models import AuditLog, DatabaseConnection, OrganizationPlan, Report, User
 
 logger = logging.getLogger(__name__)
 

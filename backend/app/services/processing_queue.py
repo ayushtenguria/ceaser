@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any
 
 from app.core.config import get_settings
 
@@ -85,9 +84,7 @@ def get_signed_download_url(remote_path: str, expires_in: int = 3600) -> str | N
         if signer is None:
             import asyncio
 
-            return asyncio.get_event_loop().run_until_complete(
-                storage.download_url(remote_path)
-            )
+            return asyncio.get_event_loop().run_until_complete(storage.download_url(remote_path))
         return signer(remote_path, expires_in)
     except Exception as exc:
         logger.warning("Could not sign download URL for %s: %s", remote_path, exc)

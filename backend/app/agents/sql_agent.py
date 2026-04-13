@@ -99,12 +99,15 @@ async def generate_sql(state: AgentState, llm: BaseChatModel) -> AgentState:
 
     if state.get("error") and state.get("sql_query"):
         from langchain_core.messages import HumanMessage
-        messages.append(HumanMessage(
-            content=f"The previous SQL query failed with this error:\n"
-                    f"Query: {state['sql_query']}\n"
-                    f"Error: {state['error']}\n\n"
-                    f"Please fix the query and try again."
-        ))
+
+        messages.append(
+            HumanMessage(
+                content=f"The previous SQL query failed with this error:\n"
+                f"Query: {state['sql_query']}\n"
+                f"Error: {state['error']}\n\n"
+                f"Please fix the query and try again."
+            )
+        )
 
     response = await llm.ainvoke(messages)
     raw_sql: str = response.content.strip()  # type: ignore[union-attr]
@@ -121,16 +124,21 @@ async def generate_sql(state: AgentState, llm: BaseChatModel) -> AgentState:
     if "JOIN" in raw_sql.upper() or "FROM" in raw_sql.upper():
         try:
             from langchain_core.messages import HumanMessage
-            reason_resp = await llm.ainvoke([
-                SystemMessage(content=_REASONING_PROMPT.format(
-                    question=state.get("query", ""),
-                    sql=raw_sql,
-                )),
-                HumanMessage(content="Explain your query reasoning briefly."),
-            ])
+
+            reason_resp = await llm.ainvoke(
+                [
+                    SystemMessage(
+                        content=_REASONING_PROMPT.format(
+                            question=state.get("query", ""),
+                            sql=raw_sql,
+                        )
+                    ),
+                    HumanMessage(content="Explain your query reasoning briefly."),
+                ]
+            )
             raw_reasoning = reason_resp.content.strip()  # type: ignore[union-attr]
             if raw_reasoning.startswith("REASONING:"):
-                reasoning = raw_reasoning[len("REASONING:"):].strip()
+                reasoning = raw_reasoning[len("REASONING:") :].strip()
             else:
                 reasoning = raw_reasoning
             logger.info("Query reasoning: %s", reasoning[:100])

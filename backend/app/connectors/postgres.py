@@ -30,6 +30,7 @@ class PostgresConnector(BaseConnector):
     async def connect(self) -> bool:
         """Create an asyncpg connection pool to the target PostgreSQL database."""
         try:
+
             async def _init_conn(conn: asyncpg.Connection) -> None:
                 await conn.execute(f"SET statement_timeout = '{_QUERY_TIMEOUT_S * 1000}'")
 
@@ -45,8 +46,9 @@ class PostgresConnector(BaseConnector):
                 command_timeout=_QUERY_TIMEOUT_S,
                 init=_init_conn,
             )
-            logger.info("Connected to PostgreSQL (pool %d-%d): %s",
-                        _POOL_MIN, _POOL_MAX, self._meta.name)
+            logger.info(
+                "Connected to PostgreSQL (pool %d-%d): %s", _POOL_MIN, _POOL_MAX, self._meta.name
+            )
             return True
         except Exception as exc:
             logger.error("PostgreSQL connection failed: %s", exc)

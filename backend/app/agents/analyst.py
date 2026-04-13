@@ -101,7 +101,6 @@ async def run_analyst(
     has_dataframes = "CODE PREAMBLE" in schema_context or "AVAILABLE DATAFRAMES" in schema_context
 
     if not connection_id and not has_dataframes:
-        from langchain_core.messages import AIMessage
         return {
             **state,
             "execution_result": "No database connected.",
@@ -115,10 +114,12 @@ async def run_analyst(
     # Step 1: Plan the analyses
     logger.info("Analyst: Planning analyses for '%s'", query[:80])
     plan_messages = [
-        SystemMessage(content=_PLAN_PROMPT.format(
-            question=query,
-            schema_context=schema_context,
-        )),
+        SystemMessage(
+            content=_PLAN_PROMPT.format(
+                question=query,
+                schema_context=schema_context,
+            )
+        ),
         HumanMessage(content=query),
     ]
     plan_response = await llm.ainvoke(plan_messages)
@@ -149,9 +150,7 @@ async def run_analyst(
     logger.info("Analyst: Executing %d analyses", len(analyses))
 
     # Load the connection
-    stmt = select(DatabaseConnection).where(
-        DatabaseConnection.id == uuid.UUID(connection_id)
-    )
+    stmt = select(DatabaseConnection).where(DatabaseConnection.id == uuid.UUID(connection_id))
     result = await db.execute(stmt)
     connection = result.scalar_one_or_none()
     if connection is None:
@@ -164,12 +163,14 @@ async def run_analyst(
         sql = analysis.get("sql", "")
 
         if not sql or not sql.strip().upper().startswith(("SELECT", "WITH")):
-            analysis_results.append({
-                "label": label,
-                "sql": sql,
-                "error": "Invalid or non-SELECT SQL blocked",
-                "rows": [],
-            })
+            analysis_results.append(
+                {
+                    "label": label,
+                    "sql": sql,
+                    "error": "Invalid or non-SELECT SQL blocked",
+                    "rows": [],
+                }
+            )
             continue
 
         connector = get_connector(connection)
@@ -178,24 +179,28 @@ async def run_analyst(
             columns, rows = await connector.execute_query(sql)
             await connector.disconnect()
 
-            analysis_results.append({
-                "label": label,
-                "sql": sql,
-                "columns": columns,
-                "rows": rows[:20],  # Cap preview
-                "total_rows": len(rows),
-            })
+            analysis_results.append(
+                {
+                    "label": label,
+                    "sql": sql,
+                    "columns": columns,
+                    "rows": rows[:20],  # Cap preview
+                    "total_rows": len(rows),
+                }
+            )
             logger.info("Analyst: '%s' returned %d rows", label, len(rows))
 
         except Exception as exc:
             await connector.disconnect()
             logger.warning("Analyst: '%s' failed: %s", label, exc)
-            analysis_results.append({
-                "label": label,
-                "sql": sql,
-                "error": str(exc),
-                "rows": [],
-            })
+            analysis_results.append(
+                {
+                    "label": label,
+                    "sql": sql,
+                    "error": str(exc),
+                    "rows": [],
+                }
+            )
 
     # Step 2b: Retry failed queries with error context (like the repair agent)
     for i, r in enumerate(analysis_results):
@@ -207,15 +212,19 @@ async def run_analyst(
         if not original_sql:
             continue
 
-        logger.info("Analyst: Retrying failed query '%s' with error: %s", r["label"], error_msg[:100])
+        logger.info(
+            "Analyst: Retrying failed query '%s' with error: %s", r["label"], error_msg[:100]
+        )
         fix_messages = [
-            SystemMessage(content=(
-                f"Fix this SQL query that failed with an error.\n"
-                f"Database schema:\n{schema_context[:3000]}\n\n"
-                f"Original SQL:\n{original_sql}\n\n"
-                f"Error: {error_msg}\n\n"
-                f"Return ONLY the fixed SQL query. No explanations."
-            )),
+            SystemMessage(
+                content=(
+                    f"Fix this SQL query that failed with an error.\n"
+                    f"Database schema:\n{schema_context[:3000]}\n\n"
+                    f"Original SQL:\n{original_sql}\n\n"
+                    f"Error: {error_msg}\n\n"
+                    f"Return ONLY the fixed SQL query. No explanations."
+                )
+            ),
             HumanMessage(content=f"Fix this query: {original_sql}"),
         ]
         try:
@@ -247,7 +256,11 @@ async def run_analyst(
     # Step 3: Synthesize results into a data-backed answer
     # Only include SUCCESSFUL results — filter out failures completely
     successful_results = [r for r in analysis_results if not r.get("error")]
-    logger.info("Analyst: Synthesizing %d/%d successful results", len(successful_results), len(analysis_results))
+    logger.info(
+        "Analyst: Synthesizing %d/%d successful results",
+        len(successful_results),
+        len(analysis_results),
+    )
 
     if not successful_results:
         return {
@@ -265,10 +278,12 @@ async def run_analyst(
         results_text += f"Data: {preview}\n"
 
     synth_messages = [
-        SystemMessage(content=_SYNTHESIZE_PROMPT.format(
-            question=query,
-            analysis_results=results_text,
-        )),
+        SystemMessage(
+            content=_SYNTHESIZE_PROMPT.format(
+                question=query,
+                analysis_results=results_text,
+            )
+        ),
         HumanMessage(content=query),
     ]
 
@@ -341,10 +356,12 @@ async def _run_dataframe_analyst(
     logger.info("DataFrame Analyst: Planning for '%s'", query[:80])
 
     plan_messages = [
-        SystemMessage(content=_DF_PLAN_PROMPT.format(
-            question=query,
-            schema_context=schema_context[:4000],
-        )),
+        SystemMessage(
+            content=_DF_PLAN_PROMPT.format(
+                question=query,
+                schema_context=schema_context[:4000],
+            )
+        ),
         HumanMessage(content=query),
     ]
 
@@ -382,15 +399,20 @@ async def _run_dataframe_analyst(
     result = await execute_python(full_code)
 
     if not result.success:
-        logger.warning("DataFrame Analyst: First attempt failed: %s", result.error[:200] if result.error else "")
+        logger.warning(
+            "DataFrame Analyst: First attempt failed: %s",
+            result.error[:200] if result.error else "",
+        )
         fix_messages = [
-            SystemMessage(content=(
-                f"The Python code failed. Fix it.\n\n"
-                f"Available DataFrames:\n{schema_context[:3000]}\n\n"
-                f"Original code:\n{code}\n\n"
-                f"Error: {result.error}\n\n"
-                f"Return ONLY the fixed Python code."
-            )),
+            SystemMessage(
+                content=(
+                    f"The Python code failed. Fix it.\n\n"
+                    f"Available DataFrames:\n{schema_context[:3000]}\n\n"
+                    f"Original code:\n{code}\n\n"
+                    f"Error: {result.error}\n\n"
+                    f"Return ONLY the fixed Python code."
+                )
+            ),
             HumanMessage(content=f"Fix this code. Error: {result.error}"),
         ]
         fix_response = await llm.ainvoke(fix_messages)
@@ -413,10 +435,12 @@ async def _run_dataframe_analyst(
 
     stdout_text = result.stdout or ""
     synth_messages = [
-        SystemMessage(content=_SYNTHESIZE_PROMPT.format(
-            question=query,
-            analysis_results=f"Python analysis output:\n{stdout_text[:3000]}",
-        )),
+        SystemMessage(
+            content=_SYNTHESIZE_PROMPT.format(
+                question=query,
+                analysis_results=f"Python analysis output:\n{stdout_text[:3000]}",
+            )
+        ),
         HumanMessage(content=query),
     ]
     synth_response = await llm.ainvoke(synth_messages)

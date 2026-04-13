@@ -23,14 +23,21 @@ logger = logging.getLogger(__name__)
 class CashfreeProvider(IPaymentProvider):
     """Cashfree Subscriptions for Indian market."""
 
-    def __init__(self, app_id: str, secret_key: str, webhook_secret: str, plan_map: dict[str, str], *, sandbox: bool = False):
+    def __init__(
+        self,
+        app_id: str,
+        secret_key: str,
+        webhook_secret: str,
+        plan_map: dict[str, str],
+        *,
+        sandbox: bool = False,
+    ):
         self._app_id = app_id
         self._secret_key = secret_key
         self._webhook_secret = webhook_secret
         self._plan_map = plan_map
         self._base_url = (
-            "https://sandbox.cashfree.com/pg" if sandbox
-            else "https://api.cashfree.com/pg"
+            "https://sandbox.cashfree.com/pg" if sandbox else "https://api.cashfree.com/pg"
         )
 
     def _headers(self) -> dict:
@@ -81,9 +88,7 @@ class CashfreeProvider(IPaymentProvider):
         sig = headers.get("x-cashfree-signature", "")
         ts = headers.get("x-cashfree-timestamp", "")
         sign_data = ts.encode() + payload
-        expected = hmac.new(
-            self._webhook_secret.encode(), sign_data, hashlib.sha256
-        ).hexdigest()
+        expected = hmac.new(self._webhook_secret.encode(), sign_data, hashlib.sha256).hexdigest()
 
         if not hmac.compare_digest(sig, expected):
             raise ValueError("Invalid Cashfree webhook signature")

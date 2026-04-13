@@ -20,6 +20,7 @@ logger = logging.getLogger(__name__)
 @dataclass
 class SectionPlan:
     """Plan for one report section."""
+
     title: str
     description: str
     source_message_indices: list[int]
@@ -31,6 +32,7 @@ class SectionPlan:
 @dataclass
 class ReportPlan:
     """Complete plan for the report."""
+
     title: str
     subtitle: str
     sections: list[SectionPlan] = field(default_factory=list)
@@ -89,8 +91,7 @@ async def plan_report(
         has_table = "yes" if msg.get("table_data") else "no"
         has_chart = "yes" if msg.get("plotly_figure") else "no"
         conv_lines.append(
-            f"[Message {i}] {role}: {content}\n"
-            f"  (table: {has_table}, chart: {has_chart})"
+            f"[Message {i}] {role}: {content}\n" f"  (table: {has_table}, chart: {has_chart})"
         )
 
     conversation_text = "\n".join(conv_lines)
@@ -120,27 +121,37 @@ async def plan_report(
         )
 
         for sec in data.get("sections", []):
-            plan.sections.append(SectionPlan(
-                title=sec.get("title", "Section"),
-                description=sec.get("description", ""),
-                source_message_indices=sec.get("source_message_indices", []),
-                has_table=sec.get("has_table", False),
-                has_chart=sec.get("has_chart", False),
-                key_data_points=sec.get("key_data_points", []),
-            ))
+            plan.sections.append(
+                SectionPlan(
+                    title=sec.get("title", "Section"),
+                    description=sec.get("description", ""),
+                    source_message_indices=sec.get("source_message_indices", []),
+                    has_table=sec.get("has_table", False),
+                    has_chart=sec.get("has_chart", False),
+                    key_data_points=sec.get("key_data_points", []),
+                )
+            )
 
         if not plan.sections:
             for i, msg in enumerate(messages):
-                if msg.get("role") == "assistant" and (msg.get("table_data") or msg.get("plotly_figure")):
-                    plan.sections.append(SectionPlan(
-                        title=f"Analysis {len(plan.sections) + 1}",
-                        description=msg.get("content", "")[:100],
-                        source_message_indices=[i],
-                        has_table=bool(msg.get("table_data")),
-                        has_chart=bool(msg.get("plotly_figure")),
-                    ))
+                if msg.get("role") == "assistant" and (
+                    msg.get("table_data") or msg.get("plotly_figure")
+                ):
+                    plan.sections.append(
+                        SectionPlan(
+                            title=f"Analysis {len(plan.sections) + 1}",
+                            description=msg.get("content", "")[:100],
+                            source_message_indices=[i],
+                            has_table=bool(msg.get("table_data")),
+                            has_chart=bool(msg.get("plotly_figure")),
+                        )
+                    )
 
-        logger.info("Report plan: %d sections, %d summary points", len(plan.sections), len(plan.executive_summary_points))
+        logger.info(
+            "Report plan: %d sections, %d summary points",
+            len(plan.sections),
+            len(plan.executive_summary_points),
+        )
         return plan
 
     except Exception as exc:
@@ -157,11 +168,13 @@ def _fallback_plan(messages: list[dict[str, Any]]) -> ReportPlan:
     )
     for i, msg in enumerate(messages):
         if msg.get("role") == "assistant" and msg.get("content"):
-            plan.sections.append(SectionPlan(
-                title=f"Finding {len(plan.sections) + 1}",
-                description=msg.get("content", "")[:100],
-                source_message_indices=[i],
-                has_table=bool(msg.get("table_data")),
-                has_chart=bool(msg.get("plotly_figure")),
-            ))
+            plan.sections.append(
+                SectionPlan(
+                    title=f"Finding {len(plan.sections) + 1}",
+                    description=msg.get("content", "")[:100],
+                    source_message_indices=[i],
+                    has_table=bool(msg.get("table_data")),
+                    has_chart=bool(msg.get("plotly_figure")),
+                )
+            )
     return plan

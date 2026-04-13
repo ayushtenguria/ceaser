@@ -16,28 +16,136 @@ from __future__ import annotations
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any
 
 logger = logging.getLogger(__name__)
 
-_STOP_WORDS = frozenset({
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "shall",
-    "should", "may", "might", "can", "could", "must", "need",
-    "i", "me", "my", "we", "our", "you", "your", "he", "she", "it",
-    "they", "them", "their", "this", "that", "these", "those",
-    "what", "which", "who", "whom", "how", "when", "where", "why",
-    "not", "no", "nor", "but", "or", "and", "if", "then", "else",
-    "in", "on", "at", "to", "for", "of", "with", "by", "from",
-    "about", "into", "through", "during", "before", "after",
-    "above", "below", "between", "out", "off", "over", "under",
-    "again", "further", "once", "here", "there", "all", "each",
-    "every", "both", "few", "more", "most", "other", "some", "such",
-    "only", "own", "same", "so", "than", "too", "very",
-    "show", "me", "give", "tell", "find", "get", "list", "display",
-    "please", "also", "just", "like",
-    "data", "table", "sheet", "file", "column", "row", "value",
-})
+_STOP_WORDS = frozenset(
+    {
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "was",
+        "were",
+        "be",
+        "been",
+        "being",
+        "have",
+        "has",
+        "had",
+        "do",
+        "does",
+        "did",
+        "will",
+        "would",
+        "shall",
+        "should",
+        "may",
+        "might",
+        "can",
+        "could",
+        "must",
+        "need",
+        "i",
+        "me",
+        "my",
+        "we",
+        "our",
+        "you",
+        "your",
+        "he",
+        "she",
+        "it",
+        "they",
+        "them",
+        "their",
+        "this",
+        "that",
+        "these",
+        "those",
+        "what",
+        "which",
+        "who",
+        "whom",
+        "how",
+        "when",
+        "where",
+        "why",
+        "not",
+        "no",
+        "nor",
+        "but",
+        "or",
+        "and",
+        "if",
+        "then",
+        "else",
+        "in",
+        "on",
+        "at",
+        "to",
+        "for",
+        "of",
+        "with",
+        "by",
+        "from",
+        "about",
+        "into",
+        "through",
+        "during",
+        "before",
+        "after",
+        "above",
+        "below",
+        "between",
+        "out",
+        "off",
+        "over",
+        "under",
+        "again",
+        "further",
+        "once",
+        "here",
+        "there",
+        "all",
+        "each",
+        "every",
+        "both",
+        "few",
+        "more",
+        "most",
+        "other",
+        "some",
+        "such",
+        "only",
+        "own",
+        "same",
+        "so",
+        "than",
+        "too",
+        "very",
+        "show",
+        "me",
+        "give",
+        "tell",
+        "find",
+        "get",
+        "list",
+        "display",
+        "please",
+        "also",
+        "just",
+        "like",
+        "data",
+        "table",
+        "sheet",
+        "file",
+        "column",
+        "row",
+        "value",
+    }
+)
 
 _INTENT_KEYWORDS = {
     "sales": ["sale", "sales", "revenue", "sold", "quantity", "order", "transaction"],
@@ -54,6 +162,7 @@ _INTENT_KEYWORDS = {
 @dataclass
 class SheetScore:
     """Relevance score for one sheet."""
+
     sheet_name: str
     score: float = 0.0
     matched_keywords: list[str] = field(default_factory=list)
@@ -63,6 +172,7 @@ class SheetScore:
 @dataclass
 class SheetMeta:
     """Lightweight metadata for one sheet (from cached context)."""
+
     name: str
     row_count: int = 0
     column_count: int = 0
@@ -118,9 +228,16 @@ def select_relevant_sheets(
         largest = sorted(sheets, key=lambda s: s.row_count, reverse=True)[0]
         selected = [largest]
 
-    logger.info("Sheet selector: %d/%d sheets selected for '%s' — %s",
-                len(selected), len(sheets), question[:50],
-                [(s.name, next((sc.score for sc in scores if sc.sheet_name == s.name), 0)) for s in selected])
+    logger.info(
+        "Sheet selector: %d/%d sheets selected for '%s' — %s",
+        len(selected),
+        len(sheets),
+        question[:50],
+        [
+            (s.name, next((sc.score for sc in scores if sc.sheet_name == s.name), 0))
+            for s in selected
+        ],
+    )
 
     return selected
 
@@ -136,7 +253,9 @@ def build_compact_summary(sheets: list[SheetMeta]) -> str:
     for i, sheet in enumerate(sheets, 1):
         key_cols = [c for c in sheet.column_names[:6] if not c.startswith("unnamed")]
         col_hint = ", ".join(key_cols) if key_cols else "various columns"
-        lines.append(f"  {i}. {sheet.name} ({sheet.row_count:,} rows, {sheet.column_count} cols) — {col_hint}")
+        lines.append(
+            f"  {i}. {sheet.name} ({sheet.row_count:,} rows, {sheet.column_count} cols) — {col_hint}"
+        )
 
     lines.append("")
     lines.append("The AI has access to ALL sheets above as pandas DataFrames.")
@@ -168,7 +287,9 @@ def build_selected_context(
         if sheet.full_context_text:
             parts.append(sheet.full_context_text)
         else:
-            parts.append(f"\nDataFrame: df_{sheet.name.lower().replace(' ', '_')} ({sheet.row_count:,} rows)")
+            parts.append(
+                f"\nDataFrame: df_{sheet.name.lower().replace(' ', '_')} ({sheet.row_count:,} rows)"
+            )
             for col in sheet.column_names:
                 col_type = sheet.column_types.get(col, "unknown")
                 samples = sheet.sample_values.get(col, [])
@@ -191,7 +312,9 @@ def parse_excel_context_to_sheets(excel_context: str) -> list[SheetMeta]:
     current_text_lines: list[str] = []
 
     for line in excel_context.split("\n"):
-        sheet_match = re.match(r"^(df_\w+)\s+\(([0-9,]+)\s+rows?,\s*(\d+)\s+columns?\)", line.strip())
+        sheet_match = re.match(
+            r"^(df_\w+)\s+\(([0-9,]+)\s+rows?,\s*(\d+)\s+columns?\)", line.strip()
+        )
         if sheet_match:
             if current_sheet:
                 current_sheet.full_context_text = "\n".join(current_text_lines)
@@ -240,10 +363,24 @@ _COLUMN_THRESHOLD = 40
 _MAX_SELECTED_COLUMNS = 35
 """Maximum columns to keep after filtering."""
 
-_ALWAYS_KEEP_PATTERNS = frozenset({
-    "id", "name", "email", "date", "created", "updated", "status", "type",
-    "key", "code", "sku", "account", "phone", "title",
-})
+_ALWAYS_KEEP_PATTERNS = frozenset(
+    {
+        "id",
+        "name",
+        "email",
+        "date",
+        "created",
+        "updated",
+        "status",
+        "type",
+        "key",
+        "code",
+        "sku",
+        "account",
+        "phone",
+        "title",
+    }
+)
 """Column name fragments that are always kept (IDs, keys, dates, etc.)."""
 
 _NUMERIC_BONUS = 3
@@ -256,6 +393,7 @@ _TEMPORAL_BONUS = 4
 @dataclass
 class ColumnScore:
     """Relevance score for one column."""
+
     name: str
     score: float = 0.0
     reasons: list[str] = field(default_factory=list)
@@ -288,7 +426,9 @@ def select_relevant_columns(
 
     scores: list[ColumnScore] = []
     for col in sheet.column_names:
-        sc = _score_column(col, sheet.column_types.get(col, ""), sheet.sample_values.get(col, []), keywords)
+        sc = _score_column(
+            col, sheet.column_types.get(col, ""), sheet.sample_values.get(col, []), keywords
+        )
         scores.append(sc)
 
     # Sort: structural first, then by score descending
@@ -319,7 +459,10 @@ def select_relevant_columns(
 
     logger.info(
         "Column selector: %d/%d columns kept for '%s' on sheet %s",
-        len(selected_names), sheet.column_count, question[:50], sheet.name,
+        len(selected_names),
+        sheet.column_count,
+        question[:50],
+        sheet.name,
     )
 
     return filtered

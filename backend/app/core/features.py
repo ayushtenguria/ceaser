@@ -122,7 +122,8 @@ async def has_feature(feature: str | Feature, db: AsyncSession, org_id: str) -> 
     feat = Feature(feature) if isinstance(feature, str) else feature
 
     admin_stmt = select(User).where(
-        User.organization_id == org_id, User.is_super_admin == True  # noqa: E712
+        User.organization_id == org_id,
+        User.is_super_admin == True,  # noqa: E712
     )
     admin_result = await db.execute(admin_stmt)
     if admin_result.scalar_one_or_none() is not None:
@@ -152,7 +153,8 @@ async def get_all_features(db: AsyncSession, org_id: str) -> dict[str, bool]:
     plan_name, overrides = await _get_org_features(db, org_id)
 
     admin_stmt = select(User).where(
-        User.organization_id == org_id, User.is_super_admin == True  # noqa: E712
+        User.organization_id == org_id,
+        User.is_super_admin == True,  # noqa: E712
     )
     admin_result = await db.execute(admin_stmt)
     is_admin = admin_result.scalar_one_or_none() is not None
