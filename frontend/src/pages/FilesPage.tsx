@@ -80,6 +80,19 @@ export default function FilesPage() {
     try {
       const uploaded = await api.uploadFile(file);
       setFiles((prev) => [uploaded, ...prev]);
+
+      // If file is still processing, poll until ready and update the list
+      if (uploaded.processingStatus === "processing") {
+        api.waitForFileProcessing(uploaded.id).then((result) => {
+          setFiles((prev) =>
+            prev.map((f) =>
+              f.id === uploaded.id
+                ? { ...f, processingStatus: result.ready ? "ready" : "failed" }
+                : f,
+            ),
+          );
+        });
+      }
     } catch {
     } finally {
       setIsUploading(false);
@@ -227,9 +240,15 @@ export default function FilesPage() {
               <X className="mr-1 h-3.5 w-3.5" />
               Clear
             </Button>
-            <Button size="sm" onClick={startChatWithFiles}>
+            <Button
+              size="sm"
+              onClick={startChatWithFiles}
+              disabled={files.some((f) => selectedIds.has(f.id) && f.processingStatus === "processing")}
+            >
               <MessageSquare className="mr-1.5 h-3.5 w-3.5" />
-              Start Chat
+              {files.some((f) => selectedIds.has(f.id) && f.processingStatus === "processing")
+                ? "Processing..."
+                : "Start Chat"}
             </Button>
           </div>
         </div>
@@ -295,8 +314,21 @@ function FileCard({ file, getFileTypeColor, onDelete, isDeleting, isSelected, on
             </div>
           </div>
           <div className="flex items-center gap-2">
+            {/* Processing status */}
+            {file.processingStatus === "processing" && (
+              <span className="flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-blue-500/10 px-2.5 py-0.5 text-xs text-blue-400">
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Processing...
+              </span>
+            )}
+            {file.processingStatus === "failed" && (
+              <span className="flex items-center gap-1 rounded-full border border-red-500/30 bg-red-500/10 px-2.5 py-0.5 text-xs text-red-400">
+                <XCircle className="h-3 w-3" />
+                Failed
+              </span>
+            )}
             {/* Quality badge */}
-            {qr && qr.total_issues > 0 ? (
+            {file.processingStatus !== "processing" && qr && qr.total_issues > 0 ? (
               <button
                 onClick={() => setShowQuality(!showQuality)}
                 className={cn("flex items-center gap-1 rounded-full border px-2 py-0.5 text-xs transition-colors hover:bg-muted/50", qualityColor)}
@@ -305,7 +337,7 @@ function FileCard({ file, getFileTypeColor, onDelete, isDeleting, isSelected, on
                 {qr.total_issues} {qr.total_issues === 1 ? "issue" : "issues"}
                 <ChevronRight className={cn("h-3 w-3 transition-transform", showQuality && "rotate-90")} />
               </button>
-            ) : qr ? (
+            ) : file.processingStatus !== "processing" && qr ? (
               <span className="flex items-center gap-1 text-xs text-emerald-400/70">
                 <CheckCircle2 className="h-3 w-3" /> Clean
               </span>

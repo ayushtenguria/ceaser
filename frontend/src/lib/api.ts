@@ -217,6 +217,50 @@ export async function deleteFile(id: string): Promise<void> {
   await api.delete(`/files/${id}`);
 }
 
+export async function getFileStatus(id: string): Promise<{
+  fileId: string;
+  filename: string;
+  stage: string;
+  progressPct: number;
+  message: string;
+  completed: boolean;
+  error: string | null;
+  processingStatus: string;
+}> {
+  const { data } = await api.get(`/files/${id}/status`);
+  return data;
+}
+
+/**
+ * Poll until a file's processing is complete (status = "ready" or "failed").
+ * Calls onProgress with each status update for UI feedback.
+ * Returns the final status.
+ */
+export async function waitForFileProcessing(
+  fileId: string,
+  onProgress?: (status: { stage: string; progressPct: number; message: string }) => void,
+  intervalMs = 3000,
+  maxAttempts = 60,
+): Promise<{ ready: boolean; error?: string }> {
+  for (let i = 0; i < maxAttempts; i++) {
+    try {
+      const status = await getFileStatus(fileId);
+      onProgress?.({ stage: status.stage, progressPct: status.progressPct, message: status.message });
+
+      if (status.processingStatus === "ready") {
+        return { ready: true };
+      }
+      if (status.processingStatus === "failed") {
+        return { ready: false, error: status.error || "Processing failed" };
+      }
+    } catch {
+      // Ignore transient errors during polling
+    }
+    await new Promise((r) => setTimeout(r, intervalMs));
+  }
+  return { ready: false, error: "Processing timed out" };
+}
+
 
 // ── Feedback ──
 

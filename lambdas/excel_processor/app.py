@@ -180,11 +180,14 @@ def _file_type_from_filename(filename: str) -> str:
 
 
 def _process_s3_object(bucket: str, key: str) -> None:
-    """Download the uploaded file, convert to parquet, and notify the backend.
+    """Download the uploaded file, parse columns, convert to parquet, and
+    notify the backend.
 
-    Column parsing and LLM analysis are done inline during the upload request
-    so the file is immediately ready for chat. This Lambda only adds the
-    parquet conversion for efficient downstream data access.
+    This is the primary processing path for S3 uploads. The backend upload
+    endpoint returns immediately with processing_status='processing'. This
+    Lambda does the heavy work: column extraction + parquet conversion.
+    The backend callback then generates code_preamble and builds the file
+    graph from the results.
     """
     org_id, file_id, filename = _parse_key(key)
     file_type = _file_type_from_filename(filename)
@@ -195,8 +198,8 @@ def _process_s3_object(bucket: str, key: str) -> None:
         size = _download_from_s3(bucket, key, src)
         logger.info("Downloaded s3://%s/%s (%d bytes, %.1fs)", bucket, key, size, time.time() - t0)
 
-        # Parse column_info as a fallback — the backend already has this from
-        # inline processing, but we send it in case the inline parse failed.
+        # Parse column metadata — this is the primary column extraction path
+        # for S3 uploads (no inline processing on the backend).
         column_info: dict | None = None
         try:
             if file_type == "csv":
@@ -206,7 +209,7 @@ def _process_s3_object(bucket: str, key: str) -> None:
         except Exception as exc:
             logger.warning("Column parsing failed (non-fatal): %s", exc)
 
-        # Convert to parquet — the primary job of this Lambda
+        # Convert to parquet for efficient downstream data access
         parquet_s3_key: str | None = None
         try:
             parquet_local = str(Path(tmp) / f"{Path(filename).stem}.parquet")

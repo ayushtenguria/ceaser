@@ -185,38 +185,45 @@ async def upload_file(
         del contents
     logger.info("Uploaded %s (%d bytes) → %s", file.filename, total_bytes, remote_path)
 
-    # Always process inline so the file is immediately ready for chat.
-    # When S3 is the storage backend, Lambda also runs in the background
-    # (S3 ObjectCreated → SQS → Lambda) for parquet conversion — but the
-    # upload is already usable before Lambda finishes.
+    # File processing is offloaded to Lambda (S3 ObjectCreated → SQS → Lambda).
+    # The upload endpoint only generates a lightweight preview for instant UI
+    # feedback. Lambda handles the heavy work: full parsing, column extraction,
+    # excel context, code preamble, and parquet conversion.
+    # For non-S3 backends (local dev), process inline as fallback.
+    from app.core.config import get_settings
+
+    use_lambda = get_settings().storage_backend.lower() == "s3"
+
     column_info: dict | None = None
     excel_context = None
     code_preamble = None
     parquet_paths_data = None
     excel_metadata = None
 
-    try:
-        _, column_info = parse_file(parse_path, file_type)
-    except Exception as exc:
-        logger.warning("Could not parse uploaded file: %s", exc)
+    if not use_lambda:
+        # Local dev fallback — process inline
+        try:
+            _, column_info = parse_file(parse_path, file_type)
+        except Exception as exc:
+            logger.warning("Could not parse uploaded file: %s", exc)
 
-    try:
-        from app.agents.excel.orchestrator import process_excel_upload
-        from app.core.deps import get_llm
+        try:
+            from app.agents.excel.orchestrator import process_excel_upload
+            from app.core.deps import get_llm
 
-        llm = get_llm()
-        excel_result = await process_excel_upload(parse_path, llm, org_id=org_id)
-        excel_context = excel_result.get("excel_context")
-        code_preamble = excel_result.get("code_preamble")
-        parquet_paths_data = excel_result.get("parquet_paths")
-        excel_metadata = {
-            "insight": excel_result.get("insight"),
-            "quality_report": excel_result.get("quality_report"),
-            "relationships": excel_result.get("relationships"),
-        }
-        logger.info("Excel processing complete for %s", file.filename)
-    except Exception as exc:
-        logger.warning("Excel processing failed (file still saved): %s", exc)
+            llm = get_llm()
+            excel_result = await process_excel_upload(parse_path, llm, org_id=org_id)
+            excel_context = excel_result.get("excel_context")
+            code_preamble = excel_result.get("code_preamble")
+            parquet_paths_data = excel_result.get("parquet_paths")
+            excel_metadata = {
+                "insight": excel_result.get("insight"),
+                "quality_report": excel_result.get("quality_report"),
+                "relationships": excel_result.get("relationships"),
+            }
+            logger.info("Excel processing complete for %s", file.filename)
+        except Exception as exc:
+            logger.warning("Excel processing failed (file still saved): %s", exc)
 
     preview_data = None
     try:
@@ -241,13 +248,13 @@ async def upload_file(
         code_preamble=code_preamble,
         parquet_paths=parquet_paths_data,
         excel_metadata=excel_metadata,
-        processing_status="ready",
+        processing_status="processing" if use_lambda else "ready",
     )
     db.add(upload)
     await db.flush()
     await db.refresh(upload)
 
-    if column_info:
+    if not use_lambda and column_info:
         try:
             from app.services.schema_graph import build_file_graph
 
@@ -302,22 +309,59 @@ async def processed_callback(
     if upload is None:
         raise HTTPException(status_code=404, detail="File not found")
 
-    # The file is already processed inline during upload (column_info,
-    # excel_context, code_preamble are set). Lambda only adds parquet.
+    # Lambda does the heavy processing — update the file record with results.
     status_val = payload.get("status", "ready")
+    upload.processing_status = status_val
+
     if status_val == "failed":
         upload.processing_error = payload.get("error", "unknown")
         logger.warning("Lambda processing failed for %s: %s", file_id, upload.processing_error)
     else:
-        # Only update column_info if it wasn't set during inline processing
         ci = payload.get("column_info")
-        if ci and not upload.column_info:
+        if ci:
             upload.column_info = ci
 
-        # Always store the parquet key from Lambda
         pk = payload.get("parquet_s3_key")
         if pk:
             upload.parquet_s3_key = pk
+            # Generate code_preamble using ceaser:// protocol references
+            stem = Path(upload.filename).stem
+            safe_name = stem.replace(" ", "_").replace("-", "_").lower()
+            row_count = ci.get("row_count", 0) if ci else 0
+            lines = [
+                "import pandas as pd",
+                "import numpy as np",
+                "import plotly.express as px",
+                "",
+            ]
+            if row_count > 100_000:
+                lines.append("import duckdb")
+                lines.append(f"# NOTE: {row_count:,} rows — use duckdb.sql() for aggregations")
+                lines.append("")
+                lines.append(
+                    f'{safe_name} = pd.read_parquet("ceaser://{pk}")  # {row_count:,} rows'
+                )
+            else:
+                lines.append(f'{safe_name} = pd.read_parquet("ceaser://{pk}")')
+            upload.code_preamble = "\n".join(lines)
+
+        # Build file graph for Graph RAG
+        if ci:
+            try:
+                from app.services.schema_graph import build_file_graph
+
+                await build_file_graph(
+                    file_id=str(upload.id),
+                    org_id=upload.organization_id,
+                    filename=upload.filename,
+                    conversation_id=None,
+                    uploaded_by=str(upload.user_id),
+                    column_info=ci,
+                    parquet_paths=None,
+                    row_count=ci.get("row_count", 0),
+                )
+            except Exception as exc:
+                logger.warning("File graph build failed (non-blocking): %s", exc)
 
     await db.flush()
     logger.info(
@@ -398,15 +442,38 @@ async def get_upload_status(
     upload = result.scalar_one_or_none()
 
     if upload:
-        return {
-            "fileId": str(file_id),
-            "filename": upload.filename,
-            "stage": "done",
-            "progressPct": 100,
-            "message": "Processing complete",
-            "completed": True,
-            "error": None,
-            "elapsedSeconds": 0,
-        }
+        if upload.processing_status == "ready":
+            return {
+                "fileId": str(file_id),
+                "filename": upload.filename,
+                "stage": "done",
+                "progressPct": 100,
+                "message": "Processing complete",
+                "completed": True,
+                "error": None,
+                "processingStatus": "ready",
+            }
+        elif upload.processing_status == "failed":
+            return {
+                "fileId": str(file_id),
+                "filename": upload.filename,
+                "stage": "failed",
+                "progressPct": 0,
+                "message": upload.processing_error or "Processing failed",
+                "completed": True,
+                "error": upload.processing_error or "Processing failed",
+                "processingStatus": "failed",
+            }
+        else:
+            return {
+                "fileId": str(file_id),
+                "filename": upload.filename,
+                "stage": "processing",
+                "progressPct": 50,
+                "message": "Analyzing your file...",
+                "completed": False,
+                "error": None,
+                "processingStatus": "processing",
+            }
 
     raise HTTPException(status_code=404, detail="Upload not found.")
