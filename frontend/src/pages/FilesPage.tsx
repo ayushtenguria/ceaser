@@ -93,7 +93,8 @@ export default function FilesPage() {
           );
         });
       }
-    } catch {
+    } catch (err) {
+      console.error("[FilesPage] Upload failed:", err);
     } finally {
       setIsUploading(false);
     }
