@@ -87,6 +87,7 @@ app = FastAPI(
     description="AI-powered data analysis platform API",
     version="0.1.0",
     lifespan=lifespan,
+    redirect_slashes=False,
 )
 
 app.add_middleware(
