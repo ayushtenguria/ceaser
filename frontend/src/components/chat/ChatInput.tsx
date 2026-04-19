@@ -144,28 +144,16 @@ export default function ChatInput({ onSend, isStreaming, preselectedFileIds }: C
         setUploadStage(totalFiles > 1 ? `Uploaded ${file.name}` : "Uploaded");
       }
 
-      // If file is still processing (Fargate pipeline), poll until ready
-      if (lastUploaded?.processingStatus === "processing") {
-        setUploadProgress(30);
-        setUploadStage("Analyzing your file...");
-        const result = await api.waitForFileProcessing(
-          lastUploaded.id,
-          (status) => {
-            setUploadStage(status.message || "Processing...");
-            setUploadProgress(Math.max(30, Math.min(95, status.progressPct)));
-          },
-          3000,
-          120,  // 6 min max (120 * 3s) for large files
-        );
-        if (!result.ready) {
-          throw new Error(result.error || "File processing failed. Please try again.");
-        }
-      }
-
-      setUploadProgress(95);
-      setUploadStage("Ready");
-      await new Promise((r) => setTimeout(r, 300));
+      // Attach the file immediately — don't block on Fargate processing.
+      // If file is still processing, user sees "File uploaded" and can
+      // navigate to Files page to track progress. The backend will tell
+      // the agent to wait if file isn't ready when user sends a message.
       setUploadProgress(100);
+      setUploadStage(
+        lastUploaded?.processingStatus === "processing"
+          ? "File uploaded — processing in background"
+          : "Ready"
+      );
 
       const qr = lastUploaded?.excelMetadata?.quality_report;
       setAttachedFile({

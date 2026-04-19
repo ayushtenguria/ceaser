@@ -573,8 +573,28 @@ async def chat(
             all_file_ids = recent_ids
             logger.info("Auto-linked %d org files to conversation", len(recent_ids))
 
+    # Check if any files are still processing
+    files_still_processing = []
+    for fid in all_file_ids:
+        try:
+            fid_uuid = uuid.UUID(fid)
+        except ValueError:
+            continue
+        stmt = select(FileUpload).where(FileUpload.id == fid_uuid)
+        fresult = await db.execute(stmt)
+        fupload = fresult.scalar_one_or_none()
+        if fupload and fupload.processing_status == "processing":
+            files_still_processing.append(fupload.filename)
+
     # Build schema context with ALL files
     schema_context = ""
+    if files_still_processing:
+        schema_context = (
+            "IMPORTANT: The following file(s) are still being processed and not yet available: "
+            + ", ".join(files_still_processing)
+            + ". Tell the user their file is still being analyzed and will be ready shortly. "
+            "Suggest they check the Files page for status or try again in a minute."
+        )
     if effective_connection_id or all_file_ids:
         # Connection context
         schema_context = await _build_schema_context(
