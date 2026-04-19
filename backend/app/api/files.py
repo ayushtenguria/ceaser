@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from pathlib import Path
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, UploadFile, status
 from sqlalchemy import select
@@ -106,6 +107,58 @@ async def _get_user(db: DbSession, clerk_id: str) -> User:
     return user
 
 
+async def _launch_fargate_task(
+    file_id: str,
+    s3_bucket: str,
+    s3_key: str,
+    org_id: str,
+    settings: Any = None,
+) -> None:
+    """Launch a Fargate task to run the full Excel processing pipeline."""
+    import asyncio
+
+    import boto3
+
+    if settings is None:
+        from app.core.config import get_settings
+
+        settings = get_settings()
+
+    client = boto3.client("ecs", region_name=settings.aws_region)
+
+    subnets = [s.strip() for s in settings.fargate_subnets.split(",") if s.strip()]
+    security_groups = [settings.fargate_security_group] if settings.fargate_security_group else []
+
+    await asyncio.to_thread(
+        client.run_task,
+        cluster=settings.fargate_cluster,
+        taskDefinition=settings.fargate_task_definition,
+        launchType="FARGATE",
+        count=1,
+        networkConfiguration={
+            "awsvpcConfiguration": {
+                "subnets": subnets,
+                "securityGroups": security_groups,
+                "assignPublicIp": "ENABLED",
+            }
+        },
+        overrides={
+            "containerOverrides": [
+                {
+                    "name": "processor",
+                    "command": ["python", "-m", "app.tasks.process_file"],
+                    "environment": [
+                        {"name": "FILE_ID", "value": file_id},
+                        {"name": "S3_BUCKET", "value": s3_bucket},
+                        {"name": "S3_KEY", "value": s3_key},
+                        {"name": "ORG_ID", "value": org_id},
+                    ],
+                }
+            ]
+        },
+    )
+
+
 @router.post("/upload", response_model=FileUploadResponse, status_code=status.HTTP_201_CREATED)
 async def upload_file(
     file: UploadFile,
@@ -186,16 +239,14 @@ async def upload_file(
         del contents
     logger.info("Uploaded %s (%d bytes) → %s", file.filename, total_bytes, remote_path)
 
-    # ── Lightweight inline parse (safe on 2GB RAM for any file size) ──
-    # Always extract column metadata from a small sample (first 1000 rows)
-    # so the file is immediately usable for chat. This takes <1s even for
-    # 500MB files because pandas only reads the first N rows.
-    #
-    # For S3 backends, Lambda also runs in the background for parquet
-    # conversion. For local dev, the full excel orchestrator runs inline.
+    # ── Processing strategy ───────────────────────────────────────────
+    # Fargate: Full 8-step orchestrator runs as a Fargate task (production).
+    # Inline:  Full orchestrator runs in-process (local dev fallback).
+    # The upload returns immediately; Fargate processes in the background.
     from app.core.config import get_settings
 
-    use_lambda = get_settings().storage_backend.lower() == "s3"
+    settings = get_settings()
+    use_fargate = bool(settings.fargate_cluster and settings.fargate_task_definition)
 
     column_info: dict | None = None
     excel_context = None
@@ -203,14 +254,20 @@ async def upload_file(
     parquet_paths_data = None
     excel_metadata = None
 
-    # Lightweight column parse — always runs, safe for any file size
+    # Lightweight preview for instant UI feedback (safe on any file size)
+    preview_data = None
     try:
-        _, column_info = parse_file(parse_path, file_type)
+        preview_data = _generate_preview(parse_path, file_type)
     except Exception as exc:
-        logger.warning("Could not parse uploaded file: %s", exc)
+        logger.debug("Preview generation skipped: %s", exc)
 
-    if not use_lambda:
-        # Local dev: run full orchestrator inline (no Lambda available)
+    if not use_fargate:
+        # Local dev: run full orchestrator inline
+        try:
+            _, column_info = parse_file(parse_path, file_type)
+        except Exception as exc:
+            logger.warning("Could not parse uploaded file: %s", exc)
+
         try:
             from app.agents.excel.orchestrator import process_excel_upload
             from app.core.deps import get_llm
@@ -229,36 +286,9 @@ async def upload_file(
         except Exception as exc:
             logger.warning("Excel processing failed (file still saved): %s", exc)
 
-    preview_data = None
-    try:
-        preview_data = _generate_preview(parse_path, file_type)
-    except Exception as exc:
-        logger.debug("Preview generation skipped: %s", exc)
-
     import shutil
 
     shutil.rmtree(_temp_dir, ignore_errors=True)
-
-    # Generate code_preamble from the raw uploaded file so the agent knows
-    # how to load it. When Lambda finishes parquet conversion, the callback
-    # updates code_preamble to use the parquet path instead.
-    if not code_preamble:
-        stem = Path(file.filename).stem
-        safe_name = stem.replace(" ", "_").replace("-", "_").lower()
-        row_count = column_info.get("row_count", 0) if column_info else 0
-        lines = [
-            "import pandas as pd",
-            "import numpy as np",
-            "import plotly.express as px",
-            "",
-        ]
-        if row_count > 100_000:
-            lines.append("import duckdb")
-            lines.append(f"# NOTE: {row_count:,} rows — use duckdb.sql() for aggregations")
-            lines.append("")
-        read_fn = "pd.read_csv" if file_type == "csv" else "pd.read_excel"
-        lines.append(f'{safe_name} = {read_fn}("ceaser://{remote_path}")')
-        code_preamble = "\n".join(lines)
 
     upload = FileUpload(
         id=file_id,
@@ -273,13 +303,13 @@ async def upload_file(
         code_preamble=code_preamble,
         parquet_paths=parquet_paths_data,
         excel_metadata=excel_metadata,
-        processing_status="ready",
+        processing_status="processing" if use_fargate else "ready",
     )
     db.add(upload)
     await db.flush()
     await db.refresh(upload)
 
-    if column_info:
+    if not use_fargate and column_info:
         try:
             from app.services.schema_graph import build_file_graph
 
@@ -295,6 +325,23 @@ async def upload_file(
             )
         except Exception as exc:
             logger.warning("File graph build failed (non-blocking): %s", exc)
+
+    # Launch Fargate task for async processing
+    if use_fargate:
+        try:
+            await _launch_fargate_task(
+                file_id=str(file_id),
+                s3_bucket=settings.parquet_s3_bucket or "",
+                s3_key=remote_path,
+                org_id=db_org_id,
+                settings=settings,
+            )
+            logger.info("Fargate task launched for file %s", file_id)
+        except Exception as exc:
+            logger.exception("Failed to launch Fargate task: %s", exc)
+            upload.processing_status = "failed"
+            upload.processing_error = f"Failed to launch processing: {exc}"
+            await db.flush()
 
     return {
         "id": upload.id,
@@ -315,7 +362,10 @@ async def processed_callback(
     request: Request,
     db: DbSession,
 ) -> dict:
-    """Lambda → backend callback. Auth: HMAC-SHA256 of the raw body in X-Ceaser-Signature."""
+    """Fargate/Lambda → backend callback with full orchestrator results.
+
+    Auth: HMAC-SHA256 of the raw body in X-Ceaser-Signature header.
+    """
     body = await request.body()
     sig = request.headers.get("X-Ceaser-Signature", "")
     if not verify_signature(body, sig):
@@ -334,41 +384,37 @@ async def processed_callback(
     if upload is None:
         raise HTTPException(status_code=404, detail="File not found")
 
-    # Lambda does the heavy processing — update the file record with results.
     status_val = payload.get("status", "ready")
     upload.processing_status = status_val
 
     if status_val == "failed":
         upload.processing_error = payload.get("error", "unknown")
-        logger.warning("Lambda processing failed for %s: %s", file_id, upload.processing_error)
+        logger.warning("Processing failed for %s: %s", file_id, upload.processing_error)
     else:
+        # Store ALL orchestrator fields
         ci = payload.get("column_info")
         if ci:
             upload.column_info = ci
 
+        ec = payload.get("excel_context")
+        if ec:
+            upload.excel_context = ec
+
+        cp = payload.get("code_preamble")
+        if cp:
+            upload.code_preamble = cp
+
+        pp = payload.get("parquet_paths")
+        if pp:
+            upload.parquet_paths = pp
+
+        em = payload.get("excel_metadata")
+        if em:
+            upload.excel_metadata = em
+
         pk = payload.get("parquet_s3_key")
         if pk:
             upload.parquet_s3_key = pk
-            # Generate code_preamble using ceaser:// protocol references
-            stem = Path(upload.filename).stem
-            safe_name = stem.replace(" ", "_").replace("-", "_").lower()
-            row_count = ci.get("row_count", 0) if ci else 0
-            lines = [
-                "import pandas as pd",
-                "import numpy as np",
-                "import plotly.express as px",
-                "",
-            ]
-            if row_count > 100_000:
-                lines.append("import duckdb")
-                lines.append(f"# NOTE: {row_count:,} rows — use duckdb.sql() for aggregations")
-                lines.append("")
-                lines.append(
-                    f'{safe_name} = pd.read_parquet("ceaser://{pk}")  # {row_count:,} rows'
-                )
-            else:
-                lines.append(f'{safe_name} = pd.read_parquet("ceaser://{pk}")')
-            upload.code_preamble = "\n".join(lines)
 
         # Build file graph for Graph RAG
         if ci:
@@ -382,18 +428,28 @@ async def processed_callback(
                     conversation_id=None,
                     uploaded_by=str(upload.user_id),
                     column_info=ci,
-                    parquet_paths=None,
-                    row_count=ci.get("row_count", 0),
+                    parquet_paths=pp,
+                    row_count=ci.get("row_count", 0) if ci else 0,
                 )
             except Exception as exc:
                 logger.warning("File graph build failed (non-blocking): %s", exc)
 
     await db.flush()
     logger.info(
-        "Lambda callback for file %s: status=%s parquet=%s",
+        "Processing callback for file %s: status=%s fields=%s",
         file_id,
         status_val,
-        payload.get("parquet_s3_key"),
+        [
+            k
+            for k in (
+                "column_info",
+                "excel_context",
+                "code_preamble",
+                "parquet_paths",
+                "excel_metadata",
+            )
+            if payload.get(k)
+        ],
     )
     return {"ok": True}
 

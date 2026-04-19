@@ -97,6 +97,13 @@ class Settings(BaseSettings):
     # Set to the Lambda function name (e.g. "ceaser-sandbox-executor").
     sandbox_lambda_function: str = ""
 
+    # Fargate file processing. When set, file uploads are processed by a
+    # Fargate task running the full excel orchestrator pipeline.
+    fargate_cluster: str = ""
+    fargate_task_definition: str = ""
+    fargate_subnets: str = ""  # Comma-separated subnet IDs
+    fargate_security_group: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

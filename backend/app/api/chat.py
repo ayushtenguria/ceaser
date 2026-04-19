@@ -631,7 +631,12 @@ async def chat(
                     stmt = stmt.where(FileUpload.organization_id == org_id)
                 result = await db.execute(stmt)
                 upload = result.scalar_one_or_none()
-                if upload and upload.code_preamble:
+                if not upload:
+                    continue
+                if upload.processing_status == "processing":
+                    logger.info("File %s still processing — skipping preamble", fid)
+                    continue
+                if upload.code_preamble:
                     for line in upload.code_preamble.split("\n"):
                         stripped = line.strip()
                         if (

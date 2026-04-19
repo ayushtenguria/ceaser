@@ -76,3 +76,9 @@ variable "deploy_lambda" {
   type        = bool
   default     = false
 }
+
+variable "deploy_fargate" {
+  description = "Flip to true after the first ECR image push so terraform creates the Fargate task definition."
+  type        = bool
+  default     = false
+}

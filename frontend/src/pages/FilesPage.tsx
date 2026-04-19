@@ -81,16 +81,34 @@ export default function FilesPage() {
       const uploaded = await api.uploadFile(file);
       setFiles((prev) => [uploaded, ...prev]);
 
-      // If file is still processing, poll until ready and update the list
+      // If file is still processing (Fargate), poll until ready
       if (uploaded.processingStatus === "processing") {
-        api.waitForFileProcessing(uploaded.id).then((result) => {
-          setFiles((prev) =>
-            prev.map((f) =>
-              f.id === uploaded.id
-                ? { ...f, processingStatus: result.ready ? "ready" : "failed" }
-                : f,
-            ),
-          );
+        api.waitForFileProcessing(
+          uploaded.id,
+          (status) => {
+            // Update the file card in real-time with stage info
+            setFiles((prev) =>
+              prev.map((f) =>
+                f.id === uploaded.id
+                  ? { ...f, processingStatus: "processing" as const }
+                  : f,
+              ),
+            );
+          },
+          3000,
+          120,
+        ).then((result) => {
+          // Reload file list to get full metadata after processing
+          api.getFiles().then((freshFiles) => setFiles(freshFiles)).catch(() => {
+            // Fallback: just update status
+            setFiles((prev) =>
+              prev.map((f) =>
+                f.id === uploaded.id
+                  ? { ...f, processingStatus: result.ready ? "ready" : "failed" }
+                  : f,
+              ),
+            );
+          });
         });
       }
     } catch (err) {

@@ -39,6 +39,26 @@ output "ecr_sandbox_executor_url" {
   value = aws_ecr_repository.sandbox_executor.repository_url
 }
 
+output "fargate_cluster_name" {
+  value = aws_ecs_cluster.processing.name
+}
+
+output "fargate_task_definition" {
+  value = try(aws_ecs_task_definition.file_processor[0].family, null)
+}
+
+output "ecr_file_processor_url" {
+  value = aws_ecr_repository.file_processor.repository_url
+}
+
+output "fargate_security_group_id" {
+  value = aws_security_group.fargate_task.id
+}
+
+output "fargate_subnets" {
+  value = join(",", data.aws_subnets.default.ids)
+}
+
 output "route53_nameservers" {
   description = "Set these at your registrar if create_route53_zone=true"
   value       = var.manage_dns_in_route53 && var.create_route53_zone ? aws_route53_zone.main[0].name_servers : null

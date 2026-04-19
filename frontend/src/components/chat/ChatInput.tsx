@@ -140,8 +140,26 @@ export default function ChatInput({ onSend, isStreaming, preselectedFileIds }: C
         lastUploaded = await api.uploadFile(file);
         allUploadedIds.push(lastUploaded.id);
 
-        setUploadProgress(pctBase + Math.round(40 / totalFiles));
-        setUploadStage(totalFiles > 1 ? `Processing ${file.name}` : "Analyzing");
+        setUploadProgress(pctBase + Math.round(20 / totalFiles));
+        setUploadStage(totalFiles > 1 ? `Uploaded ${file.name}` : "Uploaded");
+      }
+
+      // If file is still processing (Fargate pipeline), poll until ready
+      if (lastUploaded?.processingStatus === "processing") {
+        setUploadProgress(30);
+        setUploadStage("Analyzing your file...");
+        const result = await api.waitForFileProcessing(
+          lastUploaded.id,
+          (status) => {
+            setUploadStage(status.message || "Processing...");
+            setUploadProgress(Math.max(30, Math.min(95, status.progressPct)));
+          },
+          3000,
+          120,  // 6 min max (120 * 3s) for large files
+        );
+        if (!result.ready) {
+          throw new Error(result.error || "File processing failed. Please try again.");
+        }
       }
 
       setUploadProgress(95);
