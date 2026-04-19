@@ -110,7 +110,7 @@ async def _run() -> None:
 
         # Step 3: Run the full 8-step orchestrator with a timeout
         logger.info("Starting Excel processing pipeline for file %s", FILE_ID)
-        pipeline_timeout = int(os.environ.get("pipeline_timeout", "600"))  # 10 min default
+        pipeline_timeout = int(os.environ.get("PIPELINE_TIMEOUT", "1200"))  # 20 min default
         try:
             from app.agents.excel.orchestrator import process_excel_upload
 
