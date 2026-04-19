@@ -108,17 +108,31 @@ async def _run() -> None:
             logger.warning("LLM init failed (will use auto-summary): %s", exc)
             llm = None
 
-        # Step 3: Run the full 8-step orchestrator
+        # Step 3: Run the full 8-step orchestrator with a timeout
         logger.info("Starting Excel processing pipeline for file %s", FILE_ID)
+        pipeline_timeout = int(os.environ.get("pipeline_timeout", "600"))  # 10 min default
         try:
             from app.agents.excel.orchestrator import process_excel_upload
 
-            result = await process_excel_upload(local_path, llm=llm, org_id=ORG_ID)
+            result = await asyncio.wait_for(
+                process_excel_upload(local_path, llm=llm, org_id=ORG_ID),
+                timeout=pipeline_timeout,
+            )
             logger.info(
                 "Pipeline complete: %.1fs, %d failed steps",
                 result.get("pipeline_time_seconds", 0),
                 len(result.get("failed_steps", [])),
             )
+        except TimeoutError:
+            logger.error("Pipeline timed out after %ds for file %s", pipeline_timeout, FILE_ID)
+            _callback(
+                FILE_ID,
+                {
+                    "status": "failed",
+                    "error": f"Processing timed out after {pipeline_timeout}s. Try a smaller file.",
+                },
+            )
+            return
         except Exception as exc:
             logger.exception("Pipeline failed: %s", exc)
             _callback(

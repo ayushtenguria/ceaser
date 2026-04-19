@@ -123,8 +123,8 @@ resource "aws_ecs_task_definition" "file_processor" {
 
   requires_compatibilities = ["FARGATE"]
   network_mode             = "awsvpc"
-  cpu                      = "1024"  # 1 vCPU
-  memory                   = "4096"  # 4 GB — enough for 500MB Excel files
+  cpu                      = "2048"  # 2 vCPU
+  memory                   = "8192"  # 8 GB — handles large multi-sheet Excel files
   execution_role_arn       = aws_iam_role.fargate_execution.arn
   task_role_arn            = aws_iam_role.fargate_task.arn
 
