@@ -16,8 +16,11 @@ from app.agents.excel.sheet_extractor import ExtractedSheet
 
 logger = logging.getLogger(__name__)
 
-_VALUE_SAMPLE_SIZE = 10_000
+_VALUE_SAMPLE_SIZE = 1_000  # 1K samples is enough for >30% overlap detection
 _MIN_OVERLAP = 0.3
+_MIN_ROWS_FOR_OVERLAP = 50  # Skip tiny reference/temp sheets
+_MIN_UNIQUE_FOR_OVERLAP = 10  # Skip low-cardinality columns (booleans, flags)
+_MAX_NULL_PCT_FOR_OVERLAP = 0.9  # Skip mostly-null columns
 
 
 @dataclass
@@ -137,18 +140,44 @@ def _from_id_patterns(sheets: list[ExtractedSheet]) -> list[Relationship]:
 
 
 def _from_value_overlap(sheets: list[ExtractedSheet], existing: set) -> list[Relationship]:
-    """Relationships from value overlap analysis."""
+    """Relationships from value overlap analysis.
+
+    Optimized: skips small sheets (<50 rows), low-cardinality columns (<10 unique),
+    and mostly-null columns (>90% null) to reduce O(s² × c²) comparisons.
+    """
     rels = []
-    for i, sa in enumerate(sheets):
-        for sb in sheets[i + 1 :]:
+    # Filter to sheets worth comparing
+    viable = [s for s in sheets if s.row_count >= _MIN_ROWS_FOR_OVERLAP]
+    logger.info(
+        "Value overlap: %d/%d sheets viable (>=%d rows)",
+        len(viable),
+        len(sheets),
+        _MIN_ROWS_FOR_OVERLAP,
+    )
+
+    for i, sa in enumerate(viable):
+        for sb in viable[i + 1 :]:
             for ca in sa.df.columns:
+                col_a = sa.df[ca]
+                # Skip low-cardinality or mostly-null columns
+                if col_a.nunique() < _MIN_UNIQUE_FOR_OVERLAP:
+                    continue
+                if col_a.isna().mean() > _MAX_NULL_PCT_FOR_OVERLAP:
+                    continue
+
                 for cb in sb.df.columns:
                     if (sa.name, ca, sb.name, cb) in existing:
                         continue
-                    if not _dtypes_ok(sa.df[ca].dtype, sb.df[cb].dtype):
+                    if not _dtypes_ok(col_a.dtype, sb.df[cb].dtype):
                         continue
 
-                    score = _overlap_score(sa.df[ca], sb.df[cb])
+                    col_b = sb.df[cb]
+                    if col_b.nunique() < _MIN_UNIQUE_FOR_OVERLAP:
+                        continue
+                    if col_b.isna().mean() > _MAX_NULL_PCT_FOR_OVERLAP:
+                        continue
+
+                    score = _overlap_score(col_a, col_b)
                     if score >= _MIN_OVERLAP:
                         rels.append(
                             Relationship(

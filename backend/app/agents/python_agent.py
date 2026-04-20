@@ -34,6 +34,18 @@ RULES:
 6. Handle potential errors gracefully (e.g., missing columns).
 7. IMPORTANT: If a data file path is provided (like `df = pd.read_csv("...")`), use that
    to load the data. Do NOT hardcode data rows inline. The file contains ALL the rows.
+8. VERIFY RESULTS before creating charts:
+   - After loading/filtering data, check `len(df) > 0` before plotting.
+   - If DataFrame is empty, print("No data found: <reason>") and do NOT create fig.
+   - Never create a chart with zero data points.
+9. COLUMN VERIFICATION:
+   - Before using any column, check it exists: `if 'col' in df.columns:`
+   - If a column doesn't exist, print the available columns with `print(df.columns.tolist())`
+   - Use the EXACT column names from the data — they are case-sensitive.
+10. DUCKDB ERROR HANDLING:
+   - If DuckDB raises an error, fall back to pandas immediately.
+   - Do NOT mix DuckDB SQL column references with pandas column names.
+   - Wrap DuckDB calls in try/except and use pandas as fallback.
 
 DERIVED METRICS — if a column doesn't exist, COMPUTE it from available columns:
 - Gross Margin = (selling_price - cost_price) / selling_price

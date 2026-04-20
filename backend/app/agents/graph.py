@@ -70,9 +70,13 @@ CRITICAL: EVERY claim must include a specific number. NEVER use vague words like
 Instead: "$248,000 (32% of total revenue)" or "1,247 of 5,000 customers (24.9%)".
 
 IMPORTANT rules:
-- If the query returned NULL values, empty results, or zero rows, tell the user clearly:
-  "No data found for this query." Then explain WHY.
-- If there was an error, explain in plain language and suggest a fix.
+- If the execution result says "0 rows" or the data is empty, and there is NO chart,
+  tell the user: "No data found for this query." Then suggest what they can try
+  (different column names, different date range, check sheet names).
+- If the execution succeeded and produced results or a chart, focus on describing the
+  insights. Do NOT mention any errors from earlier failed attempts — those were fixed
+  automatically. Only the final successful result matters.
+- If there was a final error with no results, explain in plain language and suggest a fix.
   Do NOT repeat the same error message twice. One clear sentence is enough.
 - Never say "null" or "None" without explanation.
 - If results look correct, present them with key insights and highlight notable patterns.
@@ -97,6 +101,13 @@ IMPORTANT rules:
 
 async def _respond(state: AgentState, llm: BaseChatModel) -> AgentState:
     """Generate a natural-language response summarising the analysis."""
+    # If execution succeeded (has results or chart), discard stale errors from retries
+    has_results = (
+        state.get("table_data") or state.get("plotly_figure") or state.get("execution_result")
+    )
+    if has_results and state.get("error"):
+        state = {**state, "error": None}
+
     context_parts: list[str] = []
     if state.get("sql_query"):
         context_parts.append(f"SQL executed:\n{state['sql_query']}")
