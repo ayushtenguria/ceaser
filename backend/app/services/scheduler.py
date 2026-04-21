@@ -94,14 +94,25 @@ async def scheduler_loop() -> None:
     while True:
         try:
             async with async_session_factory() as session:
-                now = datetime.now(UTC)
-                stmt = select(Notebook).where(
+                # First check if any notebooks are scheduled at all (cheap query)
+                count_stmt = select(Notebook).where(
                     Notebook.is_scheduled.is_(True),
                     Notebook.schedule.isnot(None),
-                    Notebook.next_run_at <= now,
                 )
-                result = await session.execute(stmt)
-                due_notebooks = list(result.scalars().all())
+                count_result = await session.execute(count_stmt)
+                scheduled = list(count_result.scalars().all())
+
+                if not scheduled:
+                    await asyncio.sleep(_CHECK_INTERVAL)
+                    continue
+
+                # Check which are due
+                now = datetime.now(UTC)
+                due_notebooks = [
+                    nb
+                    for nb in scheduled
+                    if nb.next_run_at is not None and nb.next_run_at.replace(tzinfo=UTC) <= now
+                ]
 
                 if due_notebooks:
                     logger.info("Scheduler: %d notebook(s) due for execution", len(due_notebooks))
@@ -115,6 +126,6 @@ async def scheduler_loop() -> None:
                 await session.commit()
 
         except Exception as exc:
-            logger.exception("Scheduler loop error: %s", exc)
+            logger.warning("Scheduler loop error (will retry): %s", exc)
 
         await asyncio.sleep(_CHECK_INTERVAL)

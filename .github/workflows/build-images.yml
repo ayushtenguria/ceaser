@@ -32,18 +32,25 @@ jobs:
       - name: Login to ECR
         uses: aws-actions/amazon-ecr-login@v2
 
-      - name: Build and push file-processor image
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build and push file-processor image (amd64 for Fargate)
         uses: docker/build-push-action@v5
         with:
           context: backend
+          platforms: linux/amd64
           push: true
+          provenance: false
           tags: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/ceaser-file-processor:latest
 
-      - name: Build and push sandbox-executor image
+      - name: Build and push sandbox-executor image (arm64 for Lambda)
         uses: docker/build-push-action@v5
         with:
           context: lambdas/sandbox_executor
+          platforms: linux/arm64
           push: true
+          provenance: false
           tags: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.us-east-1.amazonaws.com/ceaser-sandbox-executor:latest
 
       - name: Update Lambda sandbox executor
