@@ -145,6 +145,7 @@ class FileUpload(Base):
         String(32), default="pending", server_default="pending"
     )
     processing_error: Mapped[str | None] = mapped_column(Text, nullable=True)
+    processing_stage: Mapped[str | None] = mapped_column(String(100), nullable=True)
     parquet_s3_key: Mapped[str | None] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
 

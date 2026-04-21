@@ -388,8 +388,48 @@ async def processed_callback(
     upload.processing_status = status_val
 
     if status_val == "failed":
-        upload.processing_error = payload.get("error", "unknown")
-        logger.warning("Processing failed for %s: %s", file_id, upload.processing_error)
+        error_msg = payload.get("error", "unknown")
+        # Track retry count in excel_metadata
+        meta = upload.excel_metadata or {}
+        retries = meta.get("_retries", 0)
+
+        if retries < 2:
+            # Auto-retry: re-launch Fargate task
+            meta["_retries"] = retries + 1
+            upload.excel_metadata = meta
+            upload.processing_status = "processing"
+            upload.processing_error = None
+            from sqlalchemy.orm.attributes import flag_modified
+
+            flag_modified(upload, "excel_metadata")
+            await db.flush()
+            logger.info(
+                "Retrying Fargate for file %s (attempt %d/2): %s",
+                file_id,
+                retries + 1,
+                error_msg,
+            )
+            try:
+                from app.core.config import get_settings
+
+                settings = get_settings()
+                await _launch_fargate_task(
+                    file_id=str(file_id),
+                    s3_bucket=settings.parquet_s3_bucket or "",
+                    s3_key=upload.file_path,
+                    org_id=upload.organization_id,
+                    settings=settings,
+                )
+                return {"ok": True, "retried": True}
+            except Exception as exc:
+                logger.warning("Retry launch failed: %s", exc)
+                # Fall through to mark as failed
+
+        upload.processing_error = error_msg
+        upload.processing_status = "failed"
+        logger.warning(
+            "Processing failed for %s (after %d retries): %s", file_id, retries, error_msg
+        )
     else:
         # Store ALL orchestrator fields
         ci = payload.get("column_info")
@@ -547,15 +587,58 @@ async def get_upload_status(
                 "processingStatus": "failed",
             }
         else:
+            # Map processing_stage to user-friendly message and percentage
+            stage_map = {
+                "inspecting": ("Inspecting file structure", 10),
+                "extracting": ("Extracting sheets", 20),
+                "formulas": ("Analyzing formulas", 35),
+                "relationships": ("Detecting relationships", 50),
+                "profiling": ("Profiling data quality", 65),
+                "quality": ("Running quality checks", 75),
+                "parquet": ("Saving optimized data", 85),
+                "insight": ("Generating insights", 95),
+            }
+            stage = upload.processing_stage or "processing"
+            friendly, pct = stage_map.get(stage, ("Analyzing your file...", 30))
             return {
                 "fileId": str(file_id),
                 "filename": upload.filename,
-                "stage": "processing",
-                "progressPct": 50,
-                "message": "Analyzing your file...",
+                "stage": stage,
+                "progressPct": pct,
+                "message": friendly,
                 "completed": False,
                 "error": None,
                 "processingStatus": "processing",
             }
 
     raise HTTPException(status_code=404, detail="Upload not found.")
+
+
+@router.put("/{file_id}/processing-stage", include_in_schema=False)
+async def update_processing_stage(
+    file_id: uuid.UUID,
+    request: Request,
+    db: DbSession,
+) -> dict:
+    """Fargate task calls this to report pipeline progress. Auth: HMAC signature."""
+    body = await request.body()
+    sig = request.headers.get("X-Ceaser-Signature", "")
+    if not verify_signature(body, sig):
+        raise HTTPException(status_code=401, detail="Invalid signature")
+
+    import json
+
+    try:
+        payload = json.loads(body)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    stmt = select(FileUpload).where(FileUpload.id == file_id)
+    result = await db.execute(stmt)
+    upload = result.scalar_one_or_none()
+    if upload is None:
+        raise HTTPException(status_code=404, detail="File not found")
+
+    upload.processing_stage = payload.get("stage", "processing")
+    await db.flush()
+    return {"ok": True}

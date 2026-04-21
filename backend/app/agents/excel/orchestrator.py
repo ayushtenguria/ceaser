@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
@@ -386,10 +387,22 @@ async def process_excel_upload(
     file_path: str,
     llm: BaseChatModel | None = None,
     org_id: str = "default",
+    on_stage: Callable[[str], None] | None = None,
 ) -> dict[str, Any]:
-    """Run the full stateful Excel pipeline. NEVER raises — always returns a result."""
+    """Run the full stateful Excel pipeline. NEVER raises — always returns a result.
+
+    Parameters
+    ----------
+    on_stage:
+        Optional callback invoked before each pipeline node with the stage name.
+        Used by Fargate to report progress to the backend.
+    """
     start_time = time.monotonic()
     logger.info("Excel pipeline: starting for %s", file_path)
+
+    def _stage(name: str) -> None:
+        if on_stage:
+            on_stage(name)
 
     state: ExcelPipelineState = {
         "file_path": file_path,
@@ -405,6 +418,7 @@ async def process_excel_upload(
         "retry_count": 0,
     }
 
+    _stage("inspecting")
     state = await asyncio.to_thread(_node_inspect, state)
     logger.info(
         "Node 1 (Inspector): file=%s type=%s sheets=%s",
@@ -413,6 +427,7 @@ async def process_excel_upload(
         state.get("sheet_count"),
     )
 
+    _stage("extracting")
     state = await asyncio.to_thread(_node_extract_sheets, state)
     sheets = state.get("sheets", [])
     logger.info(
@@ -426,13 +441,17 @@ async def process_excel_upload(
         elapsed = time.monotonic() - start_time
         return _build_result(state, elapsed)
 
+    _stage("formulas")
     state = await asyncio.to_thread(_node_extract_formulas, state)
 
+    _stage("relationships")
     state = await asyncio.to_thread(_node_map_relationships, state)
     logger.info("Node 4 (Relationships): %d found", len(state.get("relationships", [])))
 
+    _stage("profiling")
     state = await asyncio.to_thread(_node_profile, state)
 
+    _stage("quality")
     state = await asyncio.to_thread(_node_quality_gate, state)
     logger.info(
         "Node 6 (Quality Gate): severity=%s, auto-fixes=%d",
@@ -440,8 +459,10 @@ async def process_excel_upload(
         len(state.get("auto_fixes_applied", [])),
     )
 
+    _stage("parquet")
     state = await asyncio.to_thread(_node_build_context, state)
 
+    _stage("insight")
     state = await _node_generate_insight(state, llm)
 
     elapsed = time.monotonic() - start_time

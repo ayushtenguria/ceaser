@@ -58,6 +58,22 @@ def _sign(body: bytes) -> str:
     return hmac.new(HMAC_SECRET, body, hashlib.sha256).hexdigest()
 
 
+def _report_stage(file_id: str, stage: str) -> None:
+    """Report current pipeline stage to the backend for progress tracking."""
+    try:
+        body = json.dumps({"stage": stage}).encode()
+        sig = _sign(body)
+        url = f"{CALLBACK_URL.rstrip('/')}/files/{file_id}/processing-stage"
+        requests.put(
+            url,
+            data=body,
+            headers={"Content-Type": "application/json", "X-Ceaser-Signature": sig},
+            timeout=5,
+        )
+    except Exception:
+        pass  # Non-critical — don't fail the pipeline for progress reporting
+
+
 def _callback(file_id: str, payload: dict) -> None:
     """POST results to the backend callback endpoint."""
     body = json.dumps(payload, default=str).encode()
@@ -115,7 +131,12 @@ async def _run() -> None:
             from app.agents.excel.orchestrator import process_excel_upload
 
             result = await asyncio.wait_for(
-                process_excel_upload(local_path, llm=llm, org_id=ORG_ID),
+                process_excel_upload(
+                    local_path,
+                    llm=llm,
+                    org_id=ORG_ID,
+                    on_stage=lambda stage: _report_stage(FILE_ID, stage),
+                ),
                 timeout=pipeline_timeout,
             )
             logger.info(

@@ -114,5 +114,21 @@ async def decompose_query(
         return sub_queries
 
     except (json.JSONDecodeError, ValueError):
-        logger.warning("Decomposer returned invalid JSON: %s", raw[:100])
+        # Try extracting a JSON array from the response (LLM sometimes wraps in extra text)
+        import re
+
+        match = re.search(r"\[.*\]", raw, re.DOTALL)
+        if match:
+            try:
+                sub_queries = json.loads(match.group())
+                if isinstance(sub_queries, list) and sub_queries:
+                    sub_queries = [str(q).strip() for q in sub_queries if str(q).strip()][:3]
+                    if sub_queries:
+                        logger.info(
+                            "Decomposed into %d sub-queries: %s", len(sub_queries), sub_queries
+                        )
+                        return sub_queries
+            except (json.JSONDecodeError, ValueError):
+                pass
+        logger.debug("Decomposer could not parse response, using original query: %s", raw[:100])
         return [query]

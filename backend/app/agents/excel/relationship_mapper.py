@@ -21,6 +21,7 @@ _MIN_OVERLAP = 0.3
 _MIN_ROWS_FOR_OVERLAP = 50  # Skip tiny reference/temp sheets
 _MIN_UNIQUE_FOR_OVERLAP = 10  # Skip low-cardinality columns (booleans, flags)
 _MAX_NULL_PCT_FOR_OVERLAP = 0.9  # Skip mostly-null columns
+_MAX_SHEETS_FOR_OVERLAP = 15  # Cap pairwise comparison to top N sheets by row count
 
 
 @dataclass
@@ -146,13 +147,17 @@ def _from_value_overlap(sheets: list[ExtractedSheet], existing: set) -> list[Rel
     and mostly-null columns (>90% null) to reduce O(s² × c²) comparisons.
     """
     rels = []
-    # Filter to sheets worth comparing
+    # Filter to sheets worth comparing, then cap to top N by row count
     viable = [s for s in sheets if s.row_count >= _MIN_ROWS_FOR_OVERLAP]
+    if len(viable) > _MAX_SHEETS_FOR_OVERLAP:
+        viable.sort(key=lambda s: s.row_count, reverse=True)
+        viable = viable[:_MAX_SHEETS_FOR_OVERLAP]
     logger.info(
-        "Value overlap: %d/%d sheets viable (>=%d rows)",
+        "Value overlap: %d/%d sheets viable (>=%d rows, capped at %d)",
         len(viable),
         len(sheets),
         _MIN_ROWS_FOR_OVERLAP,
+        _MAX_SHEETS_FOR_OVERLAP,
     )
 
     for i, sa in enumerate(viable):
