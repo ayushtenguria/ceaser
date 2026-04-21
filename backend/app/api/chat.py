@@ -751,7 +751,10 @@ async def chat(
         except Exception as exc:
             logger.debug("Result context loading skipped: %s", exc)
 
-    llm = get_llm(model=body.model, tier="heavy")
+    # Only override provider if user explicitly selected "claude" in the UI.
+    # "gemini" is the frontend default — treat it as "use server default" (Bedrock).
+    llm_model = body.model if body.model == "claude" else None
+    llm = get_llm(model=llm_model, tier="heavy")
     llm_light = get_llm(tier="light")
 
     # ── Stream SSE ──────────────────────────────────────────────────
