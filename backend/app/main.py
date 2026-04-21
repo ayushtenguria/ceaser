@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 from collections.abc import AsyncIterator
@@ -69,7 +70,15 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await ensure_vector_index()
     except Exception as exc:
         logger.debug("Neo4j vector index setup skipped: %s", exc)
+    # Start background notebook scheduler
+    from app.services.scheduler import scheduler_loop
+
+    scheduler_task = asyncio.create_task(scheduler_loop())
+
     yield
+
+    # Shutdown
+    scheduler_task.cancel()
     await engine.dispose()
     try:
         from app.services.schema_graph import close_graph_driver

@@ -32,6 +32,12 @@ jobs:
       - name: Ruff format check
         run: ruff format --check .
 
+      - name: Install test dependencies
+        run: pip install -e ".[dev]" pytest-asyncio croniter
+
+      - name: Run tests
+        run: python -m pytest tests/ -v --tb=short
+
   frontend:
     name: Frontend lint + build
     runs-on: ubuntu-latest

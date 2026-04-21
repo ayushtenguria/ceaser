@@ -247,6 +247,29 @@ resource "aws_lambda_function" "sandbox_executor" {
   depends_on = [aws_iam_role_policy.lambda_exec]
 }
 
+# Keep sandbox Lambda warm with a scheduled ping every 5 minutes (~$0/month)
+resource "aws_cloudwatch_event_rule" "sandbox_warmup" {
+  count               = var.deploy_lambda ? 1 : 0
+  name                = "${var.project_name}-sandbox-warmup"
+  schedule_expression = "rate(5 minutes)"
+}
+
+resource "aws_cloudwatch_event_target" "sandbox_warmup" {
+  count = var.deploy_lambda ? 1 : 0
+  rule  = aws_cloudwatch_event_rule.sandbox_warmup[0].name
+  arn   = aws_lambda_function.sandbox_executor[0].arn
+  input = jsonencode({ code = "print('warm')", timeout = 5 })
+}
+
+resource "aws_lambda_permission" "sandbox_warmup" {
+  count         = var.deploy_lambda ? 1 : 0
+  statement_id  = "AllowEventBridgeWarmup"
+  action        = "lambda:InvokeFunction"
+  function_name = aws_lambda_function.sandbox_executor[0].function_name
+  principal     = "events.amazonaws.com"
+  source_arn    = aws_cloudwatch_event_rule.sandbox_warmup[0].arn
+}
+
 # Grant EC2 permission to invoke the sandbox Lambda
 resource "aws_iam_role_policy" "ec2_invoke_sandbox" {
   count = var.deploy_lambda ? 1 : 0
