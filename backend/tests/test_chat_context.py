@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 
 def test_preamble_accepts_read_csv():
     """Preamble filter should accept pd.read_csv lines."""

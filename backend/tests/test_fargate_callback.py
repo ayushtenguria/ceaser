@@ -6,8 +6,6 @@ import hashlib
 import hmac
 import json
 
-import pytest
-
 
 def _sign(body: bytes, secret: str = "test-secret") -> str:
     return hmac.new(secret.encode(), body, hashlib.sha256).hexdigest()

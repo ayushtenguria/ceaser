@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import pytest
 
-from app.sandbox.executor import ExecutionResult, _build_runner_script, _sanitize_error
+from app.sandbox.executor import _build_runner_script, _sanitize_error
 
 
 def test_sanitize_error_strips_urls():
-    text = 'Error loading https://s3.amazonaws.com/bucket/key?token=secret123'
+    text = "Error loading https://s3.amazonaws.com/bucket/key?token=secret123"
     result = _sanitize_error(text)
     assert "s3.amazonaws.com" not in result
     assert "[STORAGE_URL]" in result
@@ -22,7 +22,7 @@ def test_sanitize_error_strips_paths():
 
 
 def test_sanitize_error_strips_ceaser_refs():
-    text = 'Error loading ceaser://parquet/org/file.parquet'
+    text = "Error loading ceaser://parquet/org/file.parquet"
     result = _sanitize_error(text)
     assert "ceaser://" not in result
     assert "[FILE_REF]" in result

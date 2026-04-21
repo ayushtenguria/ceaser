@@ -12,9 +12,7 @@ import pytest
 def mock_llm():
     """Mock LangChain BaseChatModel that returns canned responses."""
     llm = MagicMock()
-    llm.ainvoke = AsyncMock(
-        return_value=MagicMock(content='["What is the data about?"]')
-    )
+    llm.ainvoke = AsyncMock(return_value=MagicMock(content='["What is the data about?"]'))
     return llm
 
 
@@ -25,9 +23,27 @@ def sample_column_info():
         "row_count": 100,
         "column_count": 3,
         "columns": [
-            {"name": "id", "dtype": "int64", "null_count": 0, "unique_count": 100, "sample_values": [1, 2, 3]},
-            {"name": "name", "dtype": "object", "null_count": 5, "unique_count": 80, "sample_values": ["Alice", "Bob"]},
-            {"name": "price", "dtype": "float64", "null_count": 2, "unique_count": 50, "sample_values": [9.99, 19.99]},
+            {
+                "name": "id",
+                "dtype": "int64",
+                "null_count": 0,
+                "unique_count": 100,
+                "sample_values": [1, 2, 3],
+            },
+            {
+                "name": "name",
+                "dtype": "object",
+                "null_count": 5,
+                "unique_count": 80,
+                "sample_values": ["Alice", "Bob"],
+            },
+            {
+                "name": "price",
+                "dtype": "float64",
+                "null_count": 2,
+                "unique_count": 50,
+                "sample_values": [9.99, 19.99],
+            },
         ],
     }
 
