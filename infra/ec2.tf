@@ -73,6 +73,19 @@ resource "aws_iam_role_policy" "s3_uploads" {
   })
 }
 
+resource "aws_iam_role_policy" "bedrock_invoke" {
+  name = "${var.project_name}-bedrock-invoke"
+  role = aws_iam_role.ec2.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
+      Resource = "*"
+    }]
+  })
+}
+
 resource "aws_iam_instance_profile" "ec2" {
   name = "${var.project_name}-ec2-profile"
   role = aws_iam_role.ec2.name

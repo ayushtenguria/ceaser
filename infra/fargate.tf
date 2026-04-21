@@ -86,6 +86,11 @@ resource "aws_iam_role_policy" "fargate_task_s3" {
         aws_s3_bucket.uploads.arn,
         "${aws_s3_bucket.uploads.arn}/*",
       ]
+    },
+    {
+      Effect   = "Allow"
+      Action   = ["bedrock:InvokeModel", "bedrock:InvokeModelWithResponseStream"]
+      Resource = "*"
     }]
   })
 }

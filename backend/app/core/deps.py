@@ -28,7 +28,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 def get_llm(
-    model: str = "gemini",
+    model: str | None = None,
     tier: str = "heavy",
     settings: Settings | None = None,
 ) -> BaseChatModel:
@@ -37,20 +37,29 @@ def get_llm(
     Parameters
     ----------
     model:
-        ``"gemini"`` (default) or ``"claude"`` — selects the provider.
+        Explicit provider override: ``"gemini"``, ``"claude"``, or ``"bedrock"``.
+        If ``None``, uses ``settings.llm_provider`` (default: ``"bedrock"``).
     tier:
-        ``"heavy"`` (default) — best quality model for SQL, code, analysis.
+        ``"heavy"`` — best quality model for SQL, code, analysis.
         ``"light"`` — fast/cheap model for routing, verification, extraction.
     settings:
         Optional override; falls back to the cached singleton.
-
-    Model mapping:
-        heavy  → gemini-3-flash (or claude if selected)
-        light  → gemini-3.1-flash-lite
     """
     settings = settings or get_settings()
+    provider = model or settings.llm_provider
 
-    if model == "claude":
+    if provider == "bedrock":
+        from langchain_aws import ChatBedrockConverse
+
+        model_id = settings.bedrock_model_light if tier == "light" else settings.bedrock_model_heavy
+        return ChatBedrockConverse(
+            model=model_id,
+            region_name=settings.bedrock_region,
+            temperature=0,
+            max_tokens=4096,
+        )
+
+    if provider == "claude":
         return ChatAnthropic(
             model=settings.claude_model,
             anthropic_api_key=settings.anthropic_api_key,
@@ -58,8 +67,8 @@ def get_llm(
             max_tokens=4096,
         )
 
+    # Default: Gemini
     model_name = settings.gemini_model_light if tier == "light" else settings.gemini_model
-
     return ChatGoogleGenerativeAI(
         model=model_name,
         google_api_key=settings.gemini_api_key,

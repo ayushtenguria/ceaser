@@ -97,6 +97,12 @@ class Settings(BaseSettings):
     # Set to the Lambda function name (e.g. "ceaser-sandbox-executor").
     sandbox_lambda_function: str = ""
 
+    # LLM provider: "bedrock" (default), "gemini", or "claude"
+    llm_provider: str = "bedrock"
+    bedrock_region: str = "us-east-1"
+    bedrock_model_heavy: str = "us.anthropic.claude-sonnet-4-6"
+    bedrock_model_light: str = "us.anthropic.claude-haiku-4-5-20251001-v1:0"
+
     # Fargate file processing. When set, file uploads are processed by a
     # Fargate task running the full excel orchestrator pipeline.
     fargate_cluster: str = ""
