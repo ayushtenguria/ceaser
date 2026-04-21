@@ -63,6 +63,21 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await conn.execute(
             text("ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS parquet_s3_key TEXT")
         )
+        await conn.execute(
+            text("ALTER TABLE file_uploads ADD COLUMN IF NOT EXISTS processing_stage VARCHAR(100)")
+        )
+        # Notebook scheduling columns
+        await conn.execute(
+            text("ALTER TABLE notebooks ADD COLUMN IF NOT EXISTS schedule VARCHAR(50)")
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE notebooks ADD COLUMN IF NOT EXISTS is_scheduled BOOLEAN DEFAULT FALSE"
+            )
+        )
+        await conn.execute(
+            text("ALTER TABLE notebooks ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ")
+        )
     logger.info("Database tables ensured.")
     try:
         from app.services.memory_graph import ensure_vector_index
