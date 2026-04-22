@@ -4,16 +4,16 @@ Usage (as Fargate container override):
     python -m app.tasks.process_file
 
 Reads configuration from environment variables:
-    FILE_ID              - UUID of the FileUpload record
-    S3_BUCKET            - Source S3 bucket name
-    S3_KEY               - S3 key of the uploaded file
-    ORG_ID               - Organization ID for storage paths
-    BACKEND_CALLBACK_URL - Base URL for the callback (e.g. https://api.example.com/api/v1)
-    HMAC_SHARED_SECRET   - Shared secret for callback authentication
-    GEMINI_API_KEY       - LLM API key (for insight generation)
-    STORAGE_BACKEND      - "s3" (required for parquet upload)
-    PARQUET_S3_BUCKET    - S3 bucket for parquet output (usually same as S3_BUCKET)
-    AWS_REGION           - AWS region (default: us-east-1)
+    FILE_ID              - UUID of the FileUpload record (passed via container override)
+    S3_BUCKET            - Source S3 bucket name (passed via container override)
+    S3_KEY               - S3 key of the uploaded file (passed via container override)
+    ORG_ID               - Organization ID for storage paths (passed via container override)
+    BACKEND_CALLBACK_URL - Base URL for the callback (set in task definition)
+    HMAC_SHARED_SECRET   - Shared secret for callback authentication (set in task definition)
+    STORAGE_BACKEND      - "s3" (set in task definition)
+    PARQUET_S3_BUCKET    - S3 bucket for parquet output (set in task definition)
+    AWS_REGION           - AWS region (set in task definition, default: us-east-1)
+    LLM_PROVIDER         - "bedrock" (default) — uses IAM role for auth, no API key needed
 
 The task:
 1. Downloads the uploaded file from S3

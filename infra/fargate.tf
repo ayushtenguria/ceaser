@@ -146,9 +146,7 @@ resource "aws_ecs_task_definition" "file_processor" {
       { name = "AWS_REGION", value = var.region },
       { name = "BACKEND_CALLBACK_URL", value = "https://${local.api_fqdn}/api/v1" },
       { name = "HMAC_SHARED_SECRET", value = random_password.hmac_secret.result },
-      # LLM keys — pulled from the same env_vars map used by the backend
-      { name = "GEMINI_API_KEY", value = lookup(var.env_vars, "GEMINI_API_KEY", "") },
-      { name = "GEMINI_MODEL", value = lookup(var.env_vars, "GEMINI_MODEL", "gemini-2.0-flash") },
+      { name = "LLM_PROVIDER", value = "bedrock" },
     ]
 
     # FILE_ID, S3_BUCKET, S3_KEY, ORG_ID are passed via container overrides at runtime

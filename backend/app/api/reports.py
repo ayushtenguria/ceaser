@@ -165,6 +165,21 @@ async def refresh_report(
 
         schema_context = await _build_schema_context(db, report.connection_id, report.file_id)
 
+    # Load file context for file-based reports
+    if report.file_id and not schema_context:
+        from app.db.models import FileUpload
+
+        stmt = select(FileUpload).where(FileUpload.id == report.file_id)
+        result = await db.execute(stmt)
+        upload = result.scalar_one_or_none()
+        if upload:
+            if upload.excel_context:
+                schema_context = upload.excel_context
+            if upload.code_preamble:
+                schema_context += (
+                    f"\n\nCODE PREAMBLE (prepend to all Python code):\n{upload.code_preamble}\n"
+                )
+
     llm = get_llm()
 
     new_table = None
