@@ -34,17 +34,25 @@ _PYTHON_EXECUTABLE = sys.executable
 
 
 def _sanitize_error(text: str) -> str:
-    """Strip signed URLs, tokens, and internal file paths from error text."""
+    """Strip sensitive info from error text before returning to the user."""
     import re
 
-    text = re.sub(
-        r'https?://[^\s"\')\]]+',
-        "[STORAGE_URL]",
-        text,
-    )
+    # URLs (signed S3, Supabase, etc.)
+    text = re.sub(r'https?://[^\s"\')\]]+', "[STORAGE_URL]", text)
+    # Token/key parameters
     text = re.sub(r'token=[^\s&"\']+', "token=***", text)
-    text = re.sub(r'/(?:Users|home|var|tmp|private)[^\s"\')\]:]+', "[PATH]", text)
+    # Internal file paths
+    text = re.sub(r'/(?:Users|home|var|tmp|private|app)[^\s"\')\]:]+', "[PATH]", text)
+    # ceaser:// protocol refs
     text = re.sub(r'ceaser://[^\s"\')\]]+', "[FILE_REF]", text)
+    # Database connection strings (postgresql://, mysql://, etc.)
+    text = re.sub(r'(?:postgresql|mysql|sqlite|redis)(?:\+\w+)?://[^\s"\')\]]+', "[DB_URL]", text)
+    # AWS ARNs
+    text = re.sub(r'arn:aws:[^\s"\')\]]+', "[AWS_ARN]", text)
+    # IP addresses with ports
+    text = re.sub(r"\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?\b", "[HOST]", text)
+    # AWS access key IDs
+    text = re.sub(r"(?:AKIA|ASIA)[A-Z0-9]{16}", "[AWS_KEY]", text)
     return text
 
 

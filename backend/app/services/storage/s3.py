@@ -14,7 +14,7 @@ from app.services.storage.base import StorageBackend
 
 logger = logging.getLogger(__name__)
 
-_SIGNED_URL_EXPIRY = 3600
+_SIGNED_URL_EXPIRY = 900  # 15 minutes — short-lived to limit exposure if URL is shared
 
 
 class S3Storage(StorageBackend):

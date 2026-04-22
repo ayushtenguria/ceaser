@@ -112,13 +112,17 @@ def _build_runner_script(user_code: str, figure_path: str) -> str:
 
 
 def _sanitize_error(text: str) -> str:
-    """Strip signed URLs, tokens, and internal paths from error text."""
+    """Strip sensitive info from error text before returning."""
     import re
 
     text = re.sub(r'https?://[^\s"\')\]]+', "[STORAGE_URL]", text)
     text = re.sub(r'token=[^\s&"\']+', "token=***", text)
-    text = re.sub(r'/(?:Users|home|var|tmp|private)[^\s"\')\]:]+', "[PATH]", text)
+    text = re.sub(r'/(?:Users|home|var|tmp|private|app)[^\s"\')\]:]+', "[PATH]", text)
     text = re.sub(r'ceaser://[^\s"\')\]]+', "[FILE_REF]", text)
+    text = re.sub(r'(?:postgresql|mysql|sqlite|redis)(?:\+\w+)?://[^\s"\')\]]+', "[DB_URL]", text)
+    text = re.sub(r'arn:aws:[^\s"\')\]]+', "[AWS_ARN]", text)
+    text = re.sub(r'\b\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3}(?::\d+)?\b', "[HOST]", text)
+    text = re.sub(r'(?:AKIA|ASIA)[A-Z0-9]{16}', "[AWS_KEY]", text)
     return text
 
 

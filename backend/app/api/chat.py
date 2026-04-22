@@ -573,7 +573,8 @@ async def chat(
             all_file_ids = recent_ids
             logger.info("Auto-linked %d org files to conversation", len(recent_ids))
 
-    # Check if any files are still processing
+    # Validate file references — remove deleted files, track processing ones
+    valid_file_ids = []
     files_still_processing = []
     for fid in all_file_ids:
         try:
@@ -583,18 +584,33 @@ async def chat(
         stmt = select(FileUpload).where(FileUpload.id == fid_uuid)
         fresult = await db.execute(stmt)
         fupload = fresult.scalar_one_or_none()
-        if fupload and fupload.processing_status == "processing":
+        if not fupload:
+            logger.info("File %s referenced in conversation was deleted — skipping", fid)
+            continue
+        if fupload.processing_status == "processing":
             files_still_processing.append(fupload.filename)
+        valid_file_ids.append(fid)
+    all_file_ids = valid_file_ids
 
-    # Build schema context with ALL files
+    # If ALL files are still processing, return early with a clear message
     schema_context = ""
-    if files_still_processing:
-        schema_context = (
-            "IMPORTANT: The following file(s) are still being processed and not yet available: "
-            + ", ".join(files_still_processing)
-            + ". Tell the user their file is still being analyzed and will be ready shortly. "
-            "Suggest they check the Files page for status or try again in a minute."
-        )
+    if files_still_processing and len(files_still_processing) == len(all_file_ids):
+        processing_names = ", ".join(files_still_processing)
+
+        async def _processing_stream():
+            yield _sse({"type": "conversation_id", "content": str(conversation.id)})
+            yield _sse(
+                {
+                    "type": "text",
+                    "content": f"Your file(s) ({processing_names}) are still being analyzed. "
+                    "This usually takes 1-2 minutes. Please check the Files page for progress "
+                    "and try again once processing is complete.",
+                }
+            )
+            yield _sse({"type": "done", "content": ""})
+
+        return StreamingResponse(_processing_stream(), media_type="text/event-stream")
+
     if effective_connection_id or all_file_ids:
         # Connection context
         schema_context = await _build_schema_context(

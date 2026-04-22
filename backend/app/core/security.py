@@ -72,10 +72,13 @@ async def verify_token(
 
     Raises ``HTTPException(401)`` on any verification failure.
     """
-    if settings.clerk_jwks_url.startswith("https://your-clerk") or (
-        settings.dev_mode and credentials is None
-    ):
-        logger.warning("DEV_MODE: Bypassing JWT verification.")
+    if settings.clerk_jwks_url.startswith("https://your-clerk"):
+        if not settings.dev_mode:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Clerk JWKS URL not configured.",
+            )
+        logger.warning("DEV_MODE: Using dev user (Clerk not configured).")
         return AuthenticatedUser(user_id="dev_user", org_id="dev_org")
 
     if credentials is None:
