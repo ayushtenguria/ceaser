@@ -86,25 +86,32 @@ export default function FilesPage() {
         api.waitForFileProcessing(
           uploaded.id,
           (status) => {
-            // Update the file card in real-time with stage info
             setFiles((prev) =>
               prev.map((f) =>
                 f.id === uploaded.id
-                  ? { ...f, processingStatus: "processing" as const }
+                  ? {
+                      ...f,
+                      processingStatus: "processing" as const,
+                      processingMessage: status.message,
+                    }
                   : f,
               ),
             );
           },
           3000,
-          120,
+          300, // 15 min timeout for large files
         ).then((result) => {
-          // Reload file list to get full metadata after processing
           api.getFiles().then((freshFiles) => setFiles(freshFiles)).catch(() => {
-            // Fallback: just update status
             setFiles((prev) =>
               prev.map((f) =>
                 f.id === uploaded.id
-                  ? { ...f, processingStatus: result.ready ? "ready" : "failed" }
+                  ? {
+                      ...f,
+                      processingStatus: result.ready ? "ready" : "processing",
+                      processingMessage: result.ready
+                        ? undefined
+                        : "Still processing — check back shortly",
+                    }
                   : f,
               ),
             );
@@ -337,7 +344,7 @@ function FileCard({ file, getFileTypeColor, onDelete, isDeleting, isSelected, on
             {file.processingStatus === "processing" && (
               <span className="flex items-center gap-1.5 rounded-full border border-blue-500/30 bg-blue-500/10 px-2.5 py-0.5 text-xs text-blue-400">
                 <Loader2 className="h-3 w-3 animate-spin" />
-                Processing...
+                {file.processingMessage || "Processing..."}
               </span>
             )}
             {file.processingStatus === "failed" && (

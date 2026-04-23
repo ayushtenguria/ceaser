@@ -117,6 +117,7 @@ export interface FileUpload {
   uploadedAt: string;
   organizationId: string;
   processingStatus?: "processing" | "ready" | "failed";
+  processingMessage?: string;
   columnInfo?: {
     row_count: number;
     column_count: number;

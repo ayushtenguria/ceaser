@@ -652,11 +652,12 @@ async def chat(
                         (schema_context + "\n\n" + file_context) if schema_context else file_context
                     )
 
-            # Always append CODE PREAMBLE from file uploads so the Python
-            # agent knows how to load the data (parquet paths).  Graph RAG
-            # returns column metadata but NOT the preamble, so we must add
-            # it regardless of which context path was taken.
+            # Append CODE PREAMBLE — only load sheets that the sheet selector
+            # picked (max 3-5), not all 32. This keeps the prompt small and
+            # prevents the agent from generating code that loads every sheet.
+            max_preamble_reads = 5  # match sheet selector's typical output
             preamble_lines: list[str] = ["import pandas as pd", "import plotly.express as px", ""]
+            read_count = 0
             for fid in all_file_ids:
                 try:
                     fid_uuid = uuid.UUID(fid)
@@ -673,20 +674,36 @@ async def chat(
                     logger.info("File %s still processing — skipping preamble", fid)
                     continue
                 if upload.code_preamble:
+                    # Extract sheet names from schema_context to filter preamble
+                    selected_vars = set()
+                    for sc_line in schema_context.split("\n"):
+                        sc_stripped = sc_line.strip()
+                        if sc_stripped.startswith("df_") and ":" in sc_stripped:
+                            selected_vars.add(
+                                sc_stripped.split(":")[0].strip().split("(")[0].strip()
+                            )
+                        elif sc_stripped.startswith("('df_"):
+                            var = sc_stripped.split("'")[1] if "'" in sc_stripped else ""
+                            if var:
+                                selected_vars.add(var)
+
                     for line in upload.code_preamble.split("\n"):
                         stripped = line.strip()
-                        if (
-                            stripped
-                            and stripped not in preamble_lines
-                            and (
-                                "= pd.read_" in stripped
-                                or "import " in stripped
-                                or "duckdb" in stripped
-                                or stripped.startswith("#")
-                            )
-                        ):
+                        if not stripped or stripped in preamble_lines:
+                            continue
+                        if stripped.startswith(("import ", "from ")) or stripped.startswith("#"):
                             preamble_lines.append(stripped)
-            if len(preamble_lines) > 3:  # more than just the imports
+                        elif "= pd.read_" in stripped or "duckdb" in stripped:
+                            # If we know selected sheets, only include matching ones
+                            if selected_vars:
+                                var_name = stripped.split("=")[0].strip()
+                                if var_name in selected_vars:
+                                    preamble_lines.append(stripped)
+                                    read_count += 1
+                            elif read_count < max_preamble_reads:
+                                preamble_lines.append(stripped)
+                                read_count += 1
+            if len(preamble_lines) > 3:
                 unified_preamble = "\n".join(preamble_lines)
                 schema_context += (
                     f"\n\nCODE PREAMBLE (prepend to all Python code):\n{unified_preamble}\n"

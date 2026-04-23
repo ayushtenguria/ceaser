@@ -71,8 +71,13 @@ async def decompose_query(
     # Long consulting-style queries (multiple related analytical questions) should NOT be
     # decomposed — they work better as a single analyst query that plans holistically.
     # Only decompose truly independent requests ("show X AND plot Y")
-    bullet_count = query.count("\n-") + query.count("\n•") + query.count("\n*")
+    # Short single-sentence queries don't need decomposition — skip the LLM call
     question_marks = query.count("?")
+    if question_marks <= 1 and len(query) < 200 and " and " not in query.lower():
+        logger.info("Simple query — skipping decomposition")
+        return [query]
+
+    bullet_count = query.count("\n-") + query.count("\n•") + query.count("\n*")
     if bullet_count >= 3 or question_marks >= 3 or len(query) > 500:
         logger.info(
             "Long/complex query detected (%d bullets, %d questions, %d chars) — skipping decomposition",

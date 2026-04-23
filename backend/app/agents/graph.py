@@ -248,7 +248,7 @@ def build_graph(
         return disambiguate(state)
 
     async def respond_node(state: AgentState) -> AgentState:
-        return await _respond(state, llm)
+        return await _respond(state, _light)
 
     async def repair_node(state: AgentState) -> AgentState:
         return await repair_sql(state, _light)
