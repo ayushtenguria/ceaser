@@ -44,7 +44,9 @@ async def test_markdown_fenced_json(mock_llm):
     mock_llm.ainvoke = AsyncMock(
         return_value=MagicMock(content='```json\n["query one", "query two"]\n```')
     )
-    result = await decompose_query("Show me revenue breakdown and also plot the monthly trend over time", mock_llm)
+    result = await decompose_query(
+        "Show me revenue breakdown and also plot the monthly trend over time", mock_llm
+    )
     assert len(result) == 2
 
 
@@ -52,5 +54,7 @@ async def test_markdown_fenced_json(mock_llm):
 async def test_max_three_subqueries(mock_llm):
     """Should cap at 3 sub-queries."""
     mock_llm.ainvoke = AsyncMock(return_value=MagicMock(content='["q1", "q2", "q3", "q4", "q5"]'))
-    result = await decompose_query("Show revenue and costs and margins and trends and predictions", mock_llm)
+    result = await decompose_query(
+        "Show revenue and costs and margins and trends and predictions", mock_llm
+    )
     assert len(result) == 3
