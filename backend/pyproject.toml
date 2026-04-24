@@ -51,6 +51,11 @@ dependencies = [
 
     # Scheduling
     "croniter>=2.0.0",
+
+    # Ad platform integrations
+    "google-ads>=25.0.0",
+    "google-auth>=2.0.0",
+    "google-auth-oauthlib>=1.0.0",
 ]
 
 [project.optional-dependencies]

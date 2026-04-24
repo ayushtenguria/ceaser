@@ -25,6 +25,7 @@ from app.api import (
     memories,
     metrics,
     notebooks,
+    oauth,
     onboarding,
     reports,
     verified_queries,
@@ -77,6 +78,22 @@ async def lifespan(_app: FastAPI) -> AsyncIterator[None]:
         )
         await conn.execute(
             text("ALTER TABLE notebooks ADD COLUMN IF NOT EXISTS next_run_at TIMESTAMPTZ")
+        )
+        # OAuth fields for ad platform connectors
+        await conn.execute(
+            text(
+                "ALTER TABLE database_connections ADD COLUMN IF NOT EXISTS oauth_access_token TEXT"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE database_connections ADD COLUMN IF NOT EXISTS oauth_refresh_token TEXT"
+            )
+        )
+        await conn.execute(
+            text(
+                "ALTER TABLE database_connections ADD COLUMN IF NOT EXISTS oauth_expires_at TIMESTAMPTZ"
+            )
         )
     logger.info("Database tables ensured.")
     try:
@@ -138,6 +155,7 @@ app.include_router(memories.router, prefix=_API_PREFIX)
 app.include_router(feedback.router, prefix=_API_PREFIX)
 app.include_router(verified_queries.router, prefix=_API_PREFIX)
 app.include_router(join_rules.router, prefix=_API_PREFIX)
+app.include_router(oauth.router, prefix=_API_PREFIX)
 app.include_router(admin.router, prefix=_API_PREFIX)
 
 

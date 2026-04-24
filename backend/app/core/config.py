@@ -110,6 +110,17 @@ class Settings(BaseSettings):
     fargate_subnets: str = ""  # Comma-separated subnet IDs
     fargate_security_group: str = ""
 
+    # Meta Ads OAuth2
+    meta_app_id: str = ""
+    meta_app_secret: str = ""
+    meta_redirect_uri: str = ""
+
+    # Google Ads OAuth2
+    google_ads_client_id: str = ""
+    google_ads_client_secret: str = ""
+    google_ads_developer_token: str = ""
+    google_ads_redirect_uri: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:

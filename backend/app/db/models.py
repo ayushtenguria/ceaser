@@ -70,6 +70,12 @@ class DatabaseConnection(Base):
     user_id: Mapped[uuid.UUID] = mapped_column(ForeignKey("users.id"))
     schema_cache: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     metrics_scanned: Mapped[bool] = mapped_column(default=False)
+
+    # OAuth2 fields for API-based connectors (Meta Ads, Google Ads)
+    oauth_access_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    oauth_refresh_token: Mapped[str | None] = mapped_column(Text, nullable=True)
+    oauth_expires_at: Mapped[datetime | None] = mapped_column(nullable=True)
+
     created_at: Mapped[datetime] = mapped_column(server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now(), onupdate=func.now())
 

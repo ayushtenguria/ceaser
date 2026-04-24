@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 from app.connectors.base import BaseConnector
+from app.connectors.google_ads import GoogleAdsConnector
+from app.connectors.meta_ads import MetaAdsConnector
 from app.connectors.mysql import MySQLConnector
 from app.connectors.postgres import PostgresConnector
 from app.connectors.sqlite_conn import SQLiteConnector
@@ -12,6 +14,8 @@ _CONNECTOR_MAP: dict[str, type[BaseConnector]] = {
     "postgresql": PostgresConnector,
     "mysql": MySQLConnector,
     "sqlite": SQLiteConnector,
+    "meta_ads": MetaAdsConnector,
+    "google_ads": GoogleAdsConnector,
 }
 
 

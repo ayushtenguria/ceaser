@@ -125,7 +125,9 @@ class ConnectionCreate(_CamelModel):
     """Payload to register a new external database connection."""
 
     name: str = Field(..., min_length=1, max_length=255)
-    db_type: str = Field(..., pattern="^(postgresql|mysql|sqlite|bigquery|snowflake)$")
+    db_type: str = Field(
+        ..., pattern="^(postgresql|mysql|sqlite|bigquery|snowflake|meta_ads|google_ads)$"
+    )
     host: str = ""
     port: int = Field(5432, ge=1, le=65535)
     database: str = Field(..., min_length=1)
