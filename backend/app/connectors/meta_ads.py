@@ -15,12 +15,7 @@ import httpx
 from app.connectors.ads_query_parser import ParsedQuery, parse_ads_query
 from app.connectors.base import BaseConnector
 from app.db.models import DatabaseConnection
-from app.services.oauth import (
-    get_access_token,
-    is_token_expired,
-    meta_refresh_token,
-    store_tokens,
-)
+from app.services.encryption import decrypt_value
 
 logger = logging.getLogger(__name__)
 
@@ -148,21 +143,8 @@ class MetaAdsConnector(BaseConnector):
         self._account_id: str = ""
 
     async def connect(self) -> bool:
-        self._access_token = get_access_token(self._connection)
+        self._access_token = decrypt_value(self._connection.encrypted_password)
         self._account_id = self._connection.database or ""
-
-        if is_token_expired(self._connection):
-            try:
-                new_data = await meta_refresh_token(self._access_token)
-                self._access_token = new_data["access_token"]
-                store_tokens(
-                    self._connection,
-                    access_token=self._access_token,
-                    expires_in=new_data.get("expires_in", 5184000),
-                )
-            except Exception as exc:
-                logger.warning("Meta token refresh failed: %s", exc)
-                raise ConnectionError(f"Meta token expired and refresh failed: {exc}") from exc
 
         # Verify token works
         async with httpx.AsyncClient(timeout=10) as client:

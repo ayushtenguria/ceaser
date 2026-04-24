@@ -14,15 +14,8 @@ import httpx
 
 from app.connectors.ads_query_parser import ParsedQuery, parse_ads_query
 from app.connectors.base import BaseConnector
-from app.core.config import get_settings
 from app.db.models import DatabaseConnection
-from app.services.oauth import (
-    get_access_token,
-    get_refresh_token,
-    google_refresh_access_token,
-    is_token_expired,
-    store_tokens,
-)
+from app.services.encryption import decrypt_value
 
 logger = logging.getLogger(__name__)
 
@@ -186,25 +179,27 @@ class GoogleAdsConnector(BaseConnector):
         self._developer_token: str = ""
 
     async def connect(self) -> bool:
-        self._access_token = get_access_token(self._connection)
-        self._customer_id = (self._connection.database or "").replace("-", "")
-        self._developer_token = get_settings().google_ads_developer_token
+        import json
 
-        if is_token_expired(self._connection):
-            refresh = get_refresh_token(self._connection)
-            if not refresh:
-                raise ConnectionError("Google token expired and no refresh token available")
+        creds = json.loads(decrypt_value(self._connection.encrypted_password))
+        self._access_token = creds["access_token"]
+        self._developer_token = creds.get("developer_token", self._connection.username or "")
+        self._customer_id = (self._connection.database or "").replace("-", "")
+
+        # Auto-refresh if refresh_token is available
+        refresh = creds.get("refresh_token")
+        if refresh:
             try:
-                new_data = await google_refresh_access_token(refresh)
-                self._access_token = new_data["access_token"]
-                store_tokens(
-                    self._connection,
-                    access_token=self._access_token,
-                    refresh_token=refresh,
-                    expires_in=new_data.get("expires_in", 3600),
+                from app.services.oauth import google_refresh_access_token
+
+                new_data = await google_refresh_access_token(
+                    refresh,
+                    client_id=creds.get("client_id", ""),
+                    client_secret=creds.get("client_secret", ""),
                 )
+                self._access_token = new_data["access_token"]
             except Exception as exc:
-                raise ConnectionError(f"Google token refresh failed: {exc}") from exc
+                logger.debug("Google token refresh skipped: %s", exc)
 
         return True
 

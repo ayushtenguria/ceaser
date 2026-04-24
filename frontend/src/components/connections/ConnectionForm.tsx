@@ -30,6 +30,15 @@ interface FormState {
   projectId: string;
   credentialsJson: string;
   filePath: string;
+  // Ad platforms
+  accountId: string;
+  accessToken: string;
+  refreshToken: string;
+  developerToken: string;
+  // Snowflake extras
+  warehouse: string;
+  sfSchema: string;
+  role: string;
 }
 
 const INITIAL_FORM: FormState = {
@@ -43,6 +52,13 @@ const INITIAL_FORM: FormState = {
   projectId: "",
   credentialsJson: "",
   filePath: "",
+  accountId: "",
+  accessToken: "",
+  refreshToken: "",
+  developerToken: "",
+  warehouse: "",
+  sfSchema: "PUBLIC",
+  role: "",
 };
 
 const DEFAULT_PORTS: Record<DatabaseType, string> = {
@@ -65,7 +81,7 @@ const DB_TYPE_LABELS: Record<DatabaseType, string> = {
   google_ads: "Google Ads",
 };
 
-const OAUTH_TYPES = new Set<DatabaseType>(["meta_ads", "google_ads"]);
+const ADS_TYPES = new Set<DatabaseType>(["meta_ads", "google_ads"]);
 
 export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
@@ -101,8 +117,17 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
 
     if (!form.name.trim()) newErrors.name = "Name is required";
 
-    if (OAUTH_TYPES.has(form.dbType)) {
-      // OAuth types only need a name — auth happens via OAuth redirect
+    if (form.dbType === "meta_ads") {
+      if (!form.accountId.trim()) newErrors.accountId = "Ad Account ID is required";
+      if (!form.accessToken.trim()) newErrors.accessToken = "Access Token is required";
+    } else if (form.dbType === "google_ads") {
+      if (!form.accountId.trim()) newErrors.accountId = "Customer ID is required";
+      if (!form.accessToken.trim()) newErrors.accessToken = "Access Token is required";
+      if (!form.developerToken.trim()) newErrors.developerToken = "Developer Token is required";
+    } else if (form.dbType === "snowflake") {
+      if (!form.host.trim()) newErrors.host = "Account URL is required";
+      if (!form.database.trim()) newErrors.database = "Database is required";
+      if (!form.username.trim()) newErrors.username = "Username is required";
     } else if (form.dbType === "sqlite") {
       if (!form.filePath.trim()) newErrors.filePath = "File path is required";
     } else if (form.dbType === "bigquery") {
@@ -120,18 +145,44 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
   }, [form]);
 
   const buildPayload = useCallback(() => {
+    if (form.dbType === "meta_ads") {
+      return {
+        name: form.name, dbType: form.dbType,
+        host: "", port: 0,
+        database: form.accountId,
+        username: "",
+        password: form.accessToken,
+      };
+    }
+    if (form.dbType === "google_ads") {
+      return {
+        name: form.name, dbType: form.dbType,
+        host: "", port: 0,
+        database: form.accountId,
+        username: form.developerToken,
+        password: JSON.stringify({
+          access_token: form.accessToken,
+          refresh_token: form.refreshToken || undefined,
+        }),
+      };
+    }
+    if (form.dbType === "snowflake") {
+      return {
+        name: form.name, dbType: form.dbType,
+        host: form.host, port: 443,
+        database: form.database,
+        username: form.username,
+        password: form.password,
+      };
+    }
     return {
       name: form.name,
       dbType: form.dbType,
       host: form.dbType === "sqlite" ? form.filePath : form.host,
       port: form.port ? parseInt(form.port, 10) : 0,
-      database: OAUTH_TYPES.has(form.dbType)
-        ? "pending_oauth"
-        : form.dbType === "bigquery"
-          ? form.projectId
-          : form.database,
+      database: form.dbType === "bigquery" ? form.projectId : form.database,
       username: form.username,
-      password: form.password,
+      password: form.dbType === "bigquery" ? form.credentialsJson : form.password,
     };
   }, [form]);
 
@@ -179,31 +230,8 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
     [validate, buildPayload, addConnection, onSuccess]
   );
 
-  const isOAuth = OAUTH_TYPES.has(form.dbType);
   const showStandardFields =
-    !isOAuth && form.dbType !== "sqlite" && form.dbType !== "bigquery";
-
-  const handleOAuthConnect = useCallback(async () => {
-    if (!form.name.trim()) {
-      setErrors({ name: "Name is required" });
-      return;
-    }
-    setIsSaving(true);
-    try {
-      const connection = await api.createConnection(buildPayload());
-      const provider = form.dbType === "meta_ads" ? "meta" : "google";
-      const { data } = await api.getAxios().get(
-        `/oauth/${provider}/initiate?connection_id=${connection.id}`
-      );
-      if (data.authUrl) {
-        window.location.href = data.authUrl;
-      }
-    } catch {
-      setErrors({ name: "Failed to start OAuth flow" });
-    } finally {
-      setIsSaving(false);
-    }
-  }, [form, buildPayload]);
+    !ADS_TYPES.has(form.dbType) && form.dbType !== "sqlite" && form.dbType !== "bigquery" && form.dbType !== "snowflake";
 
   function _humanizeConnectionError(error: string): string {
     const e = error.toLowerCase();
@@ -254,24 +282,100 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
         </Select>
       </div>
 
-      {/* OAuth-based connections (Meta Ads, Google Ads) */}
-      {isOAuth && (
-        <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 text-center">
-          <p className="text-sm text-muted-foreground mb-3">
-            {form.dbType === "meta_ads"
-              ? "Connect your Meta (Facebook/Instagram) Ads account to analyze campaign performance, audiences, and conversions."
-              : "Connect your Google Ads account to analyze campaigns, keywords, and ad performance."}
-          </p>
-          <Button
-            type="button"
-            onClick={handleOAuthConnect}
-            disabled={isSaving}
-            className="w-full"
-          >
-            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            {form.dbType === "meta_ads" ? "Connect with Meta" : "Connect with Google"}
-          </Button>
-        </div>
+      {/* Meta Ads fields */}
+      {form.dbType === "meta_ads" && (
+        <>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Ad Account ID</label>
+            <Input placeholder="act_123456789" value={form.accountId} onChange={(e) => updateField("accountId", e.target.value)} />
+            {errors.accountId && <p className="text-xs text-destructive">{errors.accountId}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Access Token</label>
+            <Input type="password" placeholder="Paste your Meta access token" value={form.accessToken} onChange={(e) => updateField("accessToken", e.target.value)} />
+            {errors.accessToken && <p className="text-xs text-destructive">{errors.accessToken}</p>}
+          </div>
+          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2">
+            <p className="text-xs text-muted-foreground">
+              Get your access token from{" "}
+              <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noopener noreferrer" className="text-primary underline">Graph API Explorer</a>
+              {" "}with <strong>ads_read</strong> permission. Account ID is in your Ad Account settings.
+            </p>
+          </div>
+        </>
+      )}
+
+      {/* Google Ads fields */}
+      {form.dbType === "google_ads" && (
+        <>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Customer ID</label>
+            <Input placeholder="123-456-7890" value={form.accountId} onChange={(e) => updateField("accountId", e.target.value)} />
+            {errors.accountId && <p className="text-xs text-destructive">{errors.accountId}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Developer Token</label>
+            <Input type="password" placeholder="Your Google Ads developer token" value={form.developerToken} onChange={(e) => updateField("developerToken", e.target.value)} />
+            {errors.developerToken && <p className="text-xs text-destructive">{errors.developerToken}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Access Token</label>
+            <Input type="password" placeholder="OAuth2 access token" value={form.accessToken} onChange={(e) => updateField("accessToken", e.target.value)} />
+            {errors.accessToken && <p className="text-xs text-destructive">{errors.accessToken}</p>}
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Refresh Token (optional)</label>
+            <Input type="password" placeholder="OAuth2 refresh token for auto-renewal" value={form.refreshToken} onChange={(e) => updateField("refreshToken", e.target.value)} />
+          </div>
+          <div className="rounded-lg border border-blue-500/20 bg-blue-500/5 px-3 py-2">
+            <p className="text-xs text-muted-foreground">
+              Get credentials from{" "}
+              <a href="https://console.cloud.google.com/apis/credentials" target="_blank" rel="noopener noreferrer" className="text-primary underline">Google API Console</a>.
+              Developer token from Google Ads API Center.
+            </p>
+          </div>
+        </>
+      )}
+
+      {/* Snowflake fields */}
+      {form.dbType === "snowflake" && (
+        <>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Account URL</label>
+            <Input placeholder="abc123.us-east-1.snowflakecomputing.com" value={form.host} onChange={(e) => updateField("host", e.target.value)} />
+            {errors.host && <p className="text-xs text-destructive">{errors.host}</p>}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Warehouse</label>
+              <Input placeholder="COMPUTE_WH" value={form.warehouse} onChange={(e) => updateField("warehouse", e.target.value)} />
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Schema</label>
+              <Input placeholder="PUBLIC" value={form.sfSchema} onChange={(e) => updateField("sfSchema", e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Database</label>
+            <Input placeholder="MY_DATABASE" value={form.database} onChange={(e) => updateField("database", e.target.value)} />
+            {errors.database && <p className="text-xs text-destructive">{errors.database}</p>}
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Username</label>
+              <Input placeholder="my_user" value={form.username} onChange={(e) => updateField("username", e.target.value)} />
+              {errors.username && <p className="text-xs text-destructive">{errors.username}</p>}
+            </div>
+            <div className="space-y-1.5">
+              <label className="text-sm font-medium">Password</label>
+              <Input type="password" placeholder="********" value={form.password} onChange={(e) => updateField("password", e.target.value)} />
+            </div>
+          </div>
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Role (optional)</label>
+            <Input placeholder="ANALYST" value={form.role} onChange={(e) => updateField("role", e.target.value)} />
+          </div>
+        </>
       )}
 
       {/* SQLite fields */}
@@ -418,24 +522,22 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
         </div>
       )}
 
-      {/* Actions — hidden for OAuth types (they use the Connect button above) */}
-      {!isOAuth && (
-        <div className="flex justify-end gap-2 pt-2">
-          <Button
-            type="button"
-            variant="outline"
-            onClick={handleTest}
-            disabled={isTesting || isSaving}
-          >
-            {isTesting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Test Connection
-          </Button>
-          <Button type="submit" disabled={isSaving || isTesting}>
-            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-            Save Connection
-          </Button>
-        </div>
-      )}
+      {/* Actions */}
+      <div className="flex justify-end gap-2 pt-2">
+        <Button
+          type="button"
+          variant="outline"
+          onClick={handleTest}
+          disabled={isTesting || isSaving}
+        >
+          {isTesting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Test Connection
+        </Button>
+        <Button type="submit" disabled={isSaving || isTesting}>
+          {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+          Save Connection
+        </Button>
+      </div>
     </form>
   );
 }
