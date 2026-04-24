@@ -34,7 +34,9 @@ export type DatabaseType =
   | "mysql"
   | "sqlite"
   | "bigquery"
-  | "snowflake";
+  | "snowflake"
+  | "meta_ads"
+  | "google_ads";
 
 export interface SchemaInfo {
   tables: TableInfo[];

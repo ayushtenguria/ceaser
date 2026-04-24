@@ -25,6 +25,8 @@ const DB_TYPE_COLORS: Record<DatabaseType, string> = {
   sqlite: "text-emerald-400",
   bigquery: "text-blue-400",
   snowflake: "text-cyan-400",
+  meta_ads: "text-blue-500",
+  google_ads: "text-yellow-400",
 };
 
 const DB_TYPE_LABELS: Record<DatabaseType, string> = {
@@ -33,6 +35,8 @@ const DB_TYPE_LABELS: Record<DatabaseType, string> = {
   sqlite: "SQLite",
   bigquery: "BigQuery",
   snowflake: "Snowflake",
+  meta_ads: "Meta Ads",
+  google_ads: "Google Ads",
 };
 
 export default function ConnectionCard({ connection }: ConnectionCardProps) {

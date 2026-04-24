@@ -51,6 +51,8 @@ const DEFAULT_PORTS: Record<DatabaseType, string> = {
   sqlite: "",
   bigquery: "",
   snowflake: "443",
+  meta_ads: "",
+  google_ads: "",
 };
 
 const DB_TYPE_LABELS: Record<DatabaseType, string> = {
@@ -59,7 +61,11 @@ const DB_TYPE_LABELS: Record<DatabaseType, string> = {
   sqlite: "SQLite",
   bigquery: "BigQuery",
   snowflake: "Snowflake",
+  meta_ads: "Meta Ads",
+  google_ads: "Google Ads",
 };
+
+const OAUTH_TYPES = new Set<DatabaseType>(["meta_ads", "google_ads"]);
 
 export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
   const [form, setForm] = useState<FormState>(INITIAL_FORM);
@@ -95,7 +101,9 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
 
     if (!form.name.trim()) newErrors.name = "Name is required";
 
-    if (form.dbType === "sqlite") {
+    if (OAUTH_TYPES.has(form.dbType)) {
+      // OAuth types only need a name — auth happens via OAuth redirect
+    } else if (form.dbType === "sqlite") {
       if (!form.filePath.trim()) newErrors.filePath = "File path is required";
     } else if (form.dbType === "bigquery") {
       if (!form.projectId.trim()) newErrors.projectId = "Project ID is required";
@@ -117,7 +125,11 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
       dbType: form.dbType,
       host: form.dbType === "sqlite" ? form.filePath : form.host,
       port: form.port ? parseInt(form.port, 10) : 0,
-      database: form.dbType === "bigquery" ? form.projectId : form.database,
+      database: OAUTH_TYPES.has(form.dbType)
+        ? "pending_oauth"
+        : form.dbType === "bigquery"
+          ? form.projectId
+          : form.database,
       username: form.username,
       password: form.password,
     };
@@ -167,8 +179,31 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
     [validate, buildPayload, addConnection, onSuccess]
   );
 
+  const isOAuth = OAUTH_TYPES.has(form.dbType);
   const showStandardFields =
-    form.dbType !== "sqlite" && form.dbType !== "bigquery";
+    !isOAuth && form.dbType !== "sqlite" && form.dbType !== "bigquery";
+
+  const handleOAuthConnect = useCallback(async () => {
+    if (!form.name.trim()) {
+      setErrors({ name: "Name is required" });
+      return;
+    }
+    setIsSaving(true);
+    try {
+      const connection = await api.createConnection(buildPayload());
+      const provider = form.dbType === "meta_ads" ? "meta" : "google";
+      const { data } = await api.getAxios().get(
+        `/oauth/${provider}/initiate?connection_id=${connection.id}`
+      );
+      if (data.authUrl) {
+        window.location.href = data.authUrl;
+      }
+    } catch {
+      setErrors({ name: "Failed to start OAuth flow" });
+    } finally {
+      setIsSaving(false);
+    }
+  }, [form, buildPayload]);
 
   function _humanizeConnectionError(error: string): string {
     const e = error.toLowerCase();
@@ -218,6 +253,26 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
           </SelectContent>
         </Select>
       </div>
+
+      {/* OAuth-based connections (Meta Ads, Google Ads) */}
+      {isOAuth && (
+        <div className="rounded-lg border border-blue-500/30 bg-blue-500/5 p-4 text-center">
+          <p className="text-sm text-muted-foreground mb-3">
+            {form.dbType === "meta_ads"
+              ? "Connect your Meta (Facebook/Instagram) Ads account to analyze campaign performance, audiences, and conversions."
+              : "Connect your Google Ads account to analyze campaigns, keywords, and ad performance."}
+          </p>
+          <Button
+            type="button"
+            onClick={handleOAuthConnect}
+            disabled={isSaving}
+            className="w-full"
+          >
+            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            {form.dbType === "meta_ads" ? "Connect with Meta" : "Connect with Google"}
+          </Button>
+        </div>
+      )}
 
       {/* SQLite fields */}
       {form.dbType === "sqlite" && (
@@ -363,22 +418,24 @@ export default function ConnectionForm({ onSuccess }: ConnectionFormProps) {
         </div>
       )}
 
-      {/* Actions */}
-      <div className="flex justify-end gap-2 pt-2">
-        <Button
-          type="button"
-          variant="outline"
-          onClick={handleTest}
-          disabled={isTesting || isSaving}
-        >
-          {isTesting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          Test Connection
-        </Button>
-        <Button type="submit" disabled={isSaving || isTesting}>
-          {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
-          Save Connection
-        </Button>
-      </div>
+      {/* Actions — hidden for OAuth types (they use the Connect button above) */}
+      {!isOAuth && (
+        <div className="flex justify-end gap-2 pt-2">
+          <Button
+            type="button"
+            variant="outline"
+            onClick={handleTest}
+            disabled={isTesting || isSaving}
+          >
+            {isTesting && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Test Connection
+          </Button>
+          <Button type="submit" disabled={isSaving || isTesting}>
+            {isSaving && <Loader2 className="mr-2 h-4 w-4 animate-spin" />}
+            Save Connection
+          </Button>
+        </div>
+      )}
     </form>
   );
 }

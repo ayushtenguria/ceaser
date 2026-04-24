@@ -54,6 +54,10 @@ api.interceptors.response.use(
 );
 
 
+export function getAxios() {
+  return api;
+}
+
 export async function syncUser(payload: {
   clerkId: string;
   email: string;
